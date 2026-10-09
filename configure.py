@@ -64,6 +64,11 @@ parser.add_argument(
     help="profile-guided optimisation from this profile instead",
 )
 parser.add_argument(
+    "--skate",
+    action="store_true",
+    help="Skate 3 mode (Linux, Windows; port/skate/README.md): builds the skate engine with cargo and links it",
+)
+parser.add_argument(
     "--android-ndk",
     type=str,
     help="Android NDK for `ninja android` (default: ANDROID_NDK_HOME, or the newest under the Android SDK)",
@@ -87,6 +92,7 @@ sln = SimpleNamespace(
     port_pgo_profile=args.pgo_profile,
     android_ndk=args.android_ndk,
     android_guest_cc=args.android_guest_cc,
+    port_skate=args.skate,
 )
 
 

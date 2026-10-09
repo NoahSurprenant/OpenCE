@@ -1,0 +1,12 @@
+[package]
+name = "halo-skate"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+bevy_math = "0.19"
+skate-host = { path = "../vendor/skate-host" }

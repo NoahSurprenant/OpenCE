@@ -50,7 +50,10 @@ jobs:
         run: |
           printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
           pacman -Syu --noconfirm --needed git zstd python python-pytest ninja ccache \
-            clang lld gcc lib32-glibc lib32-gcc-libs lib32-sdl3
+            clang lld gcc lib32-glibc lib32-gcc-libs lib32-sdl3 rustup
+          # Skate 3 mode's engine (port/skate), for the game's 32-bit ABI
+          rustup default stable
+          rustup target add i686-unknown-linux-gnu
 
       - uses: actions/checkout@v4
 
@@ -59,6 +62,15 @@ jobs:
           path: .ccache
           key: ccache-linux-${{ github.sha }}
           restore-keys: ccache-linux-
+
+      # the skate engine as cargo built it, and the crates it was built from
+      - uses: actions/cache@v4
+        with:
+          path: |
+            port/skate/target
+            ~/.cargo/registry
+          key: skate-linux-${{ hashFiles('port/skate/**/Cargo.lock', 'port/skate/**/*.rs', 'port/skate/**/Cargo.toml') }}
+          restore-keys: skate-linux-
 
       - name: Debug
         run: python tools/ci_build.py linux debug
@@ -189,6 +201,20 @@ jobs:
           path: .ccache
           key: ccache-windows-${{ github.sha }}
           restore-keys: ccache-windows-
+
+      # the skate engine as cargo built it, and the crates it was built from
+      - uses: actions/cache@v4
+        with:
+          path: |
+            port/skate/target
+            ~/.cargo/registry
+          key: skate-windows-${{ hashFiles('port/skate/**/Cargo.lock', 'port/skate/**/*.rs', 'port/skate/**/Cargo.toml') }}
+          restore-keys: skate-windows-
+
+      # Skate 3 mode's engine (port/skate), for the game's 32-bit ABI (the
+      # runner image has rustup)
+      - name: Rust target
+        run: rustup target add i686-pc-windows-msvc
 
       # SDL's development package, which configure.py fetches
       - uses: actions/cache@v4

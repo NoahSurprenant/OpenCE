@@ -1,0 +1,6 @@
+# (passed to cargo with --config by tools/*_build.py: cargo reads .cargo/ from
+# the folder it runs in, the repository root)
+# The Windows game links the static C runtime (clang's default for the target),
+# so the skate engine and the C it builds (zstd, blake3) must too.
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

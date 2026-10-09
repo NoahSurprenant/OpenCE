@@ -276,6 +276,7 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 /* port: port/linux/game/network_objects.c's (a client deletes the host's
 objects on the host's word alone) */
@@ -4206,6 +4207,9 @@ boolean biped_update(
 	struct unit_animation_update_data animation;
 
 	if (debug_biped_skip_update)
+		return TRUE;
+	/* port: a skating biped is moved and posed by the skate engine (skate.c) */
+	if (skate_unit_is_skating(biped_index))
 		return TRUE;
 
 	profile_enter(biped_update_section);

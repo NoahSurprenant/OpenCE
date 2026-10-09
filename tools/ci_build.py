@@ -48,6 +48,9 @@ def main() -> int:
     args = parser.parse_args()
 
     configure = [sys.executable, "configure.py", "--portable"]
+    # Skate 3 mode (port/skate) in the Linux and Windows builds
+    if args.platform in ("linux", "windows"):
+        configure.append("--skate")
     if args.config == "release":
         configure.append("--release")
     else:

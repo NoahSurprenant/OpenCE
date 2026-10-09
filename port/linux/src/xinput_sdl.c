@@ -47,6 +47,8 @@ drive the controller.
 #include <stdlib.h>
 #include <string.h>
 
+#include "../../skate/include/halo_skate.h"
+
 #define PORT_COUNT 4
 #define VK_OEM_3_BACKQUOTE 0xc0
 
@@ -950,4 +952,91 @@ DWORD WINAPI XInputDebugGetKeystroke(PXINPUT_DEBUG_KEYSTROKE keystroke)
 		}
 	}
 	return ERROR_HANDLE_EOF;
+}
+
+/* ---------- Skate 3 mode (port/linux/game/skate.c) */
+
+static void skate_key(const struct platform_input_state *input, SDL_Scancode key, unsigned short *buttons,
+	unsigned short mask)
+{
+	if (input->keys[key])
+		*buttons |= mask;
+}
+
+static void skate_keys_stick(const struct platform_input_state *input, SDL_Scancode left, SDL_Scancode right,
+	SDL_Scancode up, SDL_Scancode down, short stick_out[2])
+{
+	int x = (input->keys[right] ? 32767 : 0) - (input->keys[left] ? 32767 : 0);
+	int y = (input->keys[up] ? 32767 : 0) - (input->keys[down] ? 32767 : 0);
+
+	if (x && abs(x) > abs(stick_out[0])) stick_out[0] = (short)x;
+	if (y && abs(y) > abs(stick_out[1])) stick_out[1] = (short)y;
+}
+
+/* the first player's pad as an Xbox 360 pad, for the skate engine: the
+first gamepad, and the keyboard (WASD the left stick, the arrows the right
+stick, Space A, Shift X, E B, Q Y, Z and C the triggers, 1 and 3 the
+shoulders) */
+void halo_skate_platform_pad(struct halo_skate_pad *pad)
+{
+	static const struct
+	{
+		SDL_GamepadButton button;
+		unsigned short mask;
+	} buttons[] =
+	{
+		{ SDL_GAMEPAD_BUTTON_DPAD_UP, 0x0001 },
+		{ SDL_GAMEPAD_BUTTON_DPAD_DOWN, 0x0002 },
+		{ SDL_GAMEPAD_BUTTON_DPAD_LEFT, 0x0004 },
+		{ SDL_GAMEPAD_BUTTON_DPAD_RIGHT, 0x0008 },
+		{ SDL_GAMEPAD_BUTTON_START, 0x0010 },
+		{ SDL_GAMEPAD_BUTTON_BACK, 0x0020 },
+		{ SDL_GAMEPAD_BUTTON_LEFT_STICK, 0x0040 },
+		{ SDL_GAMEPAD_BUTTON_RIGHT_STICK, 0x0080 },
+		{ SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, 0x0100 },
+		{ SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0x0200 },
+		{ SDL_GAMEPAD_BUTTON_SOUTH, 0x1000 },
+		{ SDL_GAMEPAD_BUTTON_EAST, 0x2000 },
+		{ SDL_GAMEPAD_BUTTON_WEST, 0x4000 },
+		{ SDL_GAMEPAD_BUTTON_NORTH, 0x8000 },
+	};
+	SDL_Gamepad *gamepads[PORT_COUNT];
+	SDL_Gamepad *gamepad;
+	struct platform_input_state input;
+	int count;
+	int index;
+
+	memset(pad, 0, sizeof(*pad));
+	count = sdl_gamepads(gamepads);
+	gamepad = port_gamepad(gamepads, count, 0);
+	if (gamepad)
+	{
+		for (index = 0; index < (int)(sizeof(buttons) / sizeof(buttons[0])); index++)
+		{
+			if (SDL_GetGamepadButton(gamepad, buttons[index].button))
+				pad->buttons |= buttons[index].mask;
+		}
+		pad->triggers[0] = (unsigned char)(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * 255 / 32767);
+		pad->triggers[1] = (unsigned char)(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 255 / 32767);
+		pad->left[0] = stick(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX), FALSE);
+		pad->left[1] = stick(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY), TRUE);
+		pad->right[0] = stick(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX), FALSE);
+		pad->right[1] = stick(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY), TRUE);
+	}
+
+	platform_input_read(&input, FALSE);
+	if (input.menus || console_is_active())
+		return;
+	skate_keys_stick(&input, SDL_SCANCODE_A, SDL_SCANCODE_D, SDL_SCANCODE_W, SDL_SCANCODE_S, pad->left);
+	skate_keys_stick(&input, SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, pad->right);
+	skate_key(&input, SDL_SCANCODE_SPACE, &pad->buttons, 0x1000);
+	skate_key(&input, SDL_SCANCODE_E, &pad->buttons, 0x2000);
+	skate_key(&input, SDL_SCANCODE_LSHIFT, &pad->buttons, 0x4000);
+	skate_key(&input, SDL_SCANCODE_Q, &pad->buttons, 0x8000);
+	skate_key(&input, SDL_SCANCODE_1, &pad->buttons, 0x0100);
+	skate_key(&input, SDL_SCANCODE_3, &pad->buttons, 0x0200);
+	if (input.keys[SDL_SCANCODE_Z])
+		pad->triggers[0] = 255;
+	if (input.keys[SDL_SCANCODE_C])
+		pad->triggers[1] = 255;
 }

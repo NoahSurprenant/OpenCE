@@ -17,6 +17,9 @@ from .embed_assets import hud_assets_build, hud_configure_inputs
 from .ninja_syntax import Writer
 
 PORT_DIR = Path("port/linux")
+# Skate 3 mode's Rust workspace (port/skate) and the target the game's ABI needs
+SKATE_DIR = Path("port/skate")
+SKATE_TARGET = "i686-unknown-linux-gnu"
 PORT_CONFIG = PORT_DIR / "port.json"
 # the Xbox SDK declarations the game and the platform layer use, in place of
 # the SDK's headers (port/include/xdk/README.md)
@@ -407,6 +410,26 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
     port_include = PORT_DIR / "include"
     sdk_flags = f"-idirafter {XDK_INCLUDE}"
     libs = " ".join(f"-l{lib}" for lib in config.get("libraries", []))
+    # Skate 3 mode (configure.py --skate, port/skate): the skate engine, a Rust
+    # static library cargo makes, and the define that turns its calls on
+    skate_define = ""
+    skate_link_inputs: List[Path] = []
+    if getattr(sln, "port_skate", False):
+        skate_define = "-DHALO_SKATE"
+        skate_library = SKATE_DIR / "target" / SKATE_TARGET / "release" / "libhalo_skate.a"
+        n.rule(
+            name="linux_cargo",
+            command=f"cargo build --release --manifest-path {SKATE_DIR / 'Cargo.toml'} --config {SKATE_DIR / '.cargo' / 'config.toml'} --target {SKATE_TARGET} -p halo-skate",
+            description="CARGO $out",
+            pool="console",
+            # (cargo leaves an up-to-date library alone)
+            restat=True,
+        )
+        n.build(outputs="skate_always", rule="phony")
+        n.build(outputs=skate_library, rule="linux_cargo", implicit=["skate_always"])
+        skate_link_inputs.append(skate_library)
+        # (and what Rust's standard library needs beyond the game's own)
+        libs = f"{libs} {skate_library} -lgcc_s -lutil -lrt"
 
     def emit(obj_dir: Path, output: Path, extra_cflags: List[str], extra_ldflags: List[str],
              implicit_inputs: List[Path], validator: Optional[Path] = None) -> None:
@@ -444,6 +467,7 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
             f"-iquote {Path(config['game_sources'])}",
             game_defines_and_includes(config),
             sdk_flags,
+            skate_define,
         ])
         for source in game_sources(config):
             # The halt screen and version command identify this native build.
@@ -471,6 +495,7 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
             f"-I{ZLIB_DIR}",
             "-Isource -Isource/cseries",
             sdk_flags,
+            skate_define,
         ])
         posix_cflags = " ".join(POSIX_FLAGS + [march_flag(sln), f"-I{platform_dir}"])
         mbedtls_include = f"-I{MBEDTLS_DIR / 'include'}"
@@ -535,7 +560,7 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
                                        for name in ("open", "open64", "openat", "openat64"))]),
                 "libs": libs,
             },
-            implicit=[Path("tools/linux_link_check.py")],
+            implicit=[Path("tools/linux_link_check.py"), *skate_link_inputs],
         )
 
         # the tag validator (port/linux/game/tag_validate.c, tag_schema*.c)

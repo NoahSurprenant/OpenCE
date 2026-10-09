@@ -47,7 +47,8 @@ import java.util.zip.ZipInputStream;
  * app must keep for Android to install a new version over it.
  */
 final class Updater {
-    private static final String REPOSITORY = "OpenCommunityEdition/OpenCE";
+    // the releases this app updates from: this fork's
+    private static final String REPOSITORY = "NoahSurprenant/OpenCE";
     private static final String USER_AGENT = "halo-ce-universal-updater";
     private static final int TIMEOUT_MILLISECONDS = 20000;
 

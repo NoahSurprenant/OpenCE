@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .linux_build import (LINUX_PROFILE, MINIUPNPC_DIR, OPTIMISATION, WINDOWS_PROFILE, XDK_INCLUDE, lto_mode,
+from .linux_build import (LINUX_PROFILE, MINIUPNPC_DIR, OPTIMISATION, SKATE_DIR, WINDOWS_PROFILE, XDK_INCLUDE, lto_mode,
                           march_flag, miniupnpc_sources, pgo_mode, compile_launcher, game_defines_and_includes,
                           game_sources, musl_math_cflags, musl_math_sources, opus_cflags, opus_sources, pgo_profile,
                           profile_use_flags, xdk_headers)
@@ -29,6 +29,8 @@ LINUX_DIR = Path("port/linux")
 PORT_DIR = Path("port/windows")
 PORT_CONFIG = PORT_DIR / "port.json"
 BUILD = Path("build/windows")
+# the target of the skate engine (port/skate) for this ABI
+SKATE_TARGET = "i686-pc-windows-msvc"
 
 SDL_VERSION = "3.4.16"
 SDL_URL = (
@@ -311,6 +313,28 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
         [_quote(SDL_DIR / "lib" / "x86" / "SDL3.lib")]
         + [f"-l{lib}" for lib in config.get("libraries", [])]
     )
+    # Skate 3 mode (configure.py --skate, port/skate), as on Linux: the skate
+    # engine, a Rust static library cargo makes with the static C runtime
+    # (port/skate/.cargo/config.toml), and the define that turns its calls on
+    skate_define = ""
+    skate_link_inputs: List[Path] = []
+    if getattr(sln, "port_skate", False):
+        skate_define = "-DHALO_SKATE"
+        skate_library = SKATE_DIR / "target" / SKATE_TARGET / "release" / "halo_skate.lib"
+        n.rule(
+            name="windows_cargo",
+            command=f"cargo build --release --manifest-path {SKATE_DIR / 'Cargo.toml'} --config {SKATE_DIR / '.cargo' / 'config.toml'} --target {SKATE_TARGET} -p halo-skate",
+            description="CARGO $out",
+            pool="console",
+            # (cargo leaves an up-to-date library alone)
+            restat=True,
+        )
+        n.build(outputs="skate_always_windows", rule="phony")
+        n.build(outputs=skate_library, rule="windows_cargo", implicit=["skate_always_windows"])
+        skate_link_inputs.append(skate_library)
+        # (and what Rust's standard library needs)
+        libs = " ".join([libs, _quote(skate_library),
+                         *(f"-l{lib}" for lib in ("kernel32", "ntdll", "userenv", "ws2_32", "dbghelp"))])
     base_ldflags = [
         "--target=i686-pc-windows-msvc",
         "-fuse-ld=lld",
@@ -364,6 +388,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
             # the Xbox SDK declarations (port/include/xdk) come before the
             # Windows SDK, which has headers of the same names
             f"-I{XDK_INCLUDE}",
+            skate_define,
         ])
         for source in game_sources(linux_config):
             # The halt screen and version command identify this native build.
@@ -394,6 +419,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
             "-Isource -Isource/cseries",
             f"-I{_quote(sdl_include)}",
             f"-I{XDK_INCLUDE}",
+            skate_define,
         ])
         win32_cflags = " ".join([
             abi,
@@ -455,6 +481,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
             rule="windows_link",
             inputs=objects + extra_objects,
             variables={"ldflags": " ".join(base_ldflags + extra_ldflags), "libs": libs},
+            implicit=skate_link_inputs,
         )
 
     # Profile-guided optimisation: with the committed Windows profile (or
