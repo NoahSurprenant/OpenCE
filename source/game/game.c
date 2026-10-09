@@ -182,6 +182,7 @@ struct game_options;
 #include "units/units.h"
 #include "units/vehicles.h"
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -340,6 +341,8 @@ void game_tick(
 	else
 		network_actors_drive();
 	players_update_before_game();
+	/* port: Skate 3 mode puts a skating biped on its board (skate.c) */
+	skate_update_before_objects();
 
 	seconds_per_tick = game_globals->players_are_double_speed
 		? 1.0f / (2 * TICKS_PER_SECOND)
@@ -364,6 +367,8 @@ void game_tick(
 		hs_update();
 	recorded_animations_update();
 	objects_update();
+	/* port: and poses it as the skater, before the tick is kept for drawing */
+	skate_update_after_objects();
 	players_update_after_game();
 	hud_update();
 	player_effect_update();

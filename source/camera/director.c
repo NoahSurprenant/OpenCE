@@ -137,6 +137,7 @@ symbols in this file:
 
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -332,6 +333,9 @@ short director_desired_perspective(
 	short following = FALSE;
 
 	*perspective = 0;
+	/* port: a skater is watched from behind (skate.c) */
+	if (skate_unit_is_skating(unit_index))
+		return TRUE;
 	if (unit_index != NONE)
 	{
 		struct unit_datum *unit = unit_get(unit_index);

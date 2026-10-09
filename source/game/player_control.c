@@ -210,6 +210,7 @@ symbols in this file:
 
 #include "real_math.h"
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 /* ---------- constants */
 
@@ -637,6 +638,18 @@ static void handle_one_player_input(
 	if (director_inhibited_input(local_player_index))
 	{
 		csmemset(&input, 0, sizeof(input));
+	}
+	/* port: on a skateboard the pad is the skate engine's, and the camera
+	keeps behind the board (skate.c) */
+	{
+		real skate_yaw;
+
+		if (skate_local_player_skating(local_player_index, &skate_yaw))
+		{
+			csmemset(&input, 0, sizeof(input));
+			player->desired_angles.yaw = skate_yaw;
+			player->desired_angles.pitch = SKATE_CAMERA_PITCH;
+		}
 	}
 
 	if (game_connection() == _game_connection_local)

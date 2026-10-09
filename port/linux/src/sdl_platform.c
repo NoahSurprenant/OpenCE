@@ -30,6 +30,9 @@ static SDL_ThreadID platform_event_thread;
 static BOOL platform_sdl_started = FALSE;
 
 static struct platform_input_state input_state;
+/* J was pressed since the game last asked (halo_skate_platform_toggle_pressed) */
+static BOOL skate_toggle_pressed;
+extern unsigned char console_is_active(void);
 /* keys pressed since the last read, so a press and release between two
 reads still counts as a press (input injected on Android, or a slow frame) */
 static unsigned char keys_pressed[SDL_SCANCODE_COUNT];
@@ -1372,6 +1375,12 @@ void platform_pump_events(void)
 			{
 				scoreboard_pages += event.key.scancode == SDL_SCANCODE_PAGEDOWN ? 1 : -1;
 			}
+			/* J gets on or off the skateboard (port/linux/game/skate.c) */
+			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_J &&
+				!input_state.menus && !console_is_active())
+			{
+				skate_toggle_pressed = TRUE;
+			}
 			/* F12 releases or recaptures the mouse */
 			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F12)
 			{
@@ -1692,4 +1701,16 @@ void platform_input_read(struct platform_input_state *state, BOOL consume_motion
 		input_state.mouse_wheel = 0;
 	}
 	pthread_mutex_unlock(&input_lock);
+}
+
+/* whether J was pressed since the last call (port/linux/game/skate.c) */
+int halo_skate_platform_toggle_pressed(void)
+{
+	BOOL pressed;
+
+	pthread_mutex_lock(&input_lock);
+	pressed = skate_toggle_pressed;
+	skate_toggle_pressed = FALSE;
+	pthread_mutex_unlock(&input_lock);
+	return pressed;
 }
