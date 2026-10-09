@@ -46,7 +46,8 @@ update.h's: posix_update.c on Linux, win32_update.c on Windows.
 #define HALO_BUILD_FLAVOR "release"
 #endif
 
-#define UPDATE_REPOSITORY "OpenCommunityEdition/OpenCE"
+/* the releases this build updates from: this fork's (the Skate 3 builds) */
+#define UPDATE_REPOSITORY "NoahSurprenant/OpenCE"
 #ifdef _WIN32
 #define UPDATE_PLATFORM "windows"
 #define PATH_SEPARATOR "\\"
