@@ -12,8 +12,8 @@ own copy of Skate 3, and none of the game's files are included here.
 
 ## What you need
 
-- A Linux build made with `--skate` (below). Windows and Android builds compile
-  the hooks but never skate.
+- A Linux or Windows build made with `--skate` (below). Android builds
+  compile the hooks but never skate.
 - **Skate 3 for Xbox 360, extracted** (`default.xex` with its `data` folder),
   converted once into the folder the engine reads. Use the mashup's converter,
   `iw4l-skate-convert.exe` from its Windows release, or its
@@ -26,16 +26,39 @@ own copy of Skate 3, and none of the game's files are included here.
 
   The result is `skate-data/assets`. The game reads `HALO_SKATE_ASSETS`, or
   `skate-data/assets` in the folder it starts in.
-- A controller is best. The keyboard works too: WASD is the left stick, the
-  arrow keys the right stick (the flick-it tricks), Space A, E B, Left Shift X,
-  Q Y, Z and C the triggers, 1 and 3 the shoulders.
+- A controller, or the keyboard (below).
+
+## Controls
+
+Skate 3's own controls, on a controller or on the keyboard standing in for
+one. Both work at once.
+
+| Skate 3 | controller | keyboard |
+| --- | --- | --- |
+| get on or off the board | click both sticks in | J |
+| steer and lean | left stick | W A S D |
+| flick-it tricks (ollie, flips) | right stick | arrow keys |
+| push | A | Space |
+| B | B | E |
+| X | X | Left Shift |
+| Y | Y | Q |
+| grabs | LT, RT | Z, C |
+| shoulders | LB, RB | 1, 3 |
+
+The flick-it tricks are stick gestures (pull down, then flick up for an
+ollie), so they play best on a stick: an arrow key only pushes it all the
+way. While skating, Halo's own movement, firing and looking are off, and the
+camera stays behind the board.
 
 ## Build
 
-You need a recent stable Rust (it was built with 1.99) with the `i686-unknown-linux-gnu`
-target, and the 32-bit `libgcc_s` at run time (`lib32-gcc-libs` on Arch,
-`lib32gcc-s1` on Debian and Ubuntu), besides the usual
-[Linux requirements](../linux/README.md).
+You need a recent stable Rust (it was built with 1.99) besides the usual
+requirements of each platform. `ninja` runs `cargo build` for `port/skate`
+and links the engine into the game. The first build compiles the engine and
+its Bevy dependencies, a few minutes.
+
+**Linux** ([requirements](../linux/README.md)), and the 32-bit `libgcc_s` at
+run time (`lib32-gcc-libs` on Arch, `lib32gcc-s1` on Debian and Ubuntu):
 
 ```text
 rustup target add i686-unknown-linux-gnu
@@ -43,8 +66,19 @@ python configure.py --skate
 ninja linux
 ```
 
-`ninja` runs `cargo build` in `port/skate` and links `libhalo_skate.a`. The
-first build compiles the engine and its Bevy dependencies, a few minutes.
+**Windows** ([requirements](../windows/README.md); cargo compiles the
+engine's bits of C with the Visual Studio Build Tools you already have):
+
+```text
+rustup target add i686-pc-windows-msvc
+python configure.py --skate
+ninja windows
+```
+
+On Windows the engine is built with the static C runtime, as the game is
+(`.cargo/config.toml`), and its own XInput polling is left out (the
+`xinput` feature of `skate-host`): the game hands it the pad, and defines
+`XInputGetState` itself.
 
 ## How it works
 
@@ -64,8 +98,9 @@ ticks at 60 Hz, so each 30 Hz game tick runs two engine ticks.
 ## Known gaps
 
 - **Not play-tested yet.** It builds and links, and the library was exercised
-  from C on 32-bit (map load, rail finding, failure without Skate 3 data), but
-  not in a game.
+  from C on 32-bit Linux and as a Windows program under Wine (map load, rail
+  finding, failure without Skate 3 data), but not in a game. The Windows
+  build was cross-compiled and linked on Linux, not built on Windows.
 - **The board is not drawn.** The skater stands on nothing visible.
 - **Only the level's BSP is solid.** Scenery, vehicles and other objects are
   not part of the skater's collision; they are passed through.

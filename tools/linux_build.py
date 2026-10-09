@@ -419,7 +419,7 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
         skate_library = SKATE_DIR / "target" / SKATE_TARGET / "release" / "libhalo_skate.a"
         n.rule(
             name="linux_cargo",
-            command=f"cargo build --release --manifest-path {SKATE_DIR / 'Cargo.toml'} --target {SKATE_TARGET} -p halo-skate",
+            command=f"cargo build --release --manifest-path {SKATE_DIR / 'Cargo.toml'} --config {SKATE_DIR / '.cargo' / 'config.toml'} --target {SKATE_TARGET} -p halo-skate",
             description="CARGO $out",
             pool="console",
             # (cargo leaves an up-to-date library alone)

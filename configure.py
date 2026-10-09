@@ -66,7 +66,7 @@ parser.add_argument(
 parser.add_argument(
     "--skate",
     action="store_true",
-    help="Skate 3 mode (Linux; port/skate/README.md): builds the skate engine with cargo for i686 and links it",
+    help="Skate 3 mode (Linux, Windows; port/skate/README.md): builds the skate engine with cargo and links it",
 )
 parser.add_argument(
     "--android-ndk",

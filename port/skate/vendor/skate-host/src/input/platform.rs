@@ -13,7 +13,7 @@ pub(crate) enum DeviceError {
     Disconnected,
     State(u32),
     Capabilities(u32),
-    #[cfg(not(windows))]
+    #[cfg(not(all(windows, feature = "xinput")))]
     UnsupportedPlatform,
 }
 
@@ -45,7 +45,7 @@ impl CapabilityCache {
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "xinput"))]
 mod windows {
     use super::*;
     use std::mem::MaybeUninit;
@@ -135,9 +135,9 @@ pub(crate) fn poll_cached(
     cache: &mut CapabilityCache,
 ) -> Result<DevicePacket, DeviceError> {
     assert!(index < 4);
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "xinput"))]
     return windows::poll(index as u32, cache);
-    #[cfg(not(windows))]
+    #[cfg(not(all(windows, feature = "xinput")))]
     Err(DeviceError::UnsupportedPlatform)
 }
 
