@@ -35,7 +35,7 @@ one. Both work at once.
 
 | Skate 3 | controller | keyboard |
 | --- | --- | --- |
-| get on or off the board | click both sticks in | J |
+| get on or off the board | click both sticks in (below) | J |
 | steer and lean | left stick | W A S D |
 | flick-it tricks (ollie, flips) | right stick | arrow keys |
 | push | A | Space |
@@ -51,6 +51,13 @@ way. While skating, Halo's own movement, firing and looking are off, and the
 camera follows from behind, turning to the way you travel: rolling back off
 a wall (fakie, still facing it), it comes round in about a third of a
 second. Slower than 1 m/s it holds its heading.
+
+Halo crouches on the left stick's click and zooms on the right's, so in a
+build with Skate 3 mode the first controller's stick clicks reach Halo a
+tenth of a second late (`xinput_sdl.c`): a click the other stick joins in
+that time is the board's alone, and Halo sees neither until both are let
+go. A click held longer reaches Halo, and a quicker tap still does, briefly,
+once let go.
 
 On the board the crosshair is a small dot, and the weapon is holstered: a
 pistol on the right thigh, a rifle or anything larger across the back
@@ -155,13 +162,22 @@ Each tick, `rig.rs` measures instead: under the middle of each of the
 skater's feet (between its ankle and toe bones) it finds the top of the board
 as drawn (grown, `board.rs`'s `deck_top`): the highest board triangle the
 line through the foot along the board's up crosses, the board's up being the
-skater's; or, if none does (a heel off the tail), the highest board vertex
-within 10 cm of that line. Chief's skeleton then moves along the board's up
-so his ankles are his own ankle height above it, plus `skate_feet_offset`
-(the mean of both feet, as the ankles are). That is done while both of the
-skater's ankles are within 15 cm above the deck; between 15 and 35 cm, or
-with no deck under a foot (a flip), it fades out, and Chief's ankles follow
-the skater's as before, so he does not snap to a spinning board.
+skater's. Just past the board's edge it takes the nearest triangles' height
+at the edge instead, counting less the further past it the foot is, down to
+nothing 10 cm out.
+
+Each foot counts as on the deck by how near the skater's ankle is to it:
+fully from the deck's top to 15 cm above it, not at all from 35 cm above it
+(lifted, in the air) or 10 cm below it (pushing, down at the ground), and
+partly between. Each foot on the deck asks for the move along the board's up
+that puts Chief's matching ankle his own ankle height, plus
+`skate_feet_offset`, above the deck under it; Chief's skeleton takes those
+feet's moves, weighed by how much each is on the deck. So with both feet on
+it he rests on the deck by both; while one pushes or is lifted he stands on
+the other alone; and a foot leaving or coming back slides him across rather
+than jumping. As both feet leave the deck (an ollie, a flip) it fades out,
+and his ankles follow the skater's as before, so he does not snap to a
+spinning board.
 
 Chief's ankle height comes from his model's bind pose (`skate.c`): his foot
 nodes' height above the lowest vertex within 0.15 world units of them, or,

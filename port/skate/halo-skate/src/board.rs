@@ -257,60 +257,96 @@ pub fn scale_about_middle(vertices: &mut [f32], scale: f32) {
     }
 }
 
-/// How the deck's top was found under a foot (`deck_top`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DeckHit {
-    /// a triangle crosses the line through the foot along the board's up
-    Triangle,
-    /// no triangle does: the highest vertex within the radius
-    Vertex,
+/// The top of the deck under a foot (`deck_top`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeckTop {
+    /// its height along the board's up
+    pub height: f32,
+    /// how far the foot is past the board's edge, across it, 0 when over it
+    pub past_edge: f32,
+    /// 1 over the board, falling to 0 at the radius past its edge
+    pub weight: f32,
 }
 
-/// The height along `up` (a unit vector) of the top of the skinned board
-/// (VERTEX_FLOATS a vertex) under `point`: the highest of the board's
-/// triangles that the line through `point` along `up` crosses, or, when it
-/// crosses none (a foot just past the deck's end), the highest vertex within
-/// `radius` of that line. None when there is neither, as when the board has
-/// flipped away from the foot.
-pub fn deck_top(vertices: &[f32], indices: &[u32], point: Vec3, up: Vec3, radius: f32) -> Option<(f32, DeckHit)> {
+/// The nearest point of a triangle in the plane to the plane's origin: its
+/// distance there and its barycentric coordinates.
+fn nearest_in_triangle(a: Vec2, b: Vec2, c: Vec2) -> Option<(f32, [f32; 3])> {
+    let area = (b - a).perp_dot(c - a);
+    if area.abs() < 1e-12 {
+        return None;
+    }
+    let wb = (-a).perp_dot(c - a) / area;
+    let wc = (b - a).perp_dot(-a) / area;
+    let wa = 1.0 - wb - wc;
+    if wa >= 0.0 && wb >= 0.0 && wc >= 0.0 {
+        return Some((0.0, [wa, wb, wc]));
+    }
+    // outside: the nearest point of its nearest edge
+    let edge = |p: Vec2, q: Vec2| {
+        let d = q - p;
+        let t = if d.length_squared() > 0.0 { (-p).dot(d) / d.length_squared() } else { 0.0 }.clamp(0.0, 1.0);
+        ((p + d * t).length(), t)
+    };
+    let (ab, t_ab) = edge(a, b);
+    let (bc, t_bc) = edge(b, c);
+    let (ca, t_ca) = edge(c, a);
+    Some(if ab <= bc && ab <= ca {
+        (ab, [1.0 - t_ab, t_ab, 0.0])
+    } else if bc <= ca {
+        (bc, [0.0, 1.0 - t_bc, t_bc])
+    } else {
+        (ca, [t_ca, 0.0, 1.0 - t_ca])
+    })
+}
+
+/// The top of the skinned board (VERTEX_FLOATS a vertex) under `point`,
+/// along `up` (a unit vector). Over the board, the highest of its triangles
+/// that the line through `point` along `up` crosses. Just past its edge (a
+/// foot stepping off it, a heel past the tail), the highest of the nearest
+/// triangles at their nearest points, which meets the first at the edge, so
+/// that the height does not jump there; its weight falls from 1 at the edge
+/// to 0 at `radius` past it. None further away, as when the board has flipped
+/// away from the foot.
+pub fn deck_top(vertices: &[f32], indices: &[u32], point: Vec3, up: Vec3, radius: f32) -> Option<DeckTop> {
     let count = vertices.len() / VERTEX_FLOATS;
-    let position = |i: usize| Vec3::new(vertices[i * VERTEX_FLOATS], vertices[i * VERTEX_FLOATS + 1], vertices[i * VERTEX_FLOATS + 2]);
+    let position = |i: usize| {
+        Vec3::new(vertices[i * VERTEX_FLOATS], vertices[i * VERTEX_FLOATS + 1], vertices[i * VERTEX_FLOATS + 2])
+    };
     // the board's plane, with `point` at its origin
     let side = up.any_orthonormal_vector();
     let other = up.cross(side);
     let flat = |p: Vec3| Vec2::new((p - point).dot(side), (p - point).dot(other));
+    // triangles this much further than the nearest still count as nearest
+    // (the deck's top and bottom faces end at its edge alike)
+    let tie = radius * 0.1;
 
-    let mut best: Option<f32> = None;
+    let mut candidates: Vec<(f32, f32)> = Vec::new();
     for triangle in indices.chunks_exact(3) {
         let [a, b, c] = [triangle[0], triangle[1], triangle[2]].map(|i| i as usize);
         if a >= count || b >= count || c >= count {
             continue;
         }
         let (pa, pb, pc) = (position(a), position(b), position(c));
-        let (fa, fb, fc) = (flat(pa), flat(pb), flat(pc));
-        // the barycentric coordinates of the plane's origin, where the line is
-        let area = (fb - fa).perp_dot(fc - fa);
-        if area.abs() < 1e-12 {
+        let Some((distance, [wa, wb, wc])) = nearest_in_triangle(flat(pa), flat(pb), flat(pc)) else {
             continue;
+        };
+        if distance <= radius {
+            candidates.push((distance, (pa * wa + pb * wb + pc * wc).dot(up)));
         }
-        let wb = (-fa).perp_dot(fc - fa) / area;
-        let wc = (fb - fa).perp_dot(-fa) / area;
-        let wa = 1.0 - wb - wc;
-        if wa < 0.0 || wb < 0.0 || wc < 0.0 {
-            continue;
-        }
-        let height = (pa * wa + pb * wb + pc * wc).dot(up);
-        best = Some(best.map_or(height, |h| h.max(height)));
     }
-    if let Some(height) = best {
-        return Some((height, DeckHit::Triangle));
-    }
-    (0..count)
-        .map(position)
-        .filter(|&p| flat(p).length_squared() <= radius * radius)
-        .map(|p| p.dot(up))
-        .reduce(f32::max)
-        .map(|height| (height, DeckHit::Vertex))
+    let nearest = candidates.iter().map(|&(d, _)| d).reduce(f32::min)?;
+    // (growing from none at the edge, so that the height has no step there)
+    let within = nearest + nearest.min(tie);
+    let height = candidates
+        .iter()
+        .filter(|&&(d, _)| d <= within)
+        .map(|&(_, h)| h)
+        .reduce(f32::max)?;
+    Some(DeckTop {
+        height,
+        past_edge: nearest,
+        weight: (1.0 - nearest / radius).clamp(0.0, 1.0),
+    })
 }
 
 fn decode_image(image: &gltf::Image, blob: Option<&[u8]>) -> Result<Texture, String> {
@@ -544,8 +580,8 @@ mod tests {
     }
 
     /// A deck 0.8 by 0.2 world units with its top at z = 1 (two triangles), a
-    /// plate under it, a truck vertex below its middle, and a kicked-up tail
-    /// vertex past its end.
+    /// plate under it, a truck vertex below its middle (in no triangle), and
+    /// a kicked-up tail triangle past its end, rising to z = 1.03.
     fn synthetic_board() -> (Vec<f32>, Vec<u32>) {
         let points = [
             [-0.4, -0.1, 1.0],
@@ -557,28 +593,56 @@ mod tests {
             [0.4, 0.1, 0.97],
             [-0.4, 0.1, 0.97],
             [0.0, 0.0, 0.9],
-            [-0.45, 0.0, 1.03],
+            [-0.45, -0.1, 1.03],
+            [-0.45, 0.1, 1.03],
         ];
         let vertices = points
             .iter()
             .flat_map(|p| [p[0], p[1], p[2], 0.0, 0.0, 1.0, 0.5, 0.5])
             .collect();
-        (vertices, vec![0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6])
+        (vertices, vec![0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 9, 0, 3, 9, 3, 10])
+    }
+
+    fn top(point: Vec3) -> Option<DeckTop> {
+        let (vertices, indices) = synthetic_board();
+        deck_top(&vertices, &indices, point, Vec3::Z, 0.03)
     }
 
     #[test]
     fn the_deck_top_is_measured_under_a_foot() {
-        let (vertices, indices) = synthetic_board();
         // above the deck, or below it: the top triangle, not the plate
-        let (height, hit) = deck_top(&vertices, &indices, Vec3::new(0.1, 0.05, 1.08), Vec3::Z, 0.03).unwrap();
-        assert!((height - 1.0).abs() < 1e-5 && hit == DeckHit::Triangle, "{height} {hit:?}");
-        let (height, _) = deck_top(&vertices, &indices, Vec3::new(-0.3, 0.0, 0.5), Vec3::Z, 0.03).unwrap();
-        assert!((height - 1.0).abs() < 1e-5, "{height}");
-        // past the deck's end: the tail's vertex within the radius
-        let (height, hit) = deck_top(&vertices, &indices, Vec3::new(-0.43, 0.0, 1.1), Vec3::Z, 0.03).unwrap();
-        assert!((height - 1.03).abs() < 1e-5 && hit == DeckHit::Vertex, "{height} {hit:?}");
+        let found = top(Vec3::new(0.1, 0.05, 1.08)).unwrap();
+        assert!((found.height - 1.0).abs() < 1e-5 && found.weight == 1.0 && found.past_edge == 0.0, "{found:?}");
+        let found = top(Vec3::new(-0.3, 0.0, 0.5)).unwrap();
+        assert!((found.height - 1.0).abs() < 1e-5, "{found:?}");
+        // over the kicked-up tail
+        let found = top(Vec3::new(-0.425, 0.0, 1.1)).unwrap();
+        assert!((found.height - 1.015).abs() < 1e-5 && found.weight == 1.0, "{found:?}");
         // nowhere near the board
-        assert!(deck_top(&vertices, &indices, Vec3::new(2.0, 0.0, 1.1), Vec3::Z, 0.03).is_none());
+        assert!(top(Vec3::new(2.0, 0.0, 1.1)).is_none());
+    }
+
+    #[test]
+    fn stepping_off_the_side_fades_without_a_step() {
+        // across the deck's side edge (y = 0.1) and out to the radius past it
+        let mut last = top(Vec3::new(0.1, 0.09, 1.1)).unwrap();
+        for step in 1..=40 {
+            let y = 0.09 + step as f32 * 0.001;
+            let Some(found) = top(Vec3::new(0.1, y, 1.1)) else {
+                assert!(y > 0.1 + 0.03 - 1e-4, "lost at {y}");
+                break;
+            };
+            assert!((found.height - last.height).abs() < 0.002, "a step at {y}: {last:?} to {found:?}");
+            assert!((found.weight - last.weight).abs() < 0.05, "a weight step at {y}");
+            assert!(found.weight <= last.weight);
+            if y > 0.1 {
+                assert!((found.past_edge - (y - 0.1)).abs() < 1e-4, "{found:?} at {y}");
+            }
+            last = found;
+        }
+        // at the edge on the deck's top, half way out half the weight
+        let found = top(Vec3::new(0.1, 0.115, 1.1)).unwrap();
+        assert!((found.height - 1.0).abs() < 1e-4 && (found.weight - 0.5).abs() < 1e-3, "{found:?}");
     }
 
     #[test]
@@ -593,9 +657,9 @@ mod tests {
         }
         let up = turn * Vec3::Z;
         let foot = turn * Vec3::new(0.2, -0.05, 1.1) + offset;
-        let (height, hit) = deck_top(&vertices, &indices, foot, up, 0.03).unwrap();
+        let found = deck_top(&vertices, &indices, foot, up, 0.03).unwrap();
         let expected = (turn * Vec3::new(0.2, -0.05, 1.0) + offset).dot(up);
-        assert!((height - expected).abs() < 1e-4 && hit == DeckHit::Triangle, "{height} != {expected}");
+        assert!((found.height - expected).abs() < 1e-4 && found.weight == 1.0, "{found:?} != {expected}");
     }
 
     #[test]
@@ -605,7 +669,7 @@ mod tests {
         let middle = before
             .chunks_exact(VERTEX_FLOATS)
             .fold(Vec3::ZERO, |sum, v| sum + Vec3::new(v[0], v[1], v[2]))
-            / 10.0;
+            / 11.0;
         scale_about_middle(&mut vertices, 1.05);
         for (after, before) in vertices.chunks_exact(VERTEX_FLOATS).zip(before.chunks_exact(VERTEX_FLOATS)) {
             let a = Vec3::new(after[0], after[1], after[2]);
@@ -623,7 +687,7 @@ mod tests {
         let after = vertices
             .chunks_exact(VERTEX_FLOATS)
             .fold(Vec3::ZERO, |sum, v| sum + Vec3::new(v[0], v[1], v[2]))
-            / 10.0;
+            / 11.0;
         assert!((after - middle).length() < 1e-5);
         // a scale of 1, or one that makes no sense, leaves it alone
         let mut same = before.clone();
