@@ -261,7 +261,7 @@ jobs:
 
   skate-assets:
     # Skate 3 mode's engine tests against the real Skate 3 data
-    # (port/skate/halo-skate/tests/real_assets.rs; port/skate/README.md), which
+    # (port/skate/halo-skate/tests/real_assets*.rs; port/skate/README.md), which
     # GitHub's runners cannot have: the owner's own runner, opence-k8s (the
     # arc-opence runner set in the owner's homelab), has it read-only at
     # /skate-assets. It holds nothing else - no secrets, no way into the
@@ -312,12 +312,20 @@ jobs:
           key: skate-assets-${{ hashFiles('port/skate/**/Cargo.lock', 'port/skate/**/*.rs', 'port/skate/**/Cargo.toml') }}
           restore-keys: skate-assets-
 
-      # As the README says; a test that says it skipped fails the job too.
+      # As the README says, every real-data test file
+      # (halo-skate/tests/real_assets*.rs: real_assets, real_assets_camera,
+      # and any added later) in one cargo test; a test that says it skipped,
+      # in any of them, fails the job too.
       - name: Test
         working-directory: port/skate
         run: |
           set -o pipefail
-          cargo test --release -p halo-skate --test real_assets -- --nocapture 2>&1 | tee "$RUNNER_TEMP/real_assets.log"
+          tests=()
+          for f in halo-skate/tests/real_assets*.rs; do
+            tests+=(--test "$(basename "$f" .rs)")
+          done
+          echo "real-data tests: ${tests[*]}"
+          cargo test --release -p halo-skate "${tests[@]}" -- --nocapture 2>&1 | tee "$RUNNER_TEMP/real_assets.log"
           if grep -q 'skipped, HALO_SKATE_TEST_ASSETS' "$RUNNER_TEMP/real_assets.log"; then
             echo "::error::a test skipped: HALO_SKATE_TEST_ASSETS did not reach it"
             exit 1

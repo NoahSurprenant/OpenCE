@@ -29,6 +29,17 @@ pub struct Pose {
     pub names: Vec<String>,
     pub camera: Option<(Vec3, Mat3, f32)>,
     pub velocity: Vec3,
+    /// halo-skate: the skater is off the board (state category 500:
+    /// BipedGround, BipedAir, a moving object), as the camera publication
+    /// tells its subject (`off_board`). `velocity` is the board's, always.
+    pub off_board: bool,
+    /// halo-skate: the skater's own velocity off the board (PhysOut
+    /// OffBoard64: the Biped's, or BipedAir's trajectory), metres a second.
+    pub skater_velocity: Vec3,
+    /// halo-skate: the way the skater faces: the skeleton root's forward,
+    /// turned round in the mirrored stance (Processed2476 bit 2), as the
+    /// camera's compass takes it (`effective_skeleton_root`).
+    pub facing: Vec3,
     pub tick: u64,
     pub state: String,
 }
@@ -184,6 +195,16 @@ impl Session {
                 )
             }),
             velocity: Vec3::new(v.x, v.y, v.z),
+            off_board: self.skater.player_input.physical.state.category_12 == 500,
+            skater_velocity: {
+                let v = self.skater.player_input.physical.off_board.vector_64.map(f32::from_bits);
+                Vec3::new(v[0], v[1], v[2])
+            },
+            facing: {
+                let forward = self.skater.animated_skeleton.roots.animation_to_world[2];
+                let forward = Vec3::new(forward[0], forward[1], forward[2]);
+                if self.skater.player_input.processed.flags_2476 & 4 != 0 { -forward } else { forward }
+            },
             tick: self.physics.ticks,
             state: format!("{:?}", self.skater.player_state.current()),
         }

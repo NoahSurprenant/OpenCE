@@ -406,6 +406,9 @@ mod tests {
             names: vec!["LEFTFOOT".into(), "RIGHTFOOT".into()],
             camera: None,
             velocity: Vec3::ZERO,
+            off_board: false,
+            skater_velocity: Vec3::ZERO,
+            facing: Vec3::Z,
             tick: 0,
             state: String::new(),
         }
@@ -520,6 +523,9 @@ mod tests {
             names: vec!["LEFTFOOT".into(), "RIGHTFOOT".into()],
             camera: None,
             velocity: Vec3::ZERO,
+            off_board: false,
+            skater_velocity: Vec3::ZERO,
+            facing: Vec3::Z,
             tick: 0,
             state: String::new(),
         }

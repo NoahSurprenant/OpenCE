@@ -82,12 +82,13 @@ static struct
 	unsigned short previous_buttons;
 	/* the biped's origin above the board's wheels */
 	real height;
-	/* the heading the following camera keeps: the way the skater travels */
-	real yaw;
+	/* the heading the following camera keeps: the way the board travels, or
+	off the board the way the skater walks (camera.rs) */
+	struct halo_skate_follow camera;
 	struct halo_skate_frame frame;
 	/* the skeleton was described again on this board (skate_update_after_objects) */
 	boolean skeleton_described_again;
-} skate_globals = { FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, 0.f };
+} skate_globals = { FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, { 0.f, 0.f } };
 
 /* the board grown about its middle: Master Chief (about 2.1 m) is larger
 than the skater it was made for (about 1.8 m) */
@@ -493,6 +494,7 @@ static void skate_apply_frame(long unit_index, boolean starting)
 	struct object_datum *object = object_get(unit_index);
 	real_point3d position;
 	real_vector3d forward, up;
+	float const *velocity;
 
 	position.x = skate_globals.frame.position[0];
 	position.y = skate_globals.frame.position[1];
@@ -504,27 +506,34 @@ static void skate_apply_frame(long unit_index, boolean starting)
 	if (normalize3d(&forward) == 0.f)
 		forward = object->object.forward;
 	up = *global_up3d;
-	/* the camera turns to the way the skater travels, not the way the body
-	faces: off a wall the skater rolls back fakie, still facing it */
+	/* the camera turns to the way the board travels, not the way the body
+	faces: off a wall the skater rolls back fakie, still facing it. Off the
+	board it follows the skater: the way it walks, or, stood still a while,
+	round behind the way it faces, wherever the board went */
 	if (starting)
-		skate_globals.yaw = (real)atan2(forward.j, forward.i);
+	{
+		skate_globals.camera.heading = (real)atan2(forward.j, forward.i);
+		skate_globals.camera.still = 0.f;
+	}
 	else
 	{
-		skate_globals.yaw = halo_skate_follow_heading(skate_globals.yaw, skate_globals.frame.velocity[0],
-			skate_globals.frame.velocity[1], skate_settings.camera_speed, SKATE_CAMERA_TURN);
+		halo_skate_follow(&skate_globals.camera, &skate_globals.frame, skate_settings.camera_speed,
+			SKATE_CAMERA_TURN, 1.f / TICKS_PER_SECOND);
 	}
 	/* (the player's desired yaw must be within 0 to 2 pi: player_control.c) */
-	if (!(skate_globals.yaw >= 0.f && skate_globals.yaw < 2.f * _pi))
-		skate_globals.yaw = (real)fmod(skate_globals.yaw, 2.f * _pi);
-	if (skate_globals.yaw < 0.f)
-		skate_globals.yaw += 2.f * _pi;
-	if (!(skate_globals.yaw >= 0.f && skate_globals.yaw < 2.f * _pi))
-		skate_globals.yaw = 0.f;
+	if (!(skate_globals.camera.heading >= 0.f && skate_globals.camera.heading < 2.f * _pi))
+		skate_globals.camera.heading = (real)fmod(skate_globals.camera.heading, 2.f * _pi);
+	if (skate_globals.camera.heading < 0.f)
+		skate_globals.camera.heading += 2.f * _pi;
+	if (!(skate_globals.camera.heading >= 0.f && skate_globals.camera.heading < 2.f * _pi))
+		skate_globals.camera.heading = 0.f;
 
 	object_set_position(unit_index, &position, &forward, &up);
-	object->object.translational_velocity.i = skate_globals.frame.velocity[0] / TICKS_PER_SECOND;
-	object->object.translational_velocity.j = skate_globals.frame.velocity[1] / TICKS_PER_SECOND;
-	object->object.translational_velocity.k = skate_globals.frame.velocity[2] / TICKS_PER_SECOND;
+	/* the biped moves with the skater: off the board, not with the board */
+	velocity = skate_globals.frame.off_board ? skate_globals.frame.skater_velocity : skate_globals.frame.velocity;
+	object->object.translational_velocity.i = velocity[0] / TICKS_PER_SECOND;
+	object->object.translational_velocity.j = velocity[1] / TICKS_PER_SECOND;
+	object->object.translational_velocity.k = velocity[2] / TICKS_PER_SECOND;
 }
 
 /* ---------- the board
@@ -845,10 +854,11 @@ void skate_update_before_objects(void)
 	if (stepped == 2)
 	{
 		/* a step failed (a bail the engine could not follow): the engine put
-		the skater back on the board where it last was, as J would */
+		the skater back on the board where it last was, as J would; the
+		camera turns from where it was rather than snapping round */
 		console_printf(FALSE, "skate: thrown, back on the board");
 		skate_board_forget();
-		skate_apply_frame(skate_globals.unit_index, TRUE);
+		skate_apply_frame(skate_globals.unit_index, FALSE);
 	}
 	else if (stepped >= 0)
 		skate_apply_frame(skate_globals.unit_index, FALSE);
@@ -1128,7 +1138,7 @@ boolean skate_local_player_skating(short local_player_index, real *yaw)
 	if (local_player_index != 0 || !skate_globals.skating)
 		return FALSE;
 	if (yaw)
-		*yaw = skate_globals.yaw;
+		*yaw = skate_globals.camera.heading;
 	return TRUE;
 }
 

@@ -268,3 +268,22 @@ fn limiter_keeps_quaternion_w_lane_fused_residuals() {
     let expected = second_w.mul_add(2.0, from[3]);
     assert_eq!(got[3].to_bits(), expected.to_bits());
 }
+#[test]
+fn a_w_lane_on_the_position_is_not_support_motion() {
+    // halo-skate: transform_point reads only x, y and z, so a position whose
+    // w was not 0 measured a support velocity of -60 w in w; its doubled
+    // prediction fed back grew w by the golden ratio a tick, flipping sign,
+    // to infinity in about 180 ticks standing on one support.
+    let mut s = state();
+    let mut i = input();
+    i.contact_flags_176 = 1;
+    s.frame_0[3] = [1.0, 2.0, 3.0, 1.0];
+    for tick in 0..600 {
+        update(&mut s, &i);
+        assert_eq!(s.support_velocity_256, ZERO, "tick {tick}");
+        assert_eq!(s.predicted_support_velocity_272, ZERO, "tick {tick}");
+        assert_eq!(s.frame_0[3][3], 1.0, "tick {tick}");
+    }
+    near(s.frame_0[3][0], 1.0);
+    near(s.frame_0[3][2], 3.0);
+}

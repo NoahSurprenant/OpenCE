@@ -12,6 +12,18 @@ pub struct PlacementInput {
 }
 impl State {
     pub fn place(&mut self, i: PlacementInput) {
+        // halo-skate: the Biped keeps geometric vectors, w 0, as the host's
+        // frames are (IDENTITY, the Rodrigues rotations). The entry frame comes
+        // from the skeleton, whose native fourth lanes are kept and need not be
+        // 0; carried into frame0 and the frame output, a w that was not 0 grew
+        // without bound (ground_motion::support) until a launch packet was NaN.
+        let i = PlacementInput {
+            frame: i.frame.map(geometric),
+            velocity: geometric(i.velocity),
+            body_position: geometric(i.body_position),
+            previous_frame: i.previous_frame.map(geometric),
+            ..i
+        };
         if i.current_state == 500 {
             self.reset();
             let delta = sub(self.correction_target_592, i.previous_frame[3]);
@@ -58,4 +70,9 @@ fn length(v: Vector) -> f32 {
     }
     let n = q * r;
     if q == 0.0 { 0.0 } else { n }
+}
+/// The vector with its fourth (w) lane 0.
+fn geometric(mut v: Vector) -> Vector {
+    v[3] = 0.0;
+    v
 }
