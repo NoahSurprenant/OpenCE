@@ -52,4 +52,32 @@ void halo_skate_suspend(void);
 int halo_skate_set_skeleton(int count, const char *names, const short *parents, const float *inverse_defaults);
 int halo_skate_pose_nodes(float *out, int capacity);
 
+/* the skateboard (board.rs): the board meshes of the converted skater model,
+skinned to the skater, which the game draws itself */
+#define HALO_SKATE_BOARD_VERTEX_FLOATS 8 /* position, normal, texture coordinate */
+#define HALO_SKATE_BOARD_TEXTURES 8 /* the most the game draws a board with */
+
+struct halo_skate_board_info
+{
+	unsigned int generation; /* changes when another board is loaded */
+	int vertex_count;
+	int index_count;
+	int surface_count;
+	int texture_count;
+};
+
+/* a run of triangles drawn with one texture */
+struct halo_skate_board_surface
+{
+	int first_index;
+	int index_count;
+	int texture;
+};
+
+int halo_skate_board_info(struct halo_skate_board_info *out);
+int halo_skate_board_mesh(unsigned int *indices, int index_capacity, struct halo_skate_board_surface *surfaces,
+	int surface_capacity);
+int halo_skate_board_texture(int index, int *width, int *height, unsigned char *rgba, int capacity);
+int halo_skate_board_vertices(float *out, int capacity);
+
 #endif

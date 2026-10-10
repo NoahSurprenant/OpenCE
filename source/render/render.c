@@ -87,6 +87,7 @@ symbols in this file:
 #include "effects/weather_particle_systems.h"
 #include "main/main.h"
 #include "structures/structures.h"
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 /* ---------- constants */
 
@@ -336,6 +337,8 @@ static void render_window(
 		first_person_weapon_render_update();
 		lights_preprocess_scene();
 		render_objects();
+		/* port: Skate 3 mode's board under the skater, with the objects (skate.c) */
+		skate_render_board();
 		structure_render_preprocess();
 		structure_render_lightmaps();
 		rasterizer_lens_flares_submit_occlusion_tests();

@@ -93,8 +93,9 @@ On Windows the engine is built with the static C runtime, as the game is
 | C interface | `halo-skate/src/lib.rs`, `include/halo_skate.h` | a worker thread with a 32 MB stack owns the skate session; the game sends it a preload, the map, an activation or a tick's pad, and waits (at most 250 ms) only for the pose |
 | grind rails | `halo-skate/src/rails.rs` | the mashup's rail finder, unchanged: walkable edges where the ground drops away and nothing rises, chained into rails |
 | retarget | `halo-skate/src/rig.rs` | each of the biped's `bip01` nodes keeps its bone lengths and turns to point where the skater's matching bone points; the pelvis and chest take the hips' and shoulders' twist; the feet are put on the skater's feet |
-| game glue | `../linux/game/skate.c` | the collision BSP as triangles, the toggle, the tick, the biped's position and node matrices |
-| hooks | `source/main/main.c`, `scenario/scenario.c`, `game/game.c`, `units/bipeds.c`, `game/player_control.c`, `camera/director.c` | preload the skater at startup; build each structure BSP's collision as it loads; step before the objects update and pose after it; skip a skating biped's own movement; give the pad to the engine; follow the skater with the third-person camera |
+| board | `halo-skate/src/board.rs`, `../linux/src/d3d8_gl.c` | the board meshes of the converted skater model (`private/skater.glb`: the skinned primitives whose material is named for the board, as the mashup picks them), skinned to the skater each tick; the game draws them between the last two ticks, as it draws the biped, right after the objects: depth tested, lit by the level's ambient and distant lights at the skater, without point lights or fog |
+| game glue | `../linux/game/skate.c` | the collision BSP as triangles, the toggle, the tick, the biped's position and node matrices, the board |
+| hooks | `source/main/main.c`, `scenario/scenario.c`, `game/game.c`, `units/bipeds.c`, `game/player_control.c`, `camera/director.c`, `render/render.c` | preload the skater at startup; build each structure BSP's collision as it loads; step before the objects update and pose after it; skip a skating biped's own movement; give the pad to the engine; follow the skater with the third-person camera; draw the board after the objects |
 | input | `../linux/src/sdl_platform.c`, `xinput_sdl.c` | J, and the first pad as an Xbox 360 pad |
 
 ### Loading
@@ -108,6 +109,8 @@ which finds its grind rails and builds and swaps in its collision, also in the
 background. J then gets on at once; pressed while something is still loading,
 it says so in the console and gets on when it is ready. The main menu's BSP is
 not loaded, and a BSP replaced before it was built is skipped.
+The preload also reads the board from the skater model (`private/skater.glb`)
+for the game to draw.
 
 The engine's log lines go through the port's log (`halo_skate_set_log`, set by
 `skate_initialize`): `halo.log` beside `halo.exe` on Windows, whose release
@@ -125,11 +128,13 @@ ticks at 60 Hz, so each 30 Hz game tick runs two engine ticks.
 
 ## Known gaps
 
-- **Not play-tested yet.** It builds and links, and the library was exercised
-  from C on 32-bit Linux and as a Windows program under Wine (map load, rail
-  finding, failure without Skate 3 data), but not in a game. The Windows
-  build was cross-compiled and linked on Linux, not built on Windows.
-- **The board is not drawn.** The skater stands on nothing visible.
+- **Play-tested in part.** The physics, the controls, the following camera
+  and the pose work in a game. The Windows build was cross-compiled and linked
+  on Linux, not built on Windows.
+- **The board is drawn but not seen yet.** It builds, and loading and skinning
+  are tested on a small model, but it has not been looked at in a game. A
+  skater model without board meshes leaves the board undrawn (the log says
+  why).
 - **Only the level's BSP is solid.** Scenery, vehicles and other objects are
   not part of the skater's collision; they are passed through.
 - **The node names are assumed.** The retarget expects the cyborg's
