@@ -206,7 +206,10 @@ static void skate_apply_frame(long unit_index)
 	if (normalize3d(&forward) == 0.f)
 		forward = object->object.forward;
 	up = *global_up3d;
+	/* (the player's desired yaw must be within 0 to 2 pi: player_control.c) */
 	skate_globals.yaw = (real)atan2(forward.j, forward.i);
+	if (skate_globals.yaw < 0.f)
+		skate_globals.yaw += 2.f * _pi;
 
 	object_set_position(unit_index, &position, &forward, &up);
 	object->object.translational_velocity.i = skate_globals.frame.velocity[0] / TICKS_PER_SECOND;
