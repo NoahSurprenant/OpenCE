@@ -55,6 +55,7 @@ symbols in this file:
 #include "units/units.h"
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 /* ---------- constants */
 
@@ -264,6 +265,17 @@ void following_camera_update(
 
 		camera_track_splut(camera_info.camera, facing.pitch, &track_offset);
 		command->depth = magnitude3d(&track_offset);
+		/* port: a skater is watched from far enough behind to see the board's
+		heading, whatever his own track gives: straight back along the view
+		(skate.c) */
+		if (skate_unit_is_skating(camera_info.unit_index) &&
+			command->depth < SKATE_CAMERA_MINIMUM_DISTANCE)
+		{
+			track_offset.i = 0.f;
+			track_offset.j = 0.f;
+			track_offset.k = 0.f;
+			command->depth = SKATE_CAMERA_MINIMUM_DISTANCE;
+		}
 		command->offset.i =
 			(command->depth * cosine(facing.pitch) + track_offset.i) * camera->distance_scale;
 		command->offset.j = -track_offset.j * camera->distance_scale;

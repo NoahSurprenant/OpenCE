@@ -22,5 +22,11 @@ boolean skate_local_player_skating(short local_player_index, real *yaw);
 
 /* the camera's pitch behind a skater, radians */
 #define SKATE_CAMERA_PITCH (-0.2f)
+/* the seat state a skater reports to the director (director.c): one no seat
+uses (they are 1 to 3), so that getting on and off the board changes it and
+the director switches between the first-person and following cameras */
+#define SKATE_DIRECTOR_SEAT_STATE 4
+/* the nearest the following camera comes behind a skater, world units */
+#define SKATE_CAMERA_MINIMUM_DISTANCE 0.5f
 
 #endif

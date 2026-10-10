@@ -335,7 +335,10 @@ short director_desired_perspective(
 	*perspective = 0;
 	/* port: a skater is watched from behind (skate.c) */
 	if (skate_unit_is_skating(unit_index))
+	{
+		*perspective = SKATE_DIRECTOR_SEAT_STATE;
 		return TRUE;
+	}
 	if (unit_index != NONE)
 	{
 		struct unit_datum *unit = unit_get(unit_index);
