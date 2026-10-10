@@ -312,13 +312,21 @@ The skate engine skins the board each tick (halo_skate_board_vertices); a
 frame draws it between the last two ticks, as the biped's nodes are
 (render_interpolation.c), so that it stays under the skater's feet. */
 
+/* (the game's free is debug_free, which takes no NULL: it reads the header
+before the pointer) */
+static void skate_free(void *pointer)
+{
+	if (pointer)
+		free(pointer);
+}
+
 static void skate_board_free(void)
 {
-	free(skate_board.indices);
-	free(skate_board.surfaces);
-	free(skate_board.vertices[0]);
-	free(skate_board.vertices[1]);
-	free(skate_board.drawn);
+	skate_free(skate_board.indices);
+	skate_free(skate_board.surfaces);
+	skate_free(skate_board.vertices[0]);
+	skate_free(skate_board.vertices[1]);
+	skate_free(skate_board.drawn);
 	memset(&skate_board, 0, sizeof(skate_board));
 }
 
