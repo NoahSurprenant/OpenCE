@@ -127,16 +127,21 @@ On Windows the engine is built with the static C runtime, as the game is
 does, with the real skater, animations and physics, on a small map made of
 triangles in the test (a floor, a funbox, a box ledge, a rail and a tilted
 pad): getting on, riding, an ollie, getting off and jumping from walking, and
-a bail. They need converted data, so they pass without running unless
-`HALO_SKATE_TEST_ASSETS` names its `assets` folder; the engine is slow
-unoptimised, so run them with `--release`:
+a bail. `halo-skate/tests/real_assets_camera.rs` checks the following camera
+off the board the same way: walking, it follows the skater, not the board.
+Both share the harness in `halo-skate/tests/common/mod.rs`. They need
+converted data, so they pass without running unless `HALO_SKATE_TEST_ASSETS`
+names its `assets` folder; the engine is slow unoptimised, so run them with
+`--release` (one `--test` per file, or none to run every test of the crate):
 
 ```text
 HALO_SKATE_TEST_ASSETS=/path/to/skate-data/assets \
-    cargo test --release -p halo-skate --test real_assets -- --nocapture
+    cargo test --release -p halo-skate --test real_assets \
+    --test real_assets_camera -- --nocapture
 ```
 
-In CI they run in the `skate-assets` job of `.github/workflows/build.yml`,
+In CI they run in the `skate-assets` job of `.github/workflows/build.yml`
+(every `halo-skate/tests/real_assets*.rs`, and a test that skipped fails it),
 on the owner's self-hosted runner (`opence-k8s`), which has the data
 read-only at `/skate-assets` and nothing else of the owner's. The job runs
 only in this repository, for its own pushes and branches, never a fork's pull
