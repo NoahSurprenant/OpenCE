@@ -22,6 +22,7 @@ macro_rules! eprintln {
 }
 
 mod board;
+mod camera;
 mod rails;
 mod rig;
 
@@ -122,11 +123,37 @@ struct Host {
     board_generation: u32,
     /// Whether a failure to skin the board was reported (once).
     board_warned: bool,
+    /// The board skinned for posing the biped on its deck, kept for its room.
+    deck: Vec<f32>,
 }
 
 static HOST: Mutex<Option<Host>> = Mutex::new(None);
 /// Boards loaded so far, across engine restarts: each one's generation.
 static BOARD_GENERATIONS: AtomicU32 = AtomicU32::new(0);
+
+/// A float the game sets, kept across engine restarts.
+struct Setting(AtomicU32);
+
+impl Setting {
+    const fn new(value: f32) -> Self {
+        Self(AtomicU32::new(value.to_bits()))
+    }
+    fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+    fn set(&self, value: f32) {
+        self.0.store(value.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// The board grown about its middle: Master Chief is larger than the skater
+/// it was made for (`halo_skate_set_board_scale`).
+static BOARD_SCALE: Setting = Setting::new(1.05);
+/// The biped's ankle node above its soles, world units; 0 until the game
+/// says (`halo_skate_set_feet`).
+static ANKLE_HEIGHT: Setting = Setting::new(0.0);
+/// Raises the riding biped along the board's up, world units.
+static FEET_OFFSET: Setting = Setting::new(0.0);
 
 fn with_host<T>(f: impl FnOnce(&mut Host) -> T) -> Option<T> {
     let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
@@ -158,6 +185,7 @@ impl Host {
             board: None,
             board_generation: 0,
             board_warned: false,
+            deck: Vec::new(),
         })
     }
 
@@ -790,7 +818,8 @@ pub unsafe extern "C" fn halo_skate_set_skeleton(
 }
 
 /// Writes the biped's node matrices (13 floats each, world space) posed as
-/// the skater of the last frame. Returns the number written, or 0.
+/// the skater of the last frame, its soles on the deck while it rides.
+/// Returns the number written, or 0.
 ///
 /// # Safety
 /// `out` holds room for `capacity * 13` floats.
@@ -800,11 +829,60 @@ pub unsafe extern "C" fn halo_skate_pose_nodes(out: *mut f32, capacity: i32) -> 
         return 0;
     }
     let out = unsafe { std::slice::from_raw_parts_mut(out, capacity as usize * 13) };
-    with_host(|host| match (host.rig.as_ref(), host.pose.as_ref()) {
-        (Some(rig), Some(pose)) => rig.pose(pose, out) as i32,
-        _ => 0,
+    with_host(|host| {
+        let Host {
+            rig, pose, board, deck, ..
+        } = host;
+        let (Some(rig), Some(pose)) = (rig.as_ref(), pose.as_ref()) else {
+            return 0;
+        };
+        // the board as the game draws it (halo_skate_board_vertices), grown
+        let scale = BOARD_SCALE.get();
+        let mut on_deck = None;
+        if let Some(board) = board.as_ref() {
+            deck.resize(board.vertices.len() * board::VERTEX_FLOATS, 0.0);
+            if board.skin(pose, scale, deck).is_ok() {
+                on_deck = Some(rig::Deck {
+                    vertices: deck.as_slice(),
+                    indices: board.indices.as_slice(),
+                    ankle: ANKLE_HEIGHT.get(),
+                    offset: FEET_OFFSET.get(),
+                    scale,
+                });
+            }
+        }
+        rig.pose(pose, on_deck.as_ref(), out) as i32
     })
     .unwrap_or(0)
+}
+
+/// Grows the drawn board `scale` times about its middle (1.05 at first),
+/// for this session. Returns the scale kept: the last that made sense.
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_set_board_scale(scale: f32) -> f32 {
+    if scale.is_finite() && scale > 0.0 {
+        BOARD_SCALE.set(scale);
+    }
+    BOARD_SCALE.get()
+}
+
+/// How the riding biped stands on the deck: its ankle node `ankle_height`
+/// world units above its soles (0 or less for unknown, which leaves its
+/// ankles on the skater's), and raised `offset` world units more along the
+/// board's up.
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_set_feet(ankle_height: f32, offset: f32) {
+    ANKLE_HEIGHT.set(if ankle_height.is_finite() { ankle_height.max(0.0) } else { 0.0 });
+    FEET_OFFSET.set(if offset.is_finite() { offset } else { 0.0 });
+}
+
+/// The following camera's next heading (radians, 0 to 2 pi): `heading`
+/// turned `fraction` of the way toward the heading of the horizontal
+/// velocity (`vx`, `vy`, world units a second), the shorter way round, when
+/// that is faster than `minimum_speed`; else `heading`, wrapped (camera.rs).
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_follow_heading(heading: f32, vx: f32, vy: f32, minimum_speed: f32, fraction: f32) -> f32 {
+    camera::follow(heading, [vx, vy], minimum_speed, fraction)
 }
 
 #[repr(C)]
@@ -944,7 +1022,7 @@ pub unsafe extern "C" fn halo_skate_board_vertices(out: *mut f32, capacity: i32)
         let (Some(board), Some(pose)) = (host.board.as_ref(), host.pose.as_ref()) else {
             return 0;
         };
-        match board.skin(pose, out) {
+        match board.skin(pose, BOARD_SCALE.get(), out) {
             Ok(count) => count as i32,
             Err(e) => {
                 if !host.board_warned {
