@@ -13,6 +13,8 @@ posed as the skater's bones. */
 #include "cseries.h"
 #include "math/real_math.h"
 #include "game/players.h"
+#include "items/weapon_definitions.h"
+#include "items/weapons.h"
 #include "main/console.h"
 #include "models/model_definitions.h"
 #include "objects/object_definitions.h"
@@ -23,10 +25,12 @@ posed as the skater's bones. */
 #include "physics/collisions.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
+#include "tag_files/tag_files.h"
 #include "units/units.h"
 
 #include "skate.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -376,6 +380,227 @@ void skate_update_before_objects(void)
 		skate_apply_frame(skate_globals.unit_index);
 }
 
+/* ---------- the skater's weapon, holstered
+
+The weapon hangs from the biped's hand node, placed during objects_update by
+Halo's own animation, before the skater's pose replaces the biped's nodes.
+Once the pose is in it is placed again, each tick: a rifle (and anything
+two-handed or large) across the back, on bip01 spine1; a pistol down the
+right thigh, on bip01 r thigh; and what has no place there (a flag, a ball,
+anything huge) is drawn at next to no size. A spot is given in the model's
+bind pose (x forward, y left, z up, world units), and goes with the posed
+node as the node's skin does: the posed node times its default inverse
+times the spot, whatever the axes of the model's nodes. The weapon's own
+position and vectors (its hold in the hand) are set for
+object_compute_node_matrices and put back right after, so that Halo finds it
+in the hand again when the skater gets off. */
+
+#define SKATE_BACK_NODE_NAME "bip01 spine1"
+#define SKATE_THIGH_NODE_NAME "bip01 r thigh"
+/* the weapon's middle from the node, in the bind pose: behind the back and
+a little lower */
+#define SKATE_BACK_OFFSET_FORWARD (-0.085f)
+#define SKATE_BACK_OFFSET_UP (-0.02f)
+/* the barrel tilted from upright toward the right shoulder, radians */
+#define SKATE_BACK_TILT 0.52f
+/* outside the right thigh, partway down it */
+#define SKATE_THIGH_OFFSET_LEFT (-0.05f)
+#define SKATE_THIGH_OFFSET_UP (-0.08f)
+/* a bounding radius (world units) larger than any holster takes */
+#define SKATE_HOLSTER_MAXIMUM_RADIUS 1.f
+/* the scale a weapon with no holster is drawn at: too small to see, not 0,
+which the matrices' inverses would divide by */
+#define SKATE_HIDDEN_SCALE 0.001f
+
+enum skate_holster
+{
+	_skate_holster_back = 0,
+	_skate_holster_thigh,
+	_skate_holster_hidden
+};
+
+/* whether text has word in it (equals it, if whole), case aside */
+static boolean skate_text_has(char const *text, char const *word, boolean whole)
+{
+	size_t length = strlen(word);
+
+	if (!text || !length)
+		return FALSE;
+	for (; *text; text++)
+	{
+		size_t index = 0;
+
+		while (index < length && text[index] &&
+			tolower((unsigned char)text[index]) == tolower((unsigned char)word[index]))
+		{
+			index++;
+		}
+		if (index == length && (!whole || text[index] == 0))
+			return TRUE;
+		if (whole)
+			break;
+	}
+	return FALSE;
+}
+
+/* a pistol is what Halo holds as one: its animation label (the weapon class
+the biped's animations hold it by) or its tag's name says so. A flag or a
+ball, by label or name, or a weapon larger than a holster, has none */
+static short skate_weapon_holster(long weapon_index)
+{
+	struct weapon_datum *weapon = weapon_get(weapon_index);
+	struct weapon_definition *definition = weapon_definition_get(weapon->definition_index);
+	char const *name = tag_get_name(weapon->definition_index);
+	char label[sizeof(definition->weapon.label) + 1];
+
+	memcpy(label, definition->weapon.label, sizeof(definition->weapon.label));
+	label[sizeof(label) - 1] = 0;
+	if (definition->object.bounding_radius > SKATE_HOLSTER_MAXIMUM_RADIUS ||
+		skate_text_has(label, "flag", FALSE) || skate_text_has(label, "ball", FALSE) ||
+		skate_text_has(name, "flag", FALSE) || skate_text_has(name, "ball", FALSE))
+	{
+		return _skate_holster_hidden;
+	}
+	if (skate_text_has(label, "pistol", FALSE) || skate_text_has(name, "pistol", FALSE))
+		return _skate_holster_thigh;
+	return _skate_holster_back;
+}
+
+/* the holster's node and its spot in the model's bind pose; FALSE if the
+model has no such node */
+static boolean skate_holster_spot(struct model *model, short holster, short *node_index,
+	real_matrix4x3 *spot)
+{
+	char const *node_name = holster == _skate_holster_thigh ? SKATE_THIGH_NODE_NAME : SKATE_BACK_NODE_NAME;
+	real_matrix4x3 bind;
+	real_point3d position;
+	real_vector3d forward, up;
+	short index;
+
+	*node_index = NONE;
+	for (index = 0; index < model->nodes.count && *node_index == NONE; index++)
+	{
+		if (skate_text_has(TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node)->name, node_name, TRUE))
+			*node_index = index;
+	}
+	if (*node_index == NONE)
+		return FALSE;
+	matrix4x3_inverse(&TAG_BLOCK_GET_ELEMENT(&model->nodes, *node_index,
+		struct model_node)->runtime_default_inverse_matrix, &bind);
+	position = bind.position;
+	if (holster == _skate_holster_thigh)
+	{
+		/* the barrel down, the grip back, flat against the leg */
+		position.y += SKATE_THIGH_OFFSET_LEFT;
+		position.z += SKATE_THIGH_OFFSET_UP;
+		forward.i = 0.f; forward.j = 0.f; forward.k = -1.f;
+		up.i = 1.f; up.j = 0.f; up.k = 0.f;
+	}
+	else
+	{
+		/* the barrel up over the right shoulder, the sights facing out */
+		position.x += SKATE_BACK_OFFSET_FORWARD;
+		position.z += SKATE_BACK_OFFSET_UP;
+		forward.i = 0.f; forward.j = -(real)sin(SKATE_BACK_TILT); forward.k = (real)cos(SKATE_BACK_TILT);
+		up.i = -1.f; up.j = 0.f; up.k = 0.f;
+	}
+	matrix4x3_from_point_and_vectors(spot, &position, &forward, &up);
+	return TRUE;
+}
+
+/* an object and its children drawn at next to no size */
+static void skate_shrink_object(long object_index)
+{
+	struct object_datum *object = object_get(object_index);
+	real_matrix4x3 *node_matrices = (real_matrix4x3 *)object_header_block_get(object_index,
+		&object->object.node_matrices);
+	int node_count = object->object.node_matrices.size / (int)sizeof(real_matrix4x3);
+	long child_index;
+	int index;
+
+	for (index = 0; index < node_count; index++)
+		node_matrices[index].scale = SKATE_HIDDEN_SCALE;
+	for (child_index = object->object.first_child_object_index; child_index != NONE;
+		child_index = object_get(child_index)->object.next_object_index)
+	{
+		skate_shrink_object(child_index);
+	}
+}
+
+/* the unit's weapon holstered on its posed nodes (skate_update_after_objects) */
+static void skate_holster_weapon(long unit_index, real_matrix4x3 const *node_matrices, int node_count)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	long weapon_index = unit_inventory_get_weapon(unit_index, unit->unit.current_weapon_index);
+	struct object_definition *unit_definition = object_definition_get(unit->definition_index);
+	struct weapon_datum *weapon;
+	struct model *model;
+	real_matrix4x3 spot, skin, target, parent, inverse_parent, local;
+	real_point3d hold_position;
+	real_vector3d hold_forward, hold_up, offset;
+	real parent_scale;
+	short holster;
+	short node_index = NONE;
+
+	weapon = weapon_index != NONE ? weapon_try_and_get(weapon_index) : NULL;
+	if (!weapon || weapon->object.parent_object_index != unit_index ||
+		TEST_FLAG(weapon->object.flags, _object_invisible_bit) ||
+		weapon->object.parent_node_index < 0 || weapon->object.parent_node_index >= node_count ||
+		unit_definition->object.model.index == NONE)
+	{
+		return;
+	}
+	model = model_definition_get(unit_definition->object.model.index);
+	holster = skate_weapon_holster(weapon_index);
+	if (holster != _skate_holster_hidden &&
+		(!skate_holster_spot(model, holster, &node_index, &spot) || node_index >= node_count))
+	{
+		holster = _skate_holster_hidden;
+	}
+	/* the hand it hangs from, unscaled, as object_compute_node_matrices takes it */
+	parent = node_matrices[weapon->object.parent_node_index];
+	parent_scale = parent.scale;
+	if (holster == _skate_holster_hidden || !(parent_scale > 0.f))
+	{
+		skate_shrink_object(weapon_index);
+		return;
+	}
+	parent.scale = 1.f;
+
+	/* where the weapon's middle goes, in the world */
+	matrix4x3_multiply(&node_matrices[node_index], &TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index,
+		struct model_node)->runtime_default_inverse_matrix, &skin);
+	matrix4x3_multiply(&skin, &spot, &target);
+	/* and in the hand's frame */
+	matrix4x3_inverse(&parent, &inverse_parent);
+	matrix4x3_multiply(&inverse_parent, &target, &local);
+
+	hold_position = weapon->object.position;
+	hold_forward = weapon->object.forward;
+	hold_up = weapon->object.up;
+	weapon->object.position.x = local.position.x / parent_scale;
+	weapon->object.position.y = local.position.y / parent_scale;
+	weapon->object.position.z = local.position.z / parent_scale;
+	weapon->object.forward = local.forward;
+	weapon->object.up = local.up;
+	normalize3d(&weapon->object.forward);
+	normalize3d(&weapon->object.up);
+	object_compute_node_matrices(weapon_index);
+	/* moved so that its bounding sphere's middle, not its origin, is on the
+	spot, then placed again with its children */
+	offset.i = target.position.x - weapon->object.bounding_sphere_center.x;
+	offset.j = target.position.y - weapon->object.bounding_sphere_center.y;
+	offset.k = target.position.z - weapon->object.bounding_sphere_center.z;
+	matrix4x3_transform_normal(&inverse_parent, &offset, &offset);
+	weapon->object.position.x += offset.i / parent_scale;
+	weapon->object.position.y += offset.j / parent_scale;
+	weapon->object.position.z += offset.k / parent_scale;
+	object_compute_node_matrices_recursive(weapon_index);
+	weapon->object.position = hold_position;
+	weapon->object.forward = hold_forward;
+	weapon->object.up = hold_up;
+}
+
 void skate_update_after_objects(void)
 {
 	real_matrix4x3 matrices[SKATE_MAXIMUM_NODES];
@@ -396,6 +621,7 @@ void skate_update_after_objects(void)
 	node_matrices = (real_matrix4x3 *)object_header_block_get(skate_globals.unit_index,
 		&object->object.node_matrices);
 	memcpy(node_matrices, matrices, sizeof(real_matrix4x3) * node_count);
+	skate_holster_weapon(skate_globals.unit_index, node_matrices, node_count);
 }
 
 boolean skate_unit_is_skating(long unit_index)

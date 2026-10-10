@@ -76,6 +76,8 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "cutscene/cinematics.h" /* port: draw_quad, for skate_crosshair_draw */
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 #include <math.h>
 #include <string.h>
@@ -408,6 +410,8 @@ static void render_weapon_hud(
 static boolean weapon_hud_state_index_valid(
 	short state_index,
 	short state_count);
+static boolean skate_crosshair_draw(
+	struct player_datum *player);
 
 /* ---------- globals */
 
@@ -2058,11 +2062,15 @@ void hud_render_weapon_interface(
 		hud_index = definition->weapon.interface_definition.hud_interface.index;
 		if (hud_index != NONE)
 		{
-			crosshairs_draw(
-				player,
-				weapon_index,
-				hud_index,
-				&weapon_state);
+			/* port: a skater gets a dot instead (skate.c) */
+			if (!skate_crosshair_draw(player))
+			{
+				crosshairs_draw(
+					player,
+					weapon_index,
+					hud_index,
+					&weapon_state);
+			}
 			render_weapon_hud(
 				hud_index,
 				player->local_player_index,
@@ -2081,11 +2089,15 @@ void hud_render_weapon_interface(
 	{
 		struct weapon_interface_state weapon_state = { 0 };
 
-		crosshairs_draw(
-			player,
-			NONE,
-			hud_globals->defaults.default_weapon_hud.index,
-			&weapon_state);
+		/* port: a skater gets a dot instead (skate.c) */
+		if (!skate_crosshair_draw(player))
+		{
+			crosshairs_draw(
+				player,
+				NONE,
+				hud_globals->defaults.default_weapon_hud.index,
+				&weapon_state);
+		}
 	}
 
 	render_grenade_hud(
@@ -2100,6 +2112,45 @@ void hud_render_weapon_interface(
 }
 
 /* ---------- private code */
+
+/* port: while the player skates, the weapon's reticle gives way to a small
+dot at the middle of the window, sized in the HUD's 480-line units so that
+it scales with the screen. TRUE when it stands in for the crosshairs. */
+#define SKATE_CROSSHAIR_DOT_RADIUS 1
+#define SKATE_CROSSHAIR_RIM 1
+static boolean skate_crosshair_draw(
+	struct player_datum *player)
+{
+	rectangle2d dot;
+	short center_x;
+	short center_y;
+	short radius;
+
+	if (!skate_unit_is_skating(player->unit_index))
+		return FALSE;
+	/* (none while a script hides the crosshair) */
+	if (!TEST_FLAG(weapon_hud_globals->script_flags, _hud_crosshair_show_bit))
+		return TRUE;
+	/* the window's middle, as hud_calculate_point finds a centered element's */
+	center_x = (short)((render.camera.window_bounds.x1 + render.camera.window_bounds.x0) / 2 -
+		render.camera.viewport_bounds.x0);
+	center_y = (short)((render.camera.window_bounds.y1 + render.camera.window_bounds.y0) / 2 -
+		render.camera.viewport_bounds.y0);
+	/* a faint dark rim, so that it shows against bright ground too */
+	radius = SKATE_CROSSHAIR_DOT_RADIUS + SKATE_CROSSHAIR_RIM;
+	dot.x0 = (short)(center_x - radius);
+	dot.x1 = (short)(center_x + radius);
+	dot.y0 = (short)(center_y - radius);
+	dot.y1 = (short)(center_y + radius);
+	draw_quad(&dot, 0x60000000);
+	radius = SKATE_CROSSHAIR_DOT_RADIUS;
+	dot.x0 = (short)(center_x - radius);
+	dot.x1 = (short)(center_x + radius);
+	dot.y0 = (short)(center_y - radius);
+	dot.y1 = (short)(center_y + radius);
+	draw_quad(&dot, 0xE0FFFFFF);
+	return TRUE;
+}
 
 char *strip_path_name(
 	char *path)
