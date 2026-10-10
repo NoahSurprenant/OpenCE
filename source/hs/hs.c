@@ -2806,6 +2806,7 @@ symbols in this file:
 #include "networking/network_game_manager.h"
 #include "networking/network_server_manager.h"
 #include "network_votekick.h" /* port: port/linux/game/network_votekick.c */
+#include "skate.h" /* port: port/linux/game/skate.c */
 #include "objects/damage.h"
 #include "objects/object_lights.h"
 #include "objects/scenery.h"
@@ -15362,6 +15363,21 @@ static boolean hs_compile_and_evaluate_command(
 	(players.c; a client is told it is the host's) */
 	if (hs_host_player_command(expression, "bringto"))
 		return players_coop_bring_to_host();
+	/* port: Skate 3 mode's tuning ("skate_board_scale 1.1", or the word
+	alone for its value), which changes only how this machine draws and
+	follows its own skater (skate.c) */
+	{
+		static char const *const skate_settings[] = SKATE_CONSOLE_SETTINGS;
+		short index;
+
+		for (index = 0; index < (short)NUMBEROF(skate_settings); index++)
+		{
+			char const *text = hs_host_player_command(expression, skate_settings[index]);
+
+			if (text)
+				return skate_console_setting(skate_settings[index], text);
+		}
+	}
 	/* port: the players' vote to kick a player ("votekick <player name>",
 	or the name's start: Tab completes it), on any machine of a network
 	game: the host counts (network_votekick.c) */

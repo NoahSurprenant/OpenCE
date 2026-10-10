@@ -50,7 +50,18 @@ int halo_skate_activate(const float *position, float yaw, struct halo_skate_fram
 int halo_skate_step(const struct halo_skate_pad *pad, float dt, struct halo_skate_frame *out);
 void halo_skate_suspend(void);
 int halo_skate_set_skeleton(int count, const char *names, const short *parents, const float *inverse_defaults);
+/* the biped's nodes posed as the skater; riding, its soles rest on the deck
+(halo_skate_set_feet) */
 int halo_skate_pose_nodes(float *out, int capacity);
+/* how the riding biped stands on the deck: its foot nodes ankle_height world
+units above its soles (0 for unknown: its ankles stay on the skater's), and
+raised offset world units more along the board's up */
+void halo_skate_set_feet(float ankle_height, float offset);
+/* the following camera's next heading, radians within 0 to 2 pi: heading
+turned fraction of the way toward the heading of the velocity (vx, vy world
+units a second) the shorter way round, when that is faster than
+minimum_speed; else heading, wrapped */
+float halo_skate_follow_heading(float heading, float vx, float vy, float minimum_speed, float fraction);
 
 /* the skateboard (board.rs): the board meshes of the converted skater model,
 skinned to the skater, which the game draws itself */
@@ -78,6 +89,10 @@ int halo_skate_board_info(struct halo_skate_board_info *out);
 int halo_skate_board_mesh(unsigned int *indices, int index_capacity, struct halo_skate_board_surface *surfaces,
 	int surface_capacity);
 int halo_skate_board_texture(int index, int *width, int *height, unsigned char *rgba, int capacity);
+/* the board skinned to the skater, grown halo_skate_set_board_scale times */
 int halo_skate_board_vertices(float *out, int capacity);
+/* grows the drawn board scale times about its middle (1.05 at first: Master
+Chief is larger than the skater it was made for); returns the scale kept */
+float halo_skate_set_board_scale(float scale);
 
 #endif

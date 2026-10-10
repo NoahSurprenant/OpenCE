@@ -40,6 +40,13 @@ objects (render.c). */
 
 #ifdef HALO_SKATE
 
+#include "rasterizer/rasterizer.h"
+#include "rasterizer/rasterizer_geometry.h"
+#include "rasterizer/rasterizer_model_types.h"
+
+#include <float.h>
+#include <xtl.h>
+
 #include "../../skate/include/halo_skate.h"
 
 /* the platform layer's (sdl_platform.c, xinput_sdl.c, d3d8_gl.c) */
@@ -74,9 +81,45 @@ static struct
 	unsigned short previous_buttons;
 	/* the biped's origin above the board's wheels */
 	real height;
+	/* the heading the following camera keeps: the way the skater travels */
 	real yaw;
 	struct halo_skate_frame frame;
 } skate_globals = { FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, 0.f };
+
+/* the board grown about its middle: Master Chief (about 2.1 m) is larger
+than the skater it was made for (about 1.8 m) */
+#define SKATE_DEFAULT_BOARD_SCALE 1.05f
+#define SKATE_MAXIMUM_BOARD_SCALE 10.f
+/* the furthest skate_feet_offset raises or lowers the biped, world units */
+#define SKATE_MAXIMUM_FEET_OFFSET 1.f
+/* the camera turns to the way the skater travels when faster than this
+along the ground (world units a second: 1 m/s), and holds its heading when
+slower, so that it neither spins at a standstill nor wobbles at a crawl */
+#define SKATE_DEFAULT_CAMERA_SPEED (1.f / 3.048f)
+#define SKATE_MAXIMUM_CAMERA_SPEED 10.f
+/* the part of the way to that heading the camera turns each tick: rolling
+back off a wall it comes round in about a third of a second */
+#define SKATE_CAMERA_TURN 0.2f
+/* how far around the foot nodes, across the ground, a vertex of the bind
+pose counts as the foot's (world units) */
+#define SKATE_FOOT_REGION 0.15f
+/* an ankle height outside these (world units, 1.5 cm to 30 cm) was not
+measured right */
+#define SKATE_MINIMUM_ANKLE_HEIGHT 0.005f
+#define SKATE_MAXIMUM_ANKLE_HEIGHT 0.1f
+
+/* the values tuned at the console (skate_console_setting), for the session */
+static struct
+{
+	real board_scale;
+	real feet_offset;
+	real camera_speed;
+	/* the biped's ankles above its soles (skate_describe_skeleton), 0 for
+	unknown */
+	real ankle_height;
+} skate_settings = { SKATE_DEFAULT_BOARD_SCALE, 0.f, SKATE_DEFAULT_CAMERA_SPEED, 0.f };
+
+static boolean skate_text_has(char const *text, char const *word, boolean whole);
 
 /* the board as the engine last skinned it (skate_board_capture) */
 static struct
@@ -208,6 +251,8 @@ void skate_initialize(void)
 	/* the engine's lines (its load timings above all) go to the port's log:
 	a Windows release build has no console for its stderr */
 	halo_skate_set_log(skate_log);
+	halo_skate_set_board_scale(skate_settings.board_scale);
+	halo_skate_set_feet(skate_settings.ankle_height, skate_settings.feet_offset);
 	/* (the engine says when there is no assets folder; nothing more happens
 	until J) */
 	skate_globals.preloaded = halo_skate_preload(skate_assets()) == 0;
@@ -233,6 +278,161 @@ void skate_structure_bsp_changed(void)
 	}
 	if (skate_load_map())
 		skate_globals.activate_when_ready = waiting;
+}
+
+/* a model's geometry and part, as models.c and powerup_render_bounds.c each
+define them for themselves (no header declares them) */
+struct model_geometry
+{
+	byte reserved[0x24];
+	struct tag_block parts;
+};
+
+struct model_geometry_part
+{
+	unsigned long flags;
+	short shader_index;
+	char previous_part_index;
+	char next_part_index;
+	short centroid_primary_node_index;
+	short centroid_secondary_node_index;
+	real centroid_primary_node_weight;
+	real centroid_secondary_node_weight;
+	real_point3d centroid;
+	struct tag_block uncompressed_vertices;
+	struct tag_block compressed_vertices;
+	struct tag_block triangles;
+	struct triangle_buffer triangle_buffer;
+	struct vertex_buffer vertex_buffer;
+};
+
+typedef char verify_skate_model_geometry_part_size[sizeof(struct model_geometry_part) == 0x68 ? 1 : -1];
+
+#define SKATE_MODEL_GEOMETRY_PART_STRIPPED_BIT 0
+
+/* the lowest vertex, in the bind pose, of the model's geometry within
+SKATE_FOOT_REGION of a foot across the ground: the soles. A model's vertices
+are in the bind pose's model space (models.c skins them by each node's
+matrix times its default inverse). FALSE when there is none to read */
+static boolean skate_model_lowest_foot_vertex(struct model *model, real_point3d const *feet, real *lowest,
+	long *vertex_count)
+{
+	long geometry_index;
+
+	*lowest = FLT_MAX;
+	*vertex_count = 0;
+	if (!model->geometries.address || model->geometries.count <= 0 ||
+		model->geometries.count > MAXIMUM_GEOMETRIES_PER_MODEL)
+	{
+		return FALSE;
+	}
+	for (geometry_index = 0; geometry_index < model->geometries.count; geometry_index++)
+	{
+		struct model_geometry *geometry = TAG_BLOCK_GET_ELEMENT(&model->geometries, geometry_index,
+			struct model_geometry);
+		long part_index;
+
+		if (geometry->parts.count <= 0 || geometry->parts.count > MAXIMUM_PARTS_PER_MODEL_GEOMETRY ||
+			!geometry->parts.address)
+		{
+			continue;
+		}
+		for (part_index = 0; part_index < geometry->parts.count; part_index++)
+		{
+			struct model_geometry_part *part = TAG_BLOCK_GET_ELEMENT(&geometry->parts, part_index,
+				struct model_geometry_part);
+			struct vertex_buffer *buffer = &part->vertex_buffer;
+			byte *vertices = NULL;
+			long stride;
+			long vertex_index;
+
+			/* (as powerup_render_bounds.c reads them) */
+			if (TEST_FLAG(part->flags, SKATE_MODEL_GEOMETRY_PART_STRIPPED_BIT) || !buffer->hardware_format ||
+				buffer->offset || buffer->count <= 0 || buffer->count > MAXIMUM_VERTICES_PER_MODEL_GEOMETRY_PART ||
+				(buffer->type != _rasterizer_vertex_type_model_compressed &&
+				buffer->type != _rasterizer_vertex_type_model_uncompressed))
+			{
+				continue;
+			}
+			stride = rasterizer_geometry_get_vertex_size(buffer->type);
+			IDirect3DVertexBuffer8_Lock(buffer->hardware_format, 0, 0, &vertices, D3DLOCK_READONLY);
+			if (!vertices)
+				continue;
+			for (vertex_index = 0; vertex_index < buffer->count; vertex_index++)
+			{
+				real_point3d const *point = (real_point3d const *)(vertices + vertex_index * stride);
+				short foot;
+
+				for (foot = 0; foot < 2; foot++)
+				{
+					real dx = point->x - feet[foot].x;
+					real dy = point->y - feet[foot].y;
+
+					/* (a number, near the foot) */
+					if (dx * dx + dy * dy <= SKATE_FOOT_REGION * SKATE_FOOT_REGION && point->z > -FLT_MAX &&
+						point->z < FLT_MAX)
+					{
+						if (point->z < *lowest)
+							*lowest = point->z;
+						(*vertex_count)++;
+						break;
+					}
+				}
+			}
+			IDirect3DVertexBuffer8_Unlock(buffer->hardware_format);
+		}
+	}
+	return *vertex_count > 0;
+}
+
+/* how far the biped's ankles (its foot nodes) are above its soles, world
+units, measured on its model's bind pose: from the lowest vertex around its
+feet, else from the model's origin (where a biped's feet stand), else 0 for
+unknown. Logged, with how it was found */
+static real skate_model_ankle_height(struct model *model)
+{
+	real_point3d feet[2];
+	short found = 0;
+	short index;
+	real ankle;
+	real lowest;
+	long vertex_count;
+
+	for (index = 0; index < model->nodes.count && found < 2; index++)
+	{
+		struct model_node *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node);
+		real_matrix4x3 bind;
+
+		if (!skate_text_has(node->name, found ? "bip01 r foot" : "bip01 l foot", TRUE))
+			continue;
+		matrix4x3_inverse(&node->runtime_default_inverse_matrix, &bind);
+		feet[found++] = bind.position;
+		index = -1; /* (the right foot may come before the left) */
+	}
+	if (found < 2)
+	{
+		platform_log("skate: the biped has no bip01 l foot and r foot: its ankles stay on the skater's");
+		return 0.f;
+	}
+	ankle = (feet[0].z + feet[1].z) * 0.5f;
+	if (skate_model_lowest_foot_vertex(model, feet, &lowest, &vertex_count) &&
+		ankle - lowest >= SKATE_MINIMUM_ANKLE_HEIGHT && ankle - lowest <= SKATE_MAXIMUM_ANKLE_HEIGHT)
+	{
+		platform_log("skate: the biped's ankles are %.4f world units (%.1f cm) above its soles, the lowest of %ld "
+			"vertices around its feet (ankles %.4f up in the bind pose, soles %.4f)",
+			ankle - lowest, (ankle - lowest) * 304.8f, vertex_count, ankle, lowest);
+		return ankle - lowest;
+	}
+	if (ankle >= SKATE_MINIMUM_ANKLE_HEIGHT && ankle <= SKATE_MAXIMUM_ANKLE_HEIGHT)
+	{
+		platform_log("skate: the biped's ankles are %.4f world units (%.1f cm) above its model's origin, taken as "
+			"its soles (%ld vertices around its feet, the lowest %.4f)", ankle, ankle * 304.8f, vertex_count,
+			vertex_count ? lowest : 0.f);
+		return ankle;
+	}
+	platform_log("skate: the biped's ankle height is unknown (ankles %.4f up in the bind pose, %ld vertices "
+		"around its feet): its ankles stay on the skater's", ankle, vertex_count);
+	return 0.f;
 }
 
 static void skate_describe_skeleton(long unit_index)
@@ -266,6 +466,9 @@ static void skate_describe_skeleton(long unit_index)
 	}
 	console_printf(FALSE, "skate: %d of %ld nodes follow the skater",
 		halo_skate_set_skeleton((int)count, &names[0][0], parents, &inverses[0][0]), count);
+	/* riding, its soles rest on the deck (rig.rs) */
+	skate_settings.ankle_height = skate_model_ankle_height(model);
+	halo_skate_set_feet(skate_settings.ankle_height, skate_settings.feet_offset);
 	skate_globals.skeleton_definition_index = unit->definition_index;
 }
 
@@ -279,7 +482,8 @@ static boolean skate_unit_can_skate(long unit_index)
 		!(object->object.damage_flags & FLAG(_object_dead_bit));
 }
 
-static void skate_apply_frame(long unit_index)
+/* starting: getting on the board, when the camera takes the board's heading */
+static void skate_apply_frame(long unit_index, boolean starting)
 {
 	struct object_datum *object = object_get(unit_index);
 	real_point3d position;
@@ -295,10 +499,22 @@ static void skate_apply_frame(long unit_index)
 	if (normalize3d(&forward) == 0.f)
 		forward = object->object.forward;
 	up = *global_up3d;
+	/* the camera turns to the way the skater travels, not the way the body
+	faces: off a wall the skater rolls back fakie, still facing it */
+	if (starting)
+		skate_globals.yaw = (real)atan2(forward.j, forward.i);
+	else
+	{
+		skate_globals.yaw = halo_skate_follow_heading(skate_globals.yaw, skate_globals.frame.velocity[0],
+			skate_globals.frame.velocity[1], skate_settings.camera_speed, SKATE_CAMERA_TURN);
+	}
 	/* (the player's desired yaw must be within 0 to 2 pi: player_control.c) */
-	skate_globals.yaw = (real)atan2(forward.j, forward.i);
+	if (!(skate_globals.yaw >= 0.f && skate_globals.yaw < 2.f * _pi))
+		skate_globals.yaw = (real)fmod(skate_globals.yaw, 2.f * _pi);
 	if (skate_globals.yaw < 0.f)
 		skate_globals.yaw += 2.f * _pi;
+	if (!(skate_globals.yaw >= 0.f && skate_globals.yaw < 2.f * _pi))
+		skate_globals.yaw = 0.f;
 
 	object_set_position(unit_index, &position, &forward, &up);
 	object->object.translational_velocity.i = skate_globals.frame.velocity[0] / TICKS_PER_SECOND;
@@ -539,7 +755,7 @@ static void skate_start(long unit_index)
 	}
 	skate_globals.skating = TRUE;
 	skate_globals.unit_index = unit_index;
-	skate_apply_frame(unit_index);
+	skate_apply_frame(unit_index, TRUE);
 	console_printf(FALSE, "skate: on");
 }
 
@@ -604,7 +820,7 @@ void skate_update_before_objects(void)
 		return;
 	}
 	if (skate_globals.skating && halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skate_globals.frame) >= 0)
-		skate_apply_frame(skate_globals.unit_index);
+		skate_apply_frame(skate_globals.unit_index, FALSE);
 }
 
 /* ---------- the skater's weapon, holstered
@@ -869,7 +1085,97 @@ boolean skate_local_player_skating(short local_player_index, real *yaw)
 	return TRUE;
 }
 
+/* ---------- tuning at the console
+
+"skate_board_scale 1.1" sets a value for the session; the word alone prints
+it (hs.c hands both over before the script compiler sees them). */
+
+/* the number in what follows a command's word (spaces, then the number, then
+spaces or a closing parenthesis): TRUE with *value; *given says whether
+anything but those was there at all */
+static boolean skate_console_number(char const *text, real *value, boolean *given)
+{
+	char *end;
+	double number;
+
+	while (*text == ' ' || *text == '\t')
+		text++;
+	*given = *text != 0 && *text != ')';
+	if (!*given)
+		return FALSE;
+	number = strtod(text, &end);
+	if (end == text)
+		return FALSE;
+	while (*end == ' ' || *end == '\t' || *end == ')')
+		end++;
+	/* (and a number: not NaN, nor infinite) */
+	if (*end || !(number > -1e30 && number < 1e30))
+		return FALSE;
+	*value = (real)number;
+	return TRUE;
+}
+
+boolean skate_console_setting(char const *word, char const *arguments)
+{
+	real value = 0.f;
+	boolean given;
+	boolean valid = skate_console_number(arguments, &value, &given);
+
+	if (!strcmp(word, "skate_board_scale"))
+	{
+		if (given && !(valid && value > 0.f && value <= SKATE_MAXIMUM_BOARD_SCALE))
+		{
+			console_printf(FALSE, "skate_board_scale: a factor above 0, at most %.0f (skate_board_scale 1.05)",
+				SKATE_MAXIMUM_BOARD_SCALE);
+			return FALSE;
+		}
+		if (given)
+			skate_settings.board_scale = halo_skate_set_board_scale(value);
+		console_printf(FALSE, "skate_board_scale %.3f (default %.3f)", skate_settings.board_scale,
+			SKATE_DEFAULT_BOARD_SCALE);
+		return TRUE;
+	}
+	if (!strcmp(word, "skate_feet_offset"))
+	{
+		if (given && !(valid && fabs(value) <= SKATE_MAXIMUM_FEET_OFFSET))
+		{
+			console_printf(FALSE, "skate_feet_offset: world units from -%.0f to %.0f, up positive "
+				"(skate_feet_offset 0.01)", SKATE_MAXIMUM_FEET_OFFSET, SKATE_MAXIMUM_FEET_OFFSET);
+			return FALSE;
+		}
+		if (given)
+		{
+			skate_settings.feet_offset = value;
+			halo_skate_set_feet(skate_settings.ankle_height, skate_settings.feet_offset);
+		}
+		console_printf(FALSE, "skate_feet_offset %.4f world units, %.1f cm (default 0; ankles %.4f above the soles)",
+			skate_settings.feet_offset, skate_settings.feet_offset * 304.8f, skate_settings.ankle_height);
+		return TRUE;
+	}
+	if (!strcmp(word, "skate_camera_speed"))
+	{
+		if (given && !(valid && value >= 0.f && value <= SKATE_MAXIMUM_CAMERA_SPEED))
+		{
+			console_printf(FALSE, "skate_camera_speed: world units a second from 0 to %.0f (skate_camera_speed 0.33)",
+				SKATE_MAXIMUM_CAMERA_SPEED);
+			return FALSE;
+		}
+		if (given)
+			skate_settings.camera_speed = value;
+		console_printf(FALSE, "skate_camera_speed %.3f world units a second, %.2f m/s (default %.3f)",
+			skate_settings.camera_speed, skate_settings.camera_speed * 3.048f, SKATE_DEFAULT_CAMERA_SPEED);
+		return TRUE;
+	}
+	return FALSE;
+}
+
 #else
+
+boolean skate_console_setting(char const *word, char const *arguments)
+{
+	console_printf(FALSE, "%s: this build has no Skate 3 mode (it was built without --skate)", word);
+	return FALSE;
+}
 
 void skate_initialize(void)
 {

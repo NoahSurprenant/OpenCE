@@ -31,6 +31,13 @@ boolean skate_unit_is_skating(long unit_index);
 keeps (radians) */
 boolean skate_local_player_skating(short local_player_index, real *yaw);
 
+/* hs_compile_and_evaluate: a console command tuning Skate 3 mode, one of
+SKATE_CONSOLE_SETTINGS, with what follows its word: sets the value for the
+session when given a number, and prints it either way. FALSE on a bad
+number (or in a build without the mode) */
+#define SKATE_CONSOLE_SETTINGS { "skate_board_scale", "skate_feet_offset", "skate_camera_speed" }
+boolean skate_console_setting(char const *word, char const *arguments);
+
 /* the camera's pitch behind a skater, radians */
 #define SKATE_CAMERA_PITCH (-0.2f)
 /* the seat state a skater reports to the director (director.c): one no seat

@@ -199,9 +199,11 @@ impl Board {
     }
 
     /// Writes the board's vertices skinned by `pose` (VERTEX_FLOATS each:
-    /// position in world units, unit normal, texture coordinate) and returns
-    /// how many, or an error naming a joint the pose lacks.
-    pub fn skin(&self, pose: &Pose, out: &mut [f32]) -> Result<usize, String> {
+    /// position in world units, unit normal, texture coordinate), grown
+    /// `scale` times about its middle (Master Chief is larger than the
+    /// skater the board was made for), and returns how many, or an error
+    /// naming a joint the pose lacks.
+    pub fn skin(&self, pose: &Pose, scale: f32, out: &mut [f32]) -> Result<usize, String> {
         // the converter's bone basis to the engine's (the mashup's `rb`)
         let basis = Mat4::from_cols(Vec4::X, -Vec4::Z, Vec4::Y, Vec4::W);
         let matrices = self
@@ -231,8 +233,84 @@ impl Board {
             out[3..6].copy_from_slice(&direction_from_skate(normal).normalize_or(Vec3::Z).to_array());
             out[6..8].copy_from_slice(&vertex.uv.to_array());
         }
+        scale_about_middle(&mut out[..count * VERTEX_FLOATS], scale);
         Ok(count)
     }
+}
+
+/// Grows skinned vertices (VERTEX_FLOATS each) `scale` times about their
+/// middle, the mean of their positions, which moves and turns with the
+/// board. Normals keep their direction under a uniform scale.
+pub fn scale_about_middle(vertices: &mut [f32], scale: f32) {
+    let count = vertices.len() / VERTEX_FLOATS;
+    if count == 0 || !scale.is_finite() || scale <= 0.0 || scale == 1.0 {
+        return;
+    }
+    let position = |v: &[f32]| Vec3::new(v[0], v[1], v[2]);
+    let middle = vertices
+        .chunks_exact(VERTEX_FLOATS)
+        .fold(Vec3::ZERO, |sum, v| sum + position(v))
+        / count as f32;
+    for v in vertices.chunks_exact_mut(VERTEX_FLOATS) {
+        let scaled = middle + (position(v) - middle) * scale;
+        v[0..3].copy_from_slice(&scaled.to_array());
+    }
+}
+
+/// How the deck's top was found under a foot (`deck_top`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeckHit {
+    /// a triangle crosses the line through the foot along the board's up
+    Triangle,
+    /// no triangle does: the highest vertex within the radius
+    Vertex,
+}
+
+/// The height along `up` (a unit vector) of the top of the skinned board
+/// (VERTEX_FLOATS a vertex) under `point`: the highest of the board's
+/// triangles that the line through `point` along `up` crosses, or, when it
+/// crosses none (a foot just past the deck's end), the highest vertex within
+/// `radius` of that line. None when there is neither, as when the board has
+/// flipped away from the foot.
+pub fn deck_top(vertices: &[f32], indices: &[u32], point: Vec3, up: Vec3, radius: f32) -> Option<(f32, DeckHit)> {
+    let count = vertices.len() / VERTEX_FLOATS;
+    let position = |i: usize| Vec3::new(vertices[i * VERTEX_FLOATS], vertices[i * VERTEX_FLOATS + 1], vertices[i * VERTEX_FLOATS + 2]);
+    // the board's plane, with `point` at its origin
+    let side = up.any_orthonormal_vector();
+    let other = up.cross(side);
+    let flat = |p: Vec3| Vec2::new((p - point).dot(side), (p - point).dot(other));
+
+    let mut best: Option<f32> = None;
+    for triangle in indices.chunks_exact(3) {
+        let [a, b, c] = [triangle[0], triangle[1], triangle[2]].map(|i| i as usize);
+        if a >= count || b >= count || c >= count {
+            continue;
+        }
+        let (pa, pb, pc) = (position(a), position(b), position(c));
+        let (fa, fb, fc) = (flat(pa), flat(pb), flat(pc));
+        // the barycentric coordinates of the plane's origin, where the line is
+        let area = (fb - fa).perp_dot(fc - fa);
+        if area.abs() < 1e-12 {
+            continue;
+        }
+        let wb = (-fa).perp_dot(fc - fa) / area;
+        let wc = (fb - fa).perp_dot(-fa) / area;
+        let wa = 1.0 - wb - wc;
+        if wa < 0.0 || wb < 0.0 || wc < 0.0 {
+            continue;
+        }
+        let height = (pa * wa + pb * wb + pc * wc).dot(up);
+        best = Some(best.map_or(height, |h| h.max(height)));
+    }
+    if let Some(height) = best {
+        return Some((height, DeckHit::Triangle));
+    }
+    (0..count)
+        .map(position)
+        .filter(|&p| flat(p).length_squared() <= radius * radius)
+        .map(|p| p.dot(up))
+        .reduce(f32::max)
+        .map(|height| (height, DeckHit::Vertex))
 }
 
 fn decode_image(image: &gltf::Image, blob: Option<&[u8]>) -> Result<Texture, String> {
@@ -440,7 +518,7 @@ mod tests {
         let bind = Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0));
         let rb = Mat4::from_cols(Vec4::X, -Vec4::Z, Vec4::Y, Vec4::W);
         let at_bind = rb * bind * rb.inverse();
-        assert_eq!(board.skin(&pose(Mat4::IDENTITY, at_bind), &mut out).unwrap(), 3);
+        assert_eq!(board.skin(&pose(Mat4::IDENTITY, at_bind), 1.0, &mut out).unwrap(), 3);
         close([out[0], out[1], out[2]], Vec3::new(1.0, 2.0, 3.0) / METRES);
         close([out[3], out[4], out[5]], Vec3::Z);
         assert_eq!([out[6], out[7]], [0.0, 0.0]);
@@ -450,7 +528,7 @@ mod tests {
         // quarter about Skate's Y (Halo's Z): the vertex turns and moves one
         // world unit along Halo's Y.
         let root = Mat4::from_translation(Vec3::new(0.0, 0.0, -METRES)) * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
-        board.skin(&pose(root, at_bind), &mut out).unwrap();
+        board.skin(&pose(root, at_bind), 1.0, &mut out).unwrap();
         // a quarter turn about Skate's +Y is a quarter turn about Halo's +Z
         let turned = Vec3::new(-2.0, 1.0, 3.0) / METRES;
         close([out[0], out[1], out[2]], turned + Vec3::Y);
@@ -462,7 +540,111 @@ mod tests {
         let board = Board::from_glb(&glb(&png(1, 1, &[9, 9, 9, 255]))).unwrap();
         let mut pose = pose(Mat4::IDENTITY, Mat4::IDENTITY);
         pose.names[1] = "OTHER".into();
-        assert!(board.skin(&pose, &mut [0.0; 3 * VERTEX_FLOATS]).is_err());
+        assert!(board.skin(&pose, 1.0, &mut [0.0; 3 * VERTEX_FLOATS]).is_err());
+    }
+
+    /// A deck 0.8 by 0.2 world units with its top at z = 1 (two triangles), a
+    /// plate under it, a truck vertex below its middle, and a kicked-up tail
+    /// vertex past its end.
+    fn synthetic_board() -> (Vec<f32>, Vec<u32>) {
+        let points = [
+            [-0.4, -0.1, 1.0],
+            [0.4, -0.1, 1.0],
+            [0.4, 0.1, 1.0],
+            [-0.4, 0.1, 1.0],
+            [-0.4, -0.1, 0.97],
+            [0.4, -0.1, 0.97],
+            [0.4, 0.1, 0.97],
+            [-0.4, 0.1, 0.97],
+            [0.0, 0.0, 0.9],
+            [-0.45, 0.0, 1.03],
+        ];
+        let vertices = points
+            .iter()
+            .flat_map(|p| [p[0], p[1], p[2], 0.0, 0.0, 1.0, 0.5, 0.5])
+            .collect();
+        (vertices, vec![0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6])
+    }
+
+    #[test]
+    fn the_deck_top_is_measured_under_a_foot() {
+        let (vertices, indices) = synthetic_board();
+        // above the deck, or below it: the top triangle, not the plate
+        let (height, hit) = deck_top(&vertices, &indices, Vec3::new(0.1, 0.05, 1.08), Vec3::Z, 0.03).unwrap();
+        assert!((height - 1.0).abs() < 1e-5 && hit == DeckHit::Triangle, "{height} {hit:?}");
+        let (height, _) = deck_top(&vertices, &indices, Vec3::new(-0.3, 0.0, 0.5), Vec3::Z, 0.03).unwrap();
+        assert!((height - 1.0).abs() < 1e-5, "{height}");
+        // past the deck's end: the tail's vertex within the radius
+        let (height, hit) = deck_top(&vertices, &indices, Vec3::new(-0.43, 0.0, 1.1), Vec3::Z, 0.03).unwrap();
+        assert!((height - 1.03).abs() < 1e-5 && hit == DeckHit::Vertex, "{height} {hit:?}");
+        // nowhere near the board
+        assert!(deck_top(&vertices, &indices, Vec3::new(2.0, 0.0, 1.1), Vec3::Z, 0.03).is_none());
+    }
+
+    #[test]
+    fn the_deck_top_follows_a_tilted_board() {
+        let (mut vertices, indices) = synthetic_board();
+        // the board banked 30 degrees about X, and moved
+        let turn = bevy_math::Quat::from_rotation_x(0.5236);
+        let offset = Vec3::new(3.0, -2.0, 0.5);
+        for v in vertices.chunks_exact_mut(VERTEX_FLOATS) {
+            let p = turn * Vec3::new(v[0], v[1], v[2]) + offset;
+            v[0..3].copy_from_slice(&p.to_array());
+        }
+        let up = turn * Vec3::Z;
+        let foot = turn * Vec3::new(0.2, -0.05, 1.1) + offset;
+        let (height, hit) = deck_top(&vertices, &indices, foot, up, 0.03).unwrap();
+        let expected = (turn * Vec3::new(0.2, -0.05, 1.0) + offset).dot(up);
+        assert!((height - expected).abs() < 1e-4 && hit == DeckHit::Triangle, "{height} != {expected}");
+    }
+
+    #[test]
+    fn the_board_grows_about_its_middle() {
+        let (mut vertices, _) = synthetic_board();
+        let before = vertices.clone();
+        let middle = before
+            .chunks_exact(VERTEX_FLOATS)
+            .fold(Vec3::ZERO, |sum, v| sum + Vec3::new(v[0], v[1], v[2]))
+            / 10.0;
+        scale_about_middle(&mut vertices, 1.05);
+        for (after, before) in vertices.chunks_exact(VERTEX_FLOATS).zip(before.chunks_exact(VERTEX_FLOATS)) {
+            let a = Vec3::new(after[0], after[1], after[2]);
+            let b = Vec3::new(before[0], before[1], before[2]);
+            assert!((a - (middle + (b - middle) * 1.05)).length() < 1e-5);
+            // normals and texture coordinates untouched
+            assert_eq!(after[3..], before[3..]);
+        }
+        // the deck 5% longer and thicker
+        let length = vertices[VERTEX_FLOATS] - vertices[0];
+        assert!((length - 0.84).abs() < 1e-5, "{length}");
+        let thickness = vertices[2] - vertices[4 * VERTEX_FLOATS + 2];
+        assert!((thickness - 0.0315).abs() < 1e-5, "{thickness}");
+        // its middle where it was
+        let after = vertices
+            .chunks_exact(VERTEX_FLOATS)
+            .fold(Vec3::ZERO, |sum, v| sum + Vec3::new(v[0], v[1], v[2]))
+            / 10.0;
+        assert!((after - middle).length() < 1e-5);
+        // a scale of 1, or one that makes no sense, leaves it alone
+        let mut same = before.clone();
+        scale_about_middle(&mut same, 1.0);
+        scale_about_middle(&mut same, f32::NAN);
+        scale_about_middle(&mut same, -2.0);
+        assert_eq!(same, before);
+    }
+
+    #[test]
+    fn skinning_grows_the_board() {
+        let board = Board::from_glb(&glb(&png(1, 1, &[9, 9, 9, 255]))).unwrap();
+        let bind = Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0));
+        let rb = Mat4::from_cols(Vec4::X, -Vec4::Z, Vec4::Y, Vec4::W);
+        let at_bind = rb * bind * rb.inverse();
+        let mut plain = vec![0.0; 3 * VERTEX_FLOATS];
+        let mut grown = vec![0.0; 3 * VERTEX_FLOATS];
+        board.skin(&pose(Mat4::IDENTITY, at_bind), 1.0, &mut plain).unwrap();
+        board.skin(&pose(Mat4::IDENTITY, at_bind), 1.05, &mut grown).unwrap();
+        scale_about_middle(&mut plain, 1.05);
+        assert_eq!(plain, grown);
     }
 
     #[test]
