@@ -805,7 +805,12 @@ pub unsafe extern "C" fn halo_skate_load(assets: *const c_char, triangles: *cons
         return -1;
     }
     let root = PathBuf::from(unsafe { CStr::from_ptr(assets) }.to_string_lossy().into_owned());
-    let floats = unsafe { std::slice::from_raw_parts(triangles, count.max(0) as usize * 9) };
+    // (no triangles may come as NULL, which from_raw_parts does not take)
+    let floats: &[f32] = if count > 0 {
+        unsafe { std::slice::from_raw_parts(triangles, count as usize * 9) }
+    } else {
+        &[]
+    };
     let triangles: Vec<[Vec3; 3]> = floats
         .chunks_exact(9)
         .map(|t| {
@@ -1251,5 +1256,27 @@ mod tests {
     fn a_first_worker_has_no_skeleton() {
         let mut guard = None;
         assert!(host_started(&mut guard).unwrap().rig.is_none());
+    }
+
+    /// The game's way back on after a failure, through the C interface: the
+    /// failed engine reports -1, J sends the map again (`skate_load_map`),
+    /// which restarts the engine, and the skeleton described before the
+    /// failure is still there to pose the biped by.
+    #[test]
+    fn the_skeleton_survives_a_failure_and_the_next_load() {
+        let mut names = [0 as c_char; 32];
+        for (slot, byte) in names.iter_mut().zip(b"bip01 pelvis") {
+            *slot = *byte as c_char;
+        }
+        let parents = [-1i16];
+        let inverse = [1.0f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+        *HOST.lock().unwrap_or_else(|e| e.into_inner()) = Some(Host::start().unwrap());
+        unsafe { halo_skate_set_skeleton(1, names.as_ptr(), parents.as_ptr(), inverse.as_ptr()) };
+        assert_eq!(with_host(|h| h.rig.is_some()), Some(true));
+        with_host(|h| h.fail("Nonfinite BipedAir launch packet".into()));
+        assert_eq!(halo_skate_state(), -1);
+        let assets = CString::new("no-skate-data-here").unwrap();
+        assert_eq!(unsafe { halo_skate_load(assets.as_ptr(), std::ptr::null(), 0) }, 0);
+        assert_eq!(with_host(|h| h.rig.is_some()), Some(true));
     }
 }
