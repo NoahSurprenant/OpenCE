@@ -112,10 +112,6 @@ impl Sound {
         }
     }
 
-    pub(crate) fn looped(self) -> bool {
-        matches!(self, Self::Roll | Self::Grind | Self::Slide | Self::Powerslide)
-    }
-
     /// The sound whose samples play when this one has none.
     pub(crate) fn fallback(self) -> Option<Self> {
         match self {
@@ -401,7 +397,7 @@ pub(crate) mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let folder = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+        let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/halo-skate-tests").join(name);
         let _ = std::fs::remove_dir_all(&folder);
         std::fs::create_dir_all(&folder).unwrap();
         folder

@@ -39,8 +39,8 @@ impl Session {
         let deck = self.physics.board.bodies()[BodyId::Deck.index()].rates;
         let launch = self.skater.trajectory.selector.launch_info().map(|info| {
             let p = info.board_position;
-            let fingerprint = (u64::from(p.x.to_bits()) << 32 | u64::from(p.y.to_bits()))
-                ^ u64::from(p.z.to_bits()).rotate_left(17);
+            let fingerprint = (u64::from(p[0].to_bits()) << 32 | u64::from(p[1].to_bits()))
+                ^ u64::from(p[2].to_bits()).rotate_left(17);
             (fingerprint, info.player_jumped)
         });
         SoundObservation {

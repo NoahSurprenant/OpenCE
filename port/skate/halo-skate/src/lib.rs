@@ -23,9 +23,13 @@ macro_rules! eprintln {
 
 mod board;
 mod camera;
+mod mixer;
 mod rails;
 mod recovery;
 mod rig;
+mod sound;
+mod sound_defaults;
+mod sound_set;
 
 use bevy_math::{Mat3, Mat4, Vec3};
 use skate_host::bridge::{InputFrame, Pose, Session};
@@ -355,6 +359,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                     match s.activate(to_skate(spawn).to_array(), yaw + std::f32::consts::FRAC_PI_2) {
                         Ok(pose) => {
                             last = Some(Last::of(&pose));
+                            sound::reset(s);
                             Reply::Pose {
                                 sequence,
                                 pose,
@@ -380,6 +385,9 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                             period,
                         );
                         result = s.advance();
+                        if result.is_ok() {
+                            sound::observe(s);
+                        }
                         accumulated -= period;
                     }
                     let failure = match result {
@@ -406,6 +414,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                             match recover(s, &e, last.as_ref(), &pad, &mut recovery) {
                                 Some(pose) => {
                                     last = Some(Last::of(&pose));
+                                    sound::reset(s);
                                     Reply::Pose {
                                         sequence,
                                         pose,

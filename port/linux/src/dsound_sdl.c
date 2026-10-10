@@ -38,6 +38,9 @@ turns the reverb off; audio.enabled = false skips opening a device
 #include "sdl_platform.h"
 #include "port_config.h"
 #include "voice_audio.h"
+#ifdef HALO_SKATE
+#include "../../skate/include/halo_skate_sound.h"
+#endif
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -1147,6 +1150,10 @@ static void mix(float *output, unsigned long frames)
 	}
 	/* the players' voices (voice_audio.c), dry, under the limiter */
 	voice_audio_mix(output, frames);
+#ifdef HALO_SKATE
+	/* the skater's sounds (port/skate: mixer.rs), dry, under the limiter too */
+	halo_skate_sound_mix(output, (unsigned int)frames, OUTPUT_RATE, master_volume);
+#endif
 	limit(output, frames);
 }
 

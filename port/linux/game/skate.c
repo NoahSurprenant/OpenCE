@@ -32,6 +32,7 @@ objects (render.c). */
 #include "units/units.h"
 
 #include "skate.h"
+#include "skate_sound.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -258,6 +259,8 @@ void skate_initialize(void)
 	/* (the engine says when there is no assets folder; nothing more happens
 	until J) */
 	skate_globals.preloaded = halo_skate_preload(skate_assets()) == 0;
+	/* the skater's sounds (skate_sound.c) */
+	skate_sound_initialize(skate_assets());
 }
 
 void skate_structure_bsp_changed(void)
@@ -1082,6 +1085,8 @@ void skate_update_after_objects(void)
 	int node_count;
 	int written;
 
+	skate_sound_update(skate_globals.skating && skate_unit_can_skate(skate_globals.unit_index), skate_globals.unit_index,
+		skate_globals.frame.position);
 	if (!skate_globals.skating || !skate_unit_can_skate(skate_globals.unit_index))
 	{
 		skate_board_forget();
@@ -1207,6 +1212,13 @@ boolean skate_console_setting(char const *word, char const *arguments)
 		console_printf(FALSE, "skate_camera_speed %.3f world units a second, %.2f m/s (default %.3f)",
 			skate_settings.camera_speed, skate_settings.camera_speed * 3.048f, SKATE_DEFAULT_CAMERA_SPEED);
 		return TRUE;
+	}
+	/* skate_volume and skate_sound_log (skate_sound.c) */
+	{
+		int taken = skate_sound_console_setting(word, value, valid, given);
+
+		if (taken >= 0)
+			return (boolean)taken;
 	}
 	return FALSE;
 }
