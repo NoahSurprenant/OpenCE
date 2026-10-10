@@ -82,6 +82,167 @@ For example, `skate_board_scale` prints `skate_board_scale 1.050 (default
 units, 3.0 cm (default 0; ankles ... above the soles)`, with Master Chief's
 measured ankle height.
 
+## Sound
+
+The skate engine has no sound of its own, so Skate 3 mode makes its own
+from what the engine knows each tick, and plays samples for it: a set built
+into the game (below), or your own, or later Skate 3's (the plan, below).
+
+### What makes a sound
+
+After each of the engine's ticks (60 a second) `halo-skate/src/sound.rs`
+looks at its state (`SoundObservation`, `vendor/skate-host/src/physics/bridge/sound.rs`,
+a read-only look added for OpenCE): the skater's state (`PhysicalStateId`),
+which of the board's wheels, trucks and deck touch the world
+(`BoardGroundState`), how hard the board hit what it touches (its parts'
+closing speed), the trajectory last launched into the air and whether the
+skater jumped into it, and whether the body is a ragdoll. The changes make:
+
+| sound | when | how loud |
+| --- | --- | --- |
+| `pop` | a new trajectory launched with `player_jumped` (an ollie, nollie, a pop off a grind), the board on something within the last 10 ticks | always |
+| `land` | the wheels back on the ground after 0.1 s or more off it, riding | by the closing speed, or how fast the board fell, if more (5 m/s is the loudest) |
+| `grind_start`, `grind_end` | the state into or out of a truck grind (50-50, 5-0, smith and feeble: `GrindFiftyFifty`, `GrindFiveO`, `GrindBackslash`) | by the closing speed; by speed |
+| `slide_start`, `slide_end` | the same for a slide on the deck (`GrindBoardslide`, `GrindTipslide`, `GrindDarkslide`) | the same |
+| `board_impact` | the deck or a truck newly hitting something at 1 m/s or more, not grinding (a slap on a ledge, the board tumbling in a bail), or the board landing on its own | by the closing speed (4 m/s is the loudest) |
+| `bail` | the state into `WipeoutGround`, or the body a ragdoll | by speed (8 m/s is the loudest) |
+| `step_off`, `step_on` | off the board (`BipedGround`, `BipedAir`, `OffBoardPushing`), and back on | always |
+
+and the loops, which glide toward what each tick asks:
+
+| loop | plays while | volume and pitch |
+| --- | --- | --- |
+| `roll` | any wheel on the ground, not grinding, faster than 0.15 m/s | louder and higher the faster (to 8 m/s), a little louder on four wheels than on two; silent in the air |
+| `grind`, `slide` | a truck grind, or a slide on the deck | by speed |
+| `powerslide` | `SlideGround` with the wheels down | by speed |
+
+Getting on (J), or being put back on after a failed step, takes the state as
+it is: it makes no sound. Each one-shot is told of in the log, with its
+strength, the speed and the sample it played (`halo-skate: sound: land
+(0.62, 3.1 m/s) built-in land.wav`); `skate_sound_log 0` at the console
+stops that. Board catches after a flip trick are not told apart yet.
+
+What the board is on comes from the level, not the engine (whose collision
+here has a single material, so its surface audio type is always the same):
+each tick `skate_sound.c` looks down from the skater for the level's material
+and makes it a surface: `metal` (metal, force fields), `wood`, `rough` (dirt,
+sand, snow, water, leaves) or `concrete` (stone and everything else). In the
+air the last one holds.
+
+### How it plays
+
+`halo-skate/src/mixer.rs` plays up to 24 voices of the samples, mixed into
+the game's output on the port's audio thread (`dsound_sdl.c` calls
+`halo_skate_sound_mix` after the game's voices and the voice chat, before
+its limiter). Volume, pan and pitch changes glide over 20 ms (pitch over
+60 ms), so nothing clicks; a loop changing sample (another surface) fades the
+old out as the new fades in; a loop's last 10 ms are crossfaded into its
+start, so its seam is smooth whatever the file's ends; and the loops fade
+out by themselves when the game stops ticking (paused) or the skater gets off.
+Each voice is panned toward the board as seen from the camera, and quieter
+past 1 m from it. One-shots vary their pitch by a few percent each time.
+
+The volume is `audio.volume` times `audio.effects_volume` times
+`skate_volume`: `audio.skate_volume` in config.toml (1.0, from 0 to 4), or
+`skate_volume <factor>` at the console for the session (typed alone, it
+prints the value).
+
+Halo's own footsteps do not play on the board: they come from
+`biped_update` (`bipeds.c`: `biped_try_to_make_footsteps`, the jumps' and
+landings' material effects, and `unit_update_animation`, which plays the
+animations' sound frames), which a skating biped skips.
+
+### The sound set: file names
+
+A sound set is a folder of WAV files (PCM of 8, 16, 24 or 32 bits, or 32-bit
+float; any rate; stereo is mixed down to mono), named
+
+```text
+<sound>[_<surface>][-<variant>].wav
+```
+
+where `<sound>` is one of `roll`, `grind`, `slide`, `powerslide`, `pop`,
+`land`, `grind_start`, `grind_end`, `slide_start`, `slide_end`,
+`board_impact`, `bail`, `step_off`, `step_on`; `<surface>` is one of
+`concrete`, `metal`, `wood`, `rough`; and `<variant>` is 2 to 99, for several
+takes of one sound, one picked at random each time. So `roll.wav`,
+`roll_metal.wav`, `land-2.wav`, `grind_start_wood-3.wav`.
+
+Each sound and surface takes the surface's own samples (`grind_metal`), else
+the sound's (`grind`), else those of the sound it falls back on: `slide` on
+`grind`, `slide_start` and `slide_end` on `grind_start` and `grind_end`,
+`grind_start` on `land`, `step_on` and `step_off` on `board_impact`. A
+sound with none is silent.
+
+The game looks for a set at startup, each sound in the first of these that
+has any file for it:
+
+1. the folder `HALO_SKATE_SOUNDS` names;
+2. `sounds` beside the converted data's `assets` (`skate-data/sounds`), and
+   `skate-data/assets/sounds`;
+3. the set built into the game (`port/assets/skate-sounds`).
+
+So a folder with only `land.wav` replaces every landing sample of the
+built-in set and leaves the rest. A file of another name, or one that is not
+a WAV it can read, is skipped with a line in the log; a sound no place has
+says so once (`halo-skate: sound: no samples for step_off: silent`). The log
+says how many sounds have samples and where it looked.
+
+### The built-in set
+
+`port/assets/skate-sounds`, built into the game (`halo-skate/src/sound_defaults.rs`
+embeds the files, so a release needs nothing beside it). Seven are
+recordings from [Freesound](https://freesound.org), each released there
+under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (read from
+each sound's page); two are synthesized by `synthesize.py` beside them.
+`CREDITS.txt` there lists each file's source, the part used and what was done
+to it (mono, 44.1 kHz, trimmed, normalised; the loops levelled and made to wrap).
+
+| file | from | licence |
+| --- | --- | --- |
+| `roll.wav` (loop) | [BPS-SKATEBOARDING RIDING-City Street-Pushing-Fast-Long Strides-1](https://freesound.org/people/bspiller5/sounds/478165/) by bspiller5 | CC0 |
+| `pop.wav`, `land.wav` | [skateboard ollie](https://freesound.org/people/nolimitkid/sounds/515229/) by nolimitkid | CC0 |
+| `grind.wav` (loop) | [skateboard grinding on metal rail](https://freesound.org/people/21100495/sounds/655371/) by 21100495 | CC0 |
+| `slide.wav` (loop) | [skateboard grinding on concreate slab](https://freesound.org/people/21100495/sounds/655372/) by 21100495 | CC0 |
+| `board_impact.wav` | [skateboard drop 2](https://freesound.org/people/FOSSarts/sounds/740122/) by FOSSarts | CC0 |
+| `bail.wav` | [Body fall_01](https://freesound.org/people/deleted_user_2104797/sounds/346695/) (its account since deleted) | CC0 |
+| `powerslide.wav` (loop) | synthesized: band-passed noise and a squeal | this project's (GPL-3.0) |
+| `roll_rough.wav` (loop) | synthesized: a low rumble with crackle, for dirt, sand, snow, grass, water | this project's (GPL-3.0) |
+
+The set has no `grind_end`, `slide_end`, `step_off` or `step_on` of its own:
+the last two fall back on `board_impact`, and a grind's end is silent (a
+pop off it has its own sound). Nobody has listened to these in a game yet:
+they were picked and cut by their loudness and spectra.
+
+
+### Skate 3's own sounds, later
+
+The plan is for the converter to write Skate 3's sounds into
+`skate-data/sounds` under the names above, where they replace the built-in
+set sound by sound with nothing else to change. What that step needs:
+
+- **Finding them.** The mashup's converter (`iw4l_skate_convert.py`, which
+  runs skate-3-rust-engine's `tools/asset_pipeline`) extracts animation,
+  graphs, physics and the skater from `miscload.big`, `miscboot.big`,
+  `db.big` and `createacharacter.big`, and nothing of the sound: neither it
+  nor the engine at `cb79689` reads audio (the engine's surface records carry
+  an `audio` type, packed from `EncodeRwSurfaceId`, which is what Skate 3's
+  own sound would have keyed its wheel and grind sounds by). Skate 3's audio
+  is most likely in its own `.big` archives (which the `tools/owned_game/big.py`
+  reader already opens) or loose under `data/`; that has not been checked
+  against a disc.
+- **Decoding them.** EA's games of that time on the Xbox 360 use EA's audio
+  formats: the older SCHl streams and banks (`.asf`, `.bnk`, `.abk`, `.ast`)
+  or the newer EA Audio Core ones (`.snr` with `.sns`, `.sps`, `.snu`, and
+  the MPF/MUS, SBR/SBS containers), with codecs such as EA-XAS, EALayer3 or
+  XMA. [vgmstream](https://github.com/vgmstream/vgmstream) decodes all of
+  those families (its `ea_schl*` and `ea_eaac*` readers), so the converter
+  could call `vgmstream-cli` to write WAV. Which of them Skate 3 uses is not
+  verified.
+- **Naming them.** The hard part: mapping Skate 3's sound events (wheel roll
+  per surface type, pop, land, grind and slide per surface, bail) to the file
+  names above, which needs either the event names in its banks or listening.
+
 ## Build
 
 You need a recent stable Rust (it was built with 1.99) besides the usual
@@ -126,6 +287,7 @@ On Windows the engine is built with the static C runtime, as the game is
 | recovery | `halo-skate/src/recovery.rs` | where a failed step puts the skater back on the board (the last good pose's place and heading), and when it gives up and the session is made again (below, "When the engine fails") |
 | hooks | `source/main/main.c`, `hs/hs.c`, `scenario/scenario.c`, `game/game.c`, `units/bipeds.c`, `game/player_control.c`, `camera/director.c`, `render/render.c` | preload the skater at startup; take the tuning commands before the script compiler; build each structure BSP's collision as it loads; step before the objects update and pose after it; skip a skating biped's own movement; give the pad to the engine; follow the skater with the third-person camera; draw the board after the objects |
 | input | `../linux/src/sdl_platform.c`, `xinput_sdl.c` | J, and the first pad as an Xbox 360 pad |
+| sound | `halo-skate/src/sound.rs`, `sound_set.rs`, `mixer.rs`, `include/halo_skate_sound.h`, `../linux/game/skate_sound.c`, `../linux/src/dsound_sdl.c` | the events and loops from the engine's ticks, the sound set, the voices mixed into the game's output, and the listener, surface and volume from the game (above, "Sound") |
 
 ### Loading
 
@@ -216,6 +378,10 @@ deck: the skater's ankles ... above it`).
   why).
 - **Only the level's BSP is solid.** Scenery, vehicles and other objects are
   not part of the skater's collision; they are passed through.
+- **The sounds are not heard in a game yet.** The events, the sound set and
+  the mixer are tested on their own (`cargo test -p halo-skate`), and the
+  game builds with them, but nobody has skated with them on: their levels
+  and thresholds are first guesses.
 - **The node names are assumed.** The retarget expects the cyborg's
   `bip01 pelvis`, `bip01 l thigh` and so on. The game's console prints how many
   nodes follow the skater, and stderr lists the biped's node names.
@@ -230,3 +396,6 @@ deck: the skater's ankles ... above it`).
 The skate engine is GPL-3.0 (`vendor/LICENSE-GPL-3.0`), so a build made with
 `--skate` is GPL-3.0 as a whole. `halo-skate/src/rails.rs` is Apache-2.0 from
 the mashup. A build without `--skate` contains none of it.
+The built-in sounds (`../assets/skate-sounds`) are CC0 recordings from
+Freesound and two synthesized ones (above, "The built-in set";
+`CREDITS.txt` beside them).

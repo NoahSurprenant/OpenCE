@@ -5,8 +5,10 @@ seed, so the same files come out each time.
 
     python port/assets/skate-sounds/synthesize.py [name ...]
 
-writes each named sound (all of them by default) as a 16-bit mono 44.1 kHz
-WAV file beside this script. Standard library only.
+writes each named sound as a 16-bit mono 44.1 kHz WAV file beside this
+script: by default the two the built-in set ships (powerslide, roll_rough);
+the others (roll, grind, slide, pop, land, board_impact, bail) are stand-ins
+for the recorded files, kept to try. Standard library only.
 """
 
 import math
@@ -190,8 +192,12 @@ SOUNDS = {
 }
 
 
+# the synthesized sounds the built-in set ships (the rest are recordings)
+SHIPPED = ("powerslide", "roll_rough")
+
+
 def main(names):
-    for name in names or SOUNDS:
+    for name in names or SHIPPED:
         # (each from its own seed, so that one sound changed leaves the rest)
         rng = random.Random(f"opence-skate-{name}")
         write(name, SOUNDS[name](rng))

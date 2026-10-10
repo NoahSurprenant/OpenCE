@@ -1,0 +1,61 @@
+Skate 3 mode's built-in sounds (port/skate/README.md, "Sound")
+===============================================================
+
+Seven are recordings from Freesound (https://freesound.org), each released
+there under Creative Commons 0 (CC0 1.0 Universal Public Domain Dedication,
+https://creativecommons.org/publicdomain/zero/1.0/): the licence was read
+from each sound's own Freesound page on 2026-10-10. CC0 asks for no
+attribution; it is given here as a courtesy. Two are synthesized by
+synthesize.py in this folder, and are part of this project (GPL-3.0, as the
+rest of a --skate build).
+
+The recordings were made from each sound's public HQ preview (MP3): decoded
+with ffmpeg, mixed down to mono at 44100 Hz, high-passed at 35 Hz, trimmed,
+peak-normalised to -3 dBFS and written as 16-bit PCM WAV. The one-shots start
+at their hit on a zero crossing, with a 1 ms fade-in and a cosine fade-out;
+the loops were cut at zero crossings, levelled (a 250 ms RMS envelope
+flattened, within +/-6 dB), and the 10 ms after the loop's end crossfaded
+into its start, so that they wrap seamlessly.
+
+roll.wav (loop, 2.50 s)
+  https://freesound.org/people/bspiller5/sounds/478165/
+  bspiller5 (Back Pocket Sound), "BPS-SKATEBOARDING RIDING-City Street-Pushing-Fast-Long Strides-1.wav"
+  CC0 1.0. Section 68.00-70.50 s, steady fast rolling on a street.
+
+pop.wav (one-shot, 0.35 s)
+  https://freesound.org/people/nolimitkid/sounds/515229/
+  nolimitkid, "skateboard ollie"
+  CC0 1.0. The tail pop, 0.016-0.366 s, 100 ms fade-out.
+
+land.wav (one-shot, 0.50 s)
+  https://freesound.org/people/nolimitkid/sounds/515229/
+  nolimitkid, "skateboard ollie"
+  CC0 1.0. The same ollie's landing, 0.505-1.005 s, 120 ms fade-out.
+
+grind.wav (loop, 1.80 s)
+  https://freesound.org/people/21100495/sounds/655371/
+  21100495, "skateboard grinding on metal rail.wav"
+  CC0 1.0. Section 0.80-2.60 s, trucks grinding a metal rail.
+
+slide.wav (loop, 1.80 s)
+  https://freesound.org/people/21100495/sounds/655372/
+  21100495, "skateboard grinding on concreate slab.wav"
+  CC0 1.0. Section 20.00-21.80 s, the board sliding on a concrete slab.
+
+board_impact.wav (one-shot, 0.85 s)
+  https://freesound.org/people/FOSSarts/sounds/740122/
+  FOSSarts, "skateboard drop 2"
+  CC0 1.0. 0.241-1.091 s, the board dropped and bouncing, 120 ms fade-out.
+
+bail.wav (one-shot, 0.60 s)
+  https://freesound.org/people/deleted_user_2104797/sounds/346695/
+  deleted_user_2104797 (the account has since been deleted; the sound remains
+  on Freesound under CC0), "Body fall_01.wav"
+  CC0 1.0. 0.625-1.225 s, a body falling, 150 ms fade-out.
+
+powerslide.wav (loop, 3.0 s), synthesized (synthesize.py: powerslide)
+  band-passed noise and a narrow squeal, from a fixed seed.
+
+roll_rough.wav (loop, 3.0 s), synthesized (synthesize.py: roll_rough)
+  low-passed rumble with sparse crackle, for the wheels on dirt, sand,
+  snow, grass and water.

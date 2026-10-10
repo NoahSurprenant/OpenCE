@@ -644,4 +644,29 @@ mod tests {
         m.mix(&mut out, 48000, 1.0, now);
         assert!(largest_step(&out) < 0.02, "{}", largest_step(&out));
     }
+    /// The game's way through the C interface: the built-in set loaded, the
+    /// listener set, a tick rolling and a pop, then the audio thread's mix
+    /// has them; off the board they fade out.
+    #[test]
+    fn the_c_interface_plays_the_built_in_set() {
+        assert!(unsafe { halo_skate_sound_load(std::ptr::null()) } >= 9);
+        halo_skate_sound_set_volume(1.0);
+        halo_skate_sound_set_log(0);
+        let (camera, forward, up) = ([-0.5f32, 0.0, 0.2], [1.0f32, 0.0, 0.0], [0.0f32, 0.0, 1.0]);
+        unsafe { halo_skate_sound_listener(camera.as_ptr(), forward.as_ptr(), up.as_ptr(), 0) };
+        let pop = Event { sound: Sound::Pop, strength: 1.0, speed: 4.0, position: Vec3::ZERO };
+        engine_tick(&[pop], &rolling(4.0));
+        let mut out = vec![0.0f32; 9600];
+        unsafe { halo_skate_sound_mix(out.as_mut_ptr(), 4800, 48000, 1.0) };
+        assert!(peak(&out) > 0.05, "{}", peak(&out));
+        assert!(out.iter().all(|s| s.is_finite()));
+        halo_skate_sound_stop();
+        let mut out = vec![0.0f32; 96000];
+        unsafe { halo_skate_sound_mix(out.as_mut_ptr(), 48000, 48000, 1.0) };
+        assert!(peak(&out[90000..]) < 1e-4);
+        // and nothing goes wrong with what the C side might pass
+        unsafe { halo_skate_sound_mix(std::ptr::null_mut(), 10, 48000, 1.0) };
+        unsafe { halo_skate_sound_listener(std::ptr::null(), forward.as_ptr(), up.as_ptr(), 99) };
+        halo_skate_sound_set_volume(f32::NAN);
+    }
 }
