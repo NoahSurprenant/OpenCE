@@ -24,9 +24,10 @@ macro_rules! eprintln {
 mod board;
 mod camera;
 mod rails;
+mod recovery;
 mod rig;
 
-use bevy_math::{Mat3, Vec3};
+use bevy_math::{Mat3, Mat4, Vec3};
 use skate_host::bridge::{InputFrame, Pose, Session};
 use std::ffi::{CStr, CString, c_char};
 use std::path::{Path, PathBuf};
@@ -98,7 +99,13 @@ enum Reply {
     /// The board of the skater model the session was made from (`board.rs`),
     /// or None when it has none to draw.
     Board(Option<Arc<board::Board>>),
-    Pose(u64, Pose),
+    /// The pose answering a request; `recovered` when a step failed and the
+    /// skater was put back on the board in its place (`recovery.rs`).
+    Pose {
+        sequence: u64,
+        pose: Pose,
+        recovered: bool,
+    },
     Error(String),
 }
 
@@ -116,6 +123,11 @@ struct Host {
     error: Option<CString>,
     sequence: u64,
     pose: Option<Pose>,
+    /// A pose since the last step's came from putting the skater back on the
+    /// board after a failed step.
+    recovered: bool,
+    /// The biped's skeleton (`halo_skate_set_skeleton`), kept across engine
+    /// restarts (`host_started`): the game describes it once per biped.
     rig: Option<rig::Rig>,
     board: Option<Arc<board::Board>>,
     /// Changes whenever another board is loaded, so that the game takes its
@@ -181,6 +193,7 @@ impl Host {
             error: None,
             sequence: 0,
             pose: None,
+            recovered: false,
             rig: None,
             board: None,
             board_generation: 0,
@@ -217,7 +230,10 @@ impl Host {
                 self.board_generation = BOARD_GENERATIONS.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1);
                 self.board_warned = false;
             }
-            Reply::Pose(_, pose) => self.pose = Some(pose),
+            Reply::Pose { pose, recovered, .. } => {
+                self.pose = Some(pose);
+                self.recovered |= recovered;
+            }
             Reply::Error(message) => self.fail(message),
         }
     }
@@ -247,8 +263,13 @@ impl Host {
         loop {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             match self.replies.recv_timeout(left) {
-                Ok(Reply::Pose(answer, pose)) => {
+                Ok(Reply::Pose {
+                    sequence: answer,
+                    pose,
+                    recovered,
+                }) => {
                     self.pose = Some(pose);
+                    self.recovered |= recovered;
                     if answer == sequence {
                         return true;
                     }
@@ -270,10 +291,16 @@ impl Host {
 }
 
 /// Starts the worker unless one is running (one that failed is replaced).
+/// A replaced worker's skeleton is kept: the game describes the biped's
+/// skeleton once (`skate_describe_skeleton`), not on each restart, and a
+/// worker without it never poses the biped, so never holsters its weapon.
 fn host_started(guard: &mut Option<Host>) -> Option<&mut Host> {
     if guard.as_ref().is_none_or(|h| h.error.is_some()) {
         match Host::start() {
-            Ok(host) => *guard = Some(host),
+            Ok(mut host) => {
+                host.rig = guard.take().and_then(|failed| failed.rig);
+                *guard = Some(host);
+            }
             Err(e) => {
                 eprintln!("halo-skate: {e}");
                 return None;
@@ -289,6 +316,10 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
     let mut board_root: Option<PathBuf> = None;
     let mut accumulated = 0.0f32;
     let mut packet = 0u32;
+    // the last good pose, to put the skater back on the board from and to
+    // tell of a failure by; and the failures recovered from lately
+    let mut last: Option<Last> = None;
+    let mut recovery = recovery::Recovery::default();
     let current = |generation: u64| generation == latest.load(Ordering::SeqCst);
     for job in jobs {
         let reply = match job {
@@ -319,10 +350,19 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
             } => match session.as_mut() {
                 Some((_, s)) => {
                     accumulated = 0.0;
+                    recovery.reset();
                     // Skate's board faces its local +Z; a yaw of zero faces +X.
-                    s.activate(to_skate(spawn).to_array(), yaw + std::f32::consts::FRAC_PI_2)
-                        .map(|pose| Reply::Pose(sequence, pose))
-                        .unwrap_or_else(Reply::Error)
+                    match s.activate(to_skate(spawn).to_array(), yaw + std::f32::consts::FRAC_PI_2) {
+                        Ok(pose) => {
+                            last = Some(Last::of(&pose));
+                            Reply::Pose {
+                                sequence,
+                                pose,
+                                recovered: false,
+                            }
+                        }
+                        Err(e) => Reply::Error(e),
+                    }
                 }
                 None => Reply::Error("no map is loaded for skating".into()),
             },
@@ -342,16 +382,39 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                         result = s.advance();
                         accumulated -= period;
                     }
-                    match result {
+                    let failure = match result {
                         Ok(()) => {
                             let pose = s.pose();
-                            if pose.root.is_finite() && pose.bones.iter().all(|b| b.is_finite()) {
-                                Reply::Pose(sequence, pose)
+                            if pose_is_finite(&pose) {
+                                recovery.stepped();
+                                last = Some(Last::of(&pose));
+                                Ok(pose)
                             } else {
-                                Reply::Error("the skater's pose is not finite".into())
+                                Err("the skater's pose is not finite".to_string())
                             }
                         }
-                        Err(e) => Reply::Error(e),
+                        Err(e) => Err(e),
+                    };
+                    match failure {
+                        Ok(pose) => Reply::Pose {
+                            sequence,
+                            pose,
+                            recovered: false,
+                        },
+                        Err(e) => {
+                            accumulated = 0.0;
+                            match recover(s, &e, last.as_ref(), &pad, &mut recovery) {
+                                Some(pose) => {
+                                    last = Some(Last::of(&pose));
+                                    Reply::Pose {
+                                        sequence,
+                                        pose,
+                                        recovered: true,
+                                    }
+                                }
+                                None => Reply::Error(e),
+                            }
+                        }
                     }
                 }
                 None => Reply::Error("no map is loaded for skating".into()),
@@ -377,6 +440,113 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
         let failed = matches!(reply, Reply::Error(_));
         if replies.send(reply).is_err() || failed {
             return;
+        }
+    }
+}
+
+fn pose_is_finite(pose: &Pose) -> bool {
+    pose.root.is_finite() && pose.bones.iter().all(|b| b.is_finite())
+}
+
+/// What a failure is told by, and the skater put back from: the last good
+/// pose's root, state, velocity and tick.
+struct Last {
+    root: Mat4,
+    state: String,
+    velocity: Vec3,
+    tick: u64,
+}
+
+impl Last {
+    fn of(pose: &Pose) -> Self {
+        Self {
+            root: pose.root,
+            state: pose.state.clone(),
+            velocity: pose.velocity,
+            tick: pose.tick,
+        }
+    }
+}
+
+/// A step failed with `error`: tells of it in the log, with where the skater
+/// was and what it did, and puts it back on the board where the last good
+/// pose had it (`recovery.rs`). Returns the new pose, or None when that is
+/// not to be (a spot that keeps failing, no good pose yet, or the engine
+/// fails again), and the session is given up.
+fn recover(
+    s: &mut Session,
+    error: &str,
+    last: Option<&Last>,
+    pad: &HaloSkatePad,
+    recovery: &mut recovery::Recovery,
+) -> Option<Pose> {
+    let after = s.pose();
+    let after_finite = pose_is_finite(&after);
+    match last {
+        Some(last) => {
+            let position = from_skate(last.root.w_axis.truncate());
+            let velocity = direction_from_skate(last.velocity);
+            eprintln!(
+                "halo-skate: a step failed: {error}; at tick {}, state {}, the skater was at ({:.3}, {:.3}, {:.3}) \
+                 world units moving ({:.2}, {:.2}, {:.2}) m/s, {:.2} m/s; now at tick {}, state {}, its pose {}; \
+                 the pad: buttons {:04x}, left {:?}, right {:?}, triggers {:?}",
+                last.tick,
+                last.state,
+                position.x,
+                position.y,
+                position.z,
+                velocity.x,
+                velocity.y,
+                velocity.z,
+                velocity.length(),
+                after.tick,
+                after.state,
+                if after_finite { "finite" } else { "not finite" },
+                pad.buttons,
+                pad.left,
+                pad.right,
+                pad.triggers,
+            );
+        }
+        None => eprintln!(
+            "halo-skate: a step failed before any good pose: {error}; now at tick {}, state {}, its pose {}",
+            after.tick,
+            after.state,
+            if after_finite { "finite" } else { "not finite" }
+        ),
+    }
+    let (spawn, heading) = recovery::respawn(&last?.root)?;
+    if !recovery.allow() {
+        eprintln!(
+            "halo-skate: it failed {} times in a row here: making the session again",
+            recovery::MAXIMUM + 1
+        );
+        return None;
+    }
+    let started = Instant::now();
+    match s.activate(spawn, heading) {
+        Ok(pose) if pose_is_finite(&pose) => {
+            let at = from_skate(Vec3::from_array(spawn));
+            eprintln!(
+                "halo-skate: the skater was put back on the board at ({:.3}, {:.3}, {:.3}) in {}ms, state {} \
+                 ({} of {} recoveries in a row)",
+                at.x,
+                at.y,
+                at.z,
+                started.elapsed().as_millis(),
+                pose.state,
+                recovery.recent(),
+                recovery::MAXIMUM
+            );
+            Some(pose)
+        }
+        Ok(_) => {
+            eprintln!("halo-skate: the skater put back on the board has a pose that is not finite");
+            None
+        }
+        Err(e) => {
+            eprintln!("halo-skate: the skater could not be put back on the board: {e}");
+            None
         }
     }
 }
@@ -721,6 +891,7 @@ pub unsafe extern "C" fn halo_skate_activate(position: *const f32, yaw: f32, out
             return -1;
         }
         host.sequence += 1;
+        host.recovered = false;
         let sequence = host.sequence;
         if !host.request(Job::Activate { sequence, spawn, yaw }, sequence, ACTIVATE_WAIT) {
             return -1;
@@ -738,7 +909,8 @@ pub unsafe extern "C" fn halo_skate_activate(position: *const f32, yaw: f32, out
 
 /// Runs `dt` seconds of skating with `pad` held. Returns 0 with `out` filled
 /// from the new pose, 1 when the engine did not answer in time (`out` holds the
-/// last pose), or -1 on failure.
+/// last pose), 2 when a step failed and the skater was put back on the board
+/// where it last was (`recovery.rs`; `out` holds where), or -1 on failure.
 ///
 /// # Safety
 /// `pad` is readable and `out` is writable.
@@ -762,7 +934,13 @@ pub unsafe extern "C" fn halo_skate_step(pad: *const HaloSkatePad, dt: f32, out:
         match host.pose.as_ref() {
             Some(pose) => {
                 write_frame(pose, unsafe { &mut *out });
-                if answered { 0 } else { 1 }
+                if std::mem::take(&mut host.recovered) {
+                    2
+                } else if answered {
+                    0
+                } else {
+                    1
+                }
             }
             None => -1,
         }
@@ -1034,4 +1212,44 @@ pub unsafe extern "C" fn halo_skate_board_vertices(out: *mut f32, capacity: i32)
         }
     })
     .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rig() -> rig::Rig {
+        rig::Rig::new(vec![rig::NodeDefault {
+            name: "bip01 pelvis".into(),
+            parent: None,
+            inverse: rig::Matrix::from_floats(&[1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+        }])
+    }
+
+    /// A worker that failed (a step's error ends it) is replaced with its
+    /// skeleton: the game describes the biped once, and without it the next
+    /// worker would never pose the biped nor holster its weapon, leaving it
+    /// on the board with its weapon in hand.
+    #[test]
+    fn a_replaced_worker_keeps_the_skeleton() {
+        let mut guard = Some(Host::start().unwrap());
+        let host = guard.as_mut().unwrap();
+        host.rig = Some(rig());
+        let mapped = host.rig.as_ref().unwrap().mapped();
+        host.fail("a step failed".into());
+        let replaced = host_started(&mut guard).unwrap();
+        assert!(replaced.error.is_none());
+        assert_eq!(replaced.rig.as_ref().map(|r| r.mapped()), Some(mapped));
+        // and a working one is kept as it is
+        let generation = Arc::clone(&guard.as_ref().unwrap().generation);
+        let kept = host_started(&mut guard).unwrap();
+        assert!(Arc::ptr_eq(&kept.generation, &generation));
+        assert!(kept.rig.is_some());
+    }
+
+    #[test]
+    fn a_first_worker_has_no_skeleton() {
+        let mut guard = None;
+        assert!(host_started(&mut guard).unwrap().rig.is_none());
+    }
 }

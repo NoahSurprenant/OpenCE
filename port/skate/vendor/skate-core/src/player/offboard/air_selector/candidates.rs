@@ -34,7 +34,26 @@ pub(super) fn prepare(
         .flatten()
         .any(|x| !x.is_finite())
     {
-        return Err("Nonfinite BipedAir launch packet");
+        // halo-skate: the packet's fields in the message, to tell which went
+        // wrong (leaked: a game recovers from a few of these, then restarts)
+        return Err(Box::leak(
+            format!(
+                "Nonfinite BipedAir launch packet: velocity {:?}, secondary {:?}, position {:?}, up {:?}, \
+                 forward {:?}, board {:?} (used {}), scalars {:?}, kinds {}+{}, gravity {:?}",
+                p.velocity_0,
+                p.secondary_velocity_16,
+                p.position_32,
+                p.up_48,
+                p.forward_64,
+                p.board_position_80,
+                p.has_board_position_116,
+                [p.scalar_96, p.scalar_100, p.scalar_104],
+                p.kind_108,
+                p.kind_112,
+                gravity
+            )
+            .into_boxed_str(),
+        ));
     }
     let initial = scale(UP, -(s.height - s.sphere_radius));
     let mut correction = [0., 0.1, 0., 0.];
