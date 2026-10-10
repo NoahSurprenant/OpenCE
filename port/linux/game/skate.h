@@ -35,7 +35,8 @@ boolean skate_local_player_skating(short local_player_index, real *yaw);
 SKATE_CONSOLE_SETTINGS, with what follows its word: sets the value for the
 session when given a number, and prints it either way. FALSE on a bad
 number (or in a build without the mode) */
-#define SKATE_CONSOLE_SETTINGS { "skate_board_scale", "skate_feet_offset", "skate_camera_speed" }
+#define SKATE_CONSOLE_SETTINGS { "skate_board_scale", "skate_feet_offset", "skate_camera_speed", \
+	"skate_volume", "skate_sound_log" }
 boolean skate_console_setting(char const *word, char const *arguments);
 
 /* the camera's pitch behind a skater, radians */
