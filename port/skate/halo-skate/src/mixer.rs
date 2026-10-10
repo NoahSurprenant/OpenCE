@@ -357,6 +357,7 @@ impl Mixer {
         self.voices.retain(|v| !v.done());
     }
 
+    #[cfg(test)]
     fn voices_of(&self, sound: Sound) -> usize {
         self.voices.iter().filter(|v| v.sound == sound).count()
     }
