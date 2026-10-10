@@ -31,6 +31,9 @@ struct halo_skate_frame
 	char state[32];
 };
 
+/* sends the engine's log lines (load timings, failures) to log, one line a
+call without its line end, from the engine's thread too; NULL: back to stderr */
+void halo_skate_set_log(void (*log)(const char *line));
 /* makes the skate session (the skater, its animations, graphs and physics:
 the slow part) in the background before any map; 0, or -1 when the assets
 folder is missing or the engine could not start. Never waits */

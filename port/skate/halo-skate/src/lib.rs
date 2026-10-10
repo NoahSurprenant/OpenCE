@@ -13,6 +13,14 @@
 //! Halo space is Z up in world units of 10 feet; Skate space is Y up in metres.
 //! `to_skate` is a proper rotation, so a triangle's winding survives it.
 
+/// The crate's log lines go where the engine's go (`skate_host::log`): to the
+/// game's log once `halo_skate_set_log` is called, else to stderr.
+macro_rules! eprintln {
+    ($($arg:tt)*) => {
+        skate_host::log::write(&format!($($arg)*))
+    };
+}
+
 mod rails;
 mod rig;
 
@@ -474,6 +482,29 @@ fn write_frame(pose: &Pose, out: &mut HaloSkateFrame) {
     for (slot, byte) in out.state.iter_mut().zip(pose.state.bytes().take(31)) {
         *slot = byte as c_char;
     }
+}
+
+/// The game's log function, `halo_skate_set_log`'s.
+static LOG: Mutex<Option<unsafe extern "C" fn(*const c_char)>> = Mutex::new(None);
+
+fn log_to_game(line: &str) {
+    let log = *LOG.lock().unwrap_or_else(|e| e.into_inner());
+    match (log, CString::new(line.replace('\0', " "))) {
+        (Some(log), Ok(line)) => unsafe { log(line.as_ptr()) },
+        _ => std::eprintln!("{line}"),
+    }
+}
+
+/// Sends the engine's log lines (load timings, failures) to `log`, one line
+/// per call without its line end, from any thread; NULL sends them back to
+/// stderr. A Windows release build has no console, so stderr is lost there.
+///
+/// # Safety
+/// `log` is callable from any thread for as long as it is set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_set_log(log: Option<unsafe extern "C" fn(*const c_char)>) {
+    *LOG.lock().unwrap_or_else(|e| e.into_inner()) = log;
+    skate_host::log::set_sink(log.map(|_| log_to_game as fn(&str)));
 }
 
 /// Makes the skate session in the background, before any map, so that a map

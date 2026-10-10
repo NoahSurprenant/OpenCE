@@ -104,7 +104,12 @@ background. J then gets on at once; pressed while something is still loading,
 it says so in the console and gets on when it is ready. The main menu's BSP is
 not loaded, and a BSP replaced before it was built is skipped.
 
-stderr times each phase: `halo-skate: preload: animation banks in`,
+The engine's log lines go through the port's log (`halo_skate_set_log`, set by
+`skate_initialize`): `halo.log` beside `halo.exe` on Windows, whose release
+build has no console, and stderr on Linux, each line after `halo-linux: `.
+(`skate-host` sends its `eprintln!` lines to `skate_host::log`, a sink the game
+sets, by a crate-wide macro in its `lib.rs`; `skate-data`'s are left on stderr.)
+The log times each phase: `halo-skate: preload: animation banks in`,
 `preload: session in` (with `IW4L_SKATE_LOAD graphs`, `physics` and `skater`
 inside it), and for each map `triangles deduplicated and sorted in`,
 `rails: ... in`, `collision built in`, `collision installed in` and

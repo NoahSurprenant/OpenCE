@@ -38,6 +38,8 @@ posed as the skater's bones. */
 /* the platform layer's (sdl_platform.c, xinput_sdl.c) */
 int halo_skate_platform_toggle_pressed(void);
 void halo_skate_platform_pad(struct halo_skate_pad *pad);
+/* the platform layer's log (halo.log on Windows, stderr on Linux) */
+void platform_log(const char *format, ...);
 
 #define SKATE_TWO_SIDED_FLAG 0x01
 #define SKATE_MAXIMUM_NODES 64
@@ -160,8 +162,16 @@ static boolean skate_load_map(void)
 	return sent;
 }
 
+static void skate_log(const char *line)
+{
+	platform_log("%s", line);
+}
+
 void skate_initialize(void)
 {
+	/* the engine's lines (its load timings above all) go to the port's log:
+	a Windows release build has no console for its stderr */
+	halo_skate_set_log(skate_log);
 	/* (the engine says when there is no assets folder; nothing more happens
 	until J) */
 	skate_globals.preloaded = halo_skate_preload(skate_assets()) == 0;
