@@ -202,3 +202,137 @@ fn exporter_degenerate_frame_is_identity() {
     }
     assert_eq!(f[3], ZERO);
 }
+
+// halo-skate: Build 28 on hangemhigh. Off the board (BipedGround), X and the
+// left stick: "Nonfinite BipedAir launch packet: velocity [4.836101,
+// 4.1468215, 0.25886396, 0.0], secondary [0.9707678, 0.0, -0.24002063, NaN],
+// position [24.839907, -23.282875, 36.295986, NaN], up [0.009803514,
+// 0.99915934, 0.03980608, 0.0], forward [0.97345155, 0.0, -0.22889303, 0.0]".
+// Only the w lanes were NaN: the entry frame came from the skeleton with its
+// native fourth lanes (not 0), and the support velocity grew frame0's w by the
+// golden ratio a tick, to infinity in about 180 ticks, then NaN, which reached
+// the packet through the frame output (its up, and the frame that places the
+// packet's position).
+const LOG_UP: Vector = [0.009803514, 0.99915934, 0.03980608, 0.0];
+const LOG_FORWARD: Vector = [0.97345155, 0.0, -0.22889303, 0.0];
+const LOG_POSITION: Vector = [24.839907, -23.282875, 36.295986, 0.0];
+
+/// The entry frame as the skeleton hands it: geometric x, y and z, and the
+/// fourth lanes the native permutes leave (physics_bone_frame keeps them).
+fn native_entry_frame() -> Frame {
+    let [ux, uy, uz, _] = LOG_UP;
+    let [fx, fy, fz, _] = LOG_FORWARD;
+    let right = [uy * fz - uz * fy, uz * fx - ux * fz, ux * fy - uy * fx];
+    let n = (right[0] * right[0] + right[1] * right[1] + right[2] * right[2]).sqrt();
+    let right = right.map(|v| v / n);
+    [
+        [right[0], right[1], right[2], fz],
+        [ux, uy, uz, right[0]],
+        [fx, fy, fz, uy],
+        [LOG_POSITION[0], LOG_POSITION[1], LOG_POSITION[2], 1.0],
+    ]
+}
+
+fn finite(name: &str, tick: usize, v: Vector) {
+    assert!(v.iter().all(|x| x.is_finite()), "{name} at tick {tick}: {v:?}");
+}
+
+/// Stand on one support for `ticks` after getting off the board.
+fn walk_off(ticks: usize) -> (Controller, GroundResult) {
+    let mut c = Controller::new(settings(), metrics());
+    let mut entry = placement(500, 500);
+    entry.frame = native_entry_frame();
+    entry.velocity = [-0.02, 0.0, -0.08, 1.0];
+    entry.body_position = [LOG_POSITION[0], LOG_POSITION[1] + 0.9, LOG_POSITION[2], 1.0];
+    c.place(entry);
+    let mut j = job();
+    j.movement = 0.0;
+    j.support_id = 7;
+    let mut result = None;
+    for tick in 0..ticks {
+        let at = c.state.motion.frame_0[3];
+        j.contact_position = [at[0], at[1], at[2], 0.0];
+        j.target_position = j.contact_position;
+        j.animation_position = j.contact_position;
+        let r = c.step_ground(&j);
+        for (k, row) in r.animation_frame.iter().enumerate() {
+            finite(&format!("animation frame row {k}"), tick, *row);
+        }
+        finite("frame0 position", tick, c.state.motion.frame_0[3]);
+        finite("velocity", tick, r.velocity);
+        result = Some(r);
+    }
+    (c, result.unwrap())
+}
+
+#[test]
+fn standing_off_the_board_keeps_the_frame_w_lanes_zero() {
+    // three times the 180 ticks that took w to infinity
+    let (c, r) = walk_off(600);
+    for row in r.animation_frame.iter().chain(r.physical_frame.iter()) {
+        assert_eq!(row[3], 0.0, "{:?}", r.animation_frame);
+    }
+    assert_eq!(c.state.motion.frame_0[3][3], 0.0);
+    assert_eq!(c.state.motion.support_velocity_256[3], 0.0);
+    assert_eq!(r.velocity[3], 0.0);
+}
+
+#[test]
+fn a_jump_from_walking_makes_a_finite_launch_packet() {
+    use super::super::{air_launch, air_selector};
+    let (c, r) = walk_off(600);
+    // ground_sync's prepare_air: mode 4 (category 500, the jump flag), then the
+    // packet's position is the animation frame times the skeleton's point.
+    let processed = air_launch::Processed {
+        board_position_112: [8.118, -11.901, -7.950, 0.0],
+        forward_224: r.animation_frame[2],
+        up_544: LOG_UP,
+        position_592: LOG_POSITION,
+        velocity_608: [-0.02, 0.0, -0.08, 0.0],
+        velocity_912: r.velocity,
+        departure_geometry: None,
+        flags_2472: 0,
+        flags_2476: 0x80000,
+        flags_2480: 0,
+        previous_state_2504: 500,
+        current_state_2508: 500,
+        current_category_2512: 500,
+        previous_category_2516: 500,
+        // the left stick, [23652, 30746] of 32767
+        raw_x_2692: 0.72,
+        raw_z_2688: 0.94,
+    };
+    let mut packet = air_launch::Packet::initialized(0.0);
+    let jump = air_launch::Settings { jump_speed_scalar: 0.8, jump_height: 0.9 };
+    air_launch::produce(
+        &mut packet,
+        &c.state,
+        &c.settings.movement_velocity.turn_vs_speed,
+        jump,
+        &processed,
+        false,
+    )
+    .unwrap();
+    let frame = r.animation_frame;
+    let point = [0.0, 0.95, 0.1, 1.0];
+    packet.position_32 = std::array::from_fn(|i| {
+        frame[2][i].mul_add(point[2], frame[1][i].mul_add(point[1], frame[0][i].mul_add(point[0], frame[3][i])))
+    });
+    assert_eq!((packet.kind_108, packet.kind_112), (6, 3));
+    for v in [packet.velocity_0, packet.secondary_velocity_16, packet.position_32, packet.up_48, packet.forward_64] {
+        finite("launch packet", 600, v);
+    }
+    assert_eq!(packet.secondary_velocity_16[3], 0.0);
+    assert_eq!(packet.position_32[3], 0.0);
+    // and the selector that refused it takes it: six launch candidates and
+    // three along the secondary direction
+    let mut selector = air_selector::Selector::default();
+    let requests = selector
+        .begin_launch(
+            packet,
+            [0.0, -9.8, 0.0, 0.0],
+            air_selector::Settings { height: 0.9, sphere_radius: 0.3, start_index: 3 },
+        )
+        .unwrap();
+    assert_eq!(requests.len(), 9);
+}
