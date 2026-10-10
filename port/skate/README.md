@@ -123,6 +123,7 @@ On Windows the engine is built with the static C runtime, as the game is
 | board | `halo-skate/src/board.rs`, `../linux/src/d3d8_gl.c` | the board meshes of the converted skater model (`private/skater.glb`: the skinned primitives whose material is named for the board, as the mashup picks them), skinned to the skater each tick and grown 5% (`skate_board_scale`); the game draws them between the last two ticks, as it draws the biped, right after the objects: depth tested, lit by the level's ambient and distant lights at the skater, without point lights or fog |
 | game glue | `../linux/game/skate.c` | the collision BSP as triangles, the toggle, the tick, the biped's position and node matrices, the board, the console's tuning |
 | camera | `halo-skate/src/camera.rs` | the heading the following camera keeps: toward the horizontal velocity's, a fifth of the way a tick the shorter way round, when faster than `skate_camera_speed`; held when slower; always within 0 to 2 pi |
+| recovery | `halo-skate/src/recovery.rs` | where a failed step puts the skater back on the board (the last good pose's place and heading), and when it gives up and the session is made again (below, "When the engine fails") |
 | hooks | `source/main/main.c`, `hs/hs.c`, `scenario/scenario.c`, `game/game.c`, `units/bipeds.c`, `game/player_control.c`, `camera/director.c`, `render/render.c` | preload the skater at startup; take the tuning commands before the script compiler; build each structure BSP's collision as it loads; step before the objects update and pose after it; skip a skating biped's own movement; give the pad to the engine; follow the skater with the third-person camera; draw the board after the objects |
 | input | `../linux/src/sdl_platform.c`, `xinput_sdl.c` | J, and the first pad as an Xbox 360 pad |
 
@@ -153,6 +154,24 @@ inside it), and for each map `triangles deduplicated and sorted in`,
 
 Halo is Z up in world units of 10 feet; Skate is Y up in metres. The engine
 ticks at 60 Hz, so each 30 Hz game tick runs two engine ticks.
+
+### When the engine fails
+
+The engine checks some of its numbers as it goes and gives up a step on one
+that is not a number (a bail it cannot follow says `Nonfinite BipedAir launch
+packet`, with the packet's values). The session survives that, so the skater
+is put back on the board where the last good tick had it, facing the same
+way, as J would (`recovery.rs`): the console says `skate: thrown, back on
+the board`. The log tells of each failure, with where the skater was, its
+state and speed, its state after, and the pad (`halo-skate: a step failed:
+...`), and of the recovery (`halo-skate: the skater was put back on the
+board at ...`). A spot that fails four times in a row, each within 4 seconds
+of the last, or a recovery that fails, gives the session up: skating stops
+(`skate: off (...)`), the biped is on foot again with its weapon in hand,
+and the next J makes the session again with the map (8 seconds or so), then
+gets on. The biped's skeleton is kept across that restart, so the biped is
+posed and its weapon holstered as before; a skater the engine cannot pose
+still has its weapon holstered.
 
 ### Feet on the deck
 

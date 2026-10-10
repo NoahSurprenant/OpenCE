@@ -84,6 +84,8 @@ static struct
 	/* the heading the following camera keeps: the way the skater travels */
 	real yaw;
 	struct halo_skate_frame frame;
+	/* the skeleton was described again on this board (skate_update_after_objects) */
+	boolean skeleton_described_again;
 } skate_globals = { FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, 0.f };
 
 /* the board grown about its middle: Master Chief (about 2.1 m) is larger
@@ -730,6 +732,21 @@ static void skate_stop(const char *reason)
 	skate_board_forget();
 }
 
+/* the engine failed (halo_skate_state -1): off the board as by J, so that the
+biped walks, holds its weapon and is watched and aimed as on foot again (all
+of which follow skate_globals.skating), and everything the engine was told
+is told afresh: the next J restarts it with the map and the skeleton */
+static void skate_engine_failed(void)
+{
+	if (skate_globals.skating || skate_globals.activate_when_ready)
+		console_printf(FALSE, "skate: off (%s)", halo_skate_error());
+	platform_log("skate: off, the skate engine failed: %s", halo_skate_error());
+	skate_stop(NULL);
+	skate_globals.loaded_scenario_index = NONE;
+	skate_globals.loaded_structure_bsp_index = NONE;
+	skate_globals.skeleton_definition_index = NONE;
+}
+
 static void skate_start(long unit_index)
 {
 	struct object_datum *object = object_get(unit_index);
@@ -755,6 +772,8 @@ static void skate_start(long unit_index)
 	}
 	skate_globals.skating = TRUE;
 	skate_globals.unit_index = unit_index;
+	skate_globals.skeleton_described_again = FALSE;
+	skate_board_forget();
 	skate_apply_frame(unit_index, TRUE);
 	console_printf(FALSE, "skate: on");
 }
@@ -765,6 +784,7 @@ void skate_update_before_objects(void)
 	struct halo_skate_pad pad;
 	boolean toggle;
 	int state;
+	int stepped;
 
 	memset(&pad, 0, sizeof(pad));
 	halo_skate_platform_pad(&pad);
@@ -806,10 +826,7 @@ void skate_update_before_objects(void)
 	state = halo_skate_state();
 	if (state == -1 && (skate_globals.skating || skate_globals.activate_when_ready))
 	{
-		console_printf(FALSE, "skate: %s", halo_skate_error());
-		skate_globals.skating = FALSE;
-		skate_globals.activate_when_ready = FALSE;
-		skate_globals.loaded_scenario_index = NONE;
+		skate_engine_failed();
 		return;
 	}
 	if (skate_globals.activate_when_ready && state == 2)
@@ -819,8 +836,21 @@ void skate_update_before_objects(void)
 			skate_start(unit_index);
 		return;
 	}
-	if (skate_globals.skating && halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skate_globals.frame) >= 0)
+	if (!skate_globals.skating)
+		return;
+	stepped = halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skate_globals.frame);
+	if (stepped == 2)
+	{
+		/* a step failed (a bail the engine could not follow): the engine put
+		the skater back on the board where it last was, as J would */
+		console_printf(FALSE, "skate: thrown, back on the board");
+		skate_board_forget();
+		skate_apply_frame(skate_globals.unit_index, TRUE);
+	}
+	else if (stepped >= 0)
 		skate_apply_frame(skate_globals.unit_index, FALSE);
+	else if (halo_skate_state() == -1)
+		skate_engine_failed();
 }
 
 /* ---------- the skater's weapon, holstered
@@ -1062,12 +1092,24 @@ void skate_update_after_objects(void)
 	node_count = object->object.node_matrices.size / (int)sizeof(real_matrix4x3);
 	if (node_count <= 0 || node_count > SKATE_MAXIMUM_NODES)
 		return;
-	written = halo_skate_pose_nodes(&matrices[0].scale, node_count);
-	if (written != node_count)
-		return;
 	node_matrices = (real_matrix4x3 *)object_header_block_get(skate_globals.unit_index,
 		&object->object.node_matrices);
-	memcpy(node_matrices, matrices, sizeof(real_matrix4x3) * node_count);
+	written = halo_skate_pose_nodes(&matrices[0].scale, node_count);
+	if (written != node_count && !skate_globals.skeleton_described_again)
+	{
+		/* the engine lost the skeleton (it never should: lib.rs keeps it
+		across restarts): told again, rather than the biped left standing on
+		the board in Halo's own pose */
+		platform_log("skate: the skate engine posed %d of %d nodes: describing the skeleton again", written,
+			node_count);
+		skate_globals.skeleton_definition_index = NONE;
+		skate_globals.skeleton_described_again = TRUE;
+		skate_describe_skeleton(skate_globals.unit_index);
+		written = halo_skate_pose_nodes(&matrices[0].scale, node_count);
+	}
+	if (written == node_count)
+		memcpy(node_matrices, matrices, sizeof(real_matrix4x3) * node_count);
+	/* on a board the weapon is never in hand, posed or not */
 	skate_holster_weapon(skate_globals.unit_index, node_matrices, node_count);
 }
 

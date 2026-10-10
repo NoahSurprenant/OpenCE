@@ -47,6 +47,9 @@ int halo_skate_load(const char *assets, const float *triangles, int count);
 int halo_skate_state(void);
 const char *halo_skate_error(void);
 int halo_skate_activate(const float *position, float yaw, struct halo_skate_frame *out);
+/* 0: the new pose; 1: the engine did not answer in time (the last pose); 2: a
+step failed and the skater was put back on the board where it last was; -1:
+failed (halo_skate_error) */
 int halo_skate_step(const struct halo_skate_pad *pad, float dt, struct halo_skate_frame *out);
 void halo_skate_suspend(void);
 int halo_skate_set_skeleton(int count, const char *names, const short *parents, const float *inverse_defaults);
