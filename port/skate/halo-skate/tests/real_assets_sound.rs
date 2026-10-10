@@ -113,7 +113,8 @@ fn a_grind_starts_and_ends() {
     assert_eq!(starts, ends, "each grind that starts ends: {events:?}");
 }
 
-/// 7d. A bail into the box: the bail sounds once, after the pop.
+/// 7d. A bail into the box: the bail sounds once, after the pop; it is not a
+/// step off, and being put back after it is not a landing.
 #[test]
 fn a_bail_sounds_once() {
     let Some(assets) = assets("sound_bail") else { return };
@@ -144,4 +145,24 @@ fn a_bail_sounds_once() {
     let pop = position(&events, "pop").expect("the ollie popped");
     assert!(pop < position(&events, "bail").unwrap(), "pop, then the bail: {events:?}");
     assert!(!events.contains(&"step_off".to_string()), "a bail is not stepping off the board: {events:?}");
+    let bail = position(&events, "bail").unwrap();
+    assert!(!events[bail..].contains(&"land".to_string()), "being put back is not a landing: {events:?}");
+}
+
+/// 7e. Getting off with Y: a step off, once, and no bail.
+#[test]
+fn getting_off_with_y_steps_off() {
+    let Some(assets) = assets("sound_step_off") else { return };
+    let mut engine = start(&assets);
+    engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+    engine.hold(Pad::NEUTRAL, 15);
+    take_log();
+    let from = engine.history.len();
+    engine.hold(Pad::buttons(Y), 4);
+    engine.hold(Pad::NEUTRAL, 90);
+    let events = sounds(&take_log());
+    let off = engine.since(from).iter().any(|s| s.off_board());
+    eprintln!("sound: getting off {events:?}");
+    assert!(off, "Y took the skater off the board");
+    assert_eq!(events, ["step_off"], "getting off with Y");
 }

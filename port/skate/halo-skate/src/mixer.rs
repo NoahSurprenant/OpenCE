@@ -395,6 +395,15 @@ pub(crate) fn engine_tick(events: &[Event], loops: &Loops) {
     }
 }
 
+/// Where the load looked, for its log line.
+fn looked_in(folders: &[PathBuf]) -> String {
+    if folders.is_empty() {
+        return "no sounds folder to look in: the built-in set".to_string();
+    }
+    let folders: Vec<String> = folders.iter().map(|f| f.display().to_string()).collect();
+    format!("looked in {}", folders.join(", "))
+}
+
 /// Loads the sound set (`sound_set.rs`) for the converted data in
 /// `assets` (`skate-data/assets`; NULL for none): `HALO_SKATE_SOUNDS`,
 /// `skate-data/sounds`, then the built-in set. Returns how many of the sounds
@@ -423,9 +432,9 @@ pub unsafe extern "C" fn halo_skate_sound_load(assets: *const c_char) -> i32 {
         }
     }
     eprintln!(
-        "halo-skate: sound: {found} of {} sounds have samples (looked in {}), in {}ms",
+        "halo-skate: sound: {found} of {} sounds have samples ({}), in {}ms",
         Sound::ALL.len(),
-        folders.iter().map(|f| f.display().to_string()).collect::<Vec<_>>().join(", "),
+        looked_in(&folders),
         started.elapsed().as_millis()
     );
     let bank = Arc::new(bank);
@@ -524,6 +533,14 @@ mod tests {
 
     fn peak(output: &[f32]) -> f32 {
         output.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+    }
+
+    /// The load's log line says where it looked, or that there was nowhere.
+    #[test]
+    fn the_load_says_where_it_looked() {
+        assert_eq!(looked_in(&[]), "no sounds folder to look in: the built-in set");
+        let folders = [PathBuf::from("a/sounds"), PathBuf::from("b/sounds")];
+        assert_eq!(looked_in(&folders), "looked in a/sounds, b/sounds");
     }
 
     /// The step from one output sample to the next, the largest: a click

@@ -101,12 +101,12 @@ skater jumped into it, and whether the body is a ragdoll. The changes make:
 | sound | when | how loud |
 | --- | --- | --- |
 | `pop` | a new trajectory launched with `player_jumped` (an ollie, nollie, a pop off a grind), the board on something within the last 10 ticks | always |
-| `land` | the wheels back on the ground after 0.1 s or more off it, riding | by the closing speed, or how fast the board fell, if more (5 m/s is the loudest) |
+| `land` | the wheels back on the ground after 0.1 s or more off it, riding, two ticks on (onto a rail or ledge the wheels touch it a tick before the state becomes a grind: then it is `grind_start` instead); not the drop after the engine puts the skater back (`Teleporting`, after a bail) | by the closing speed, or how fast the board fell, if more (5 m/s is the loudest) |
 | `grind_start`, `grind_end` | the state into or out of a truck grind (50-50, 5-0, smith and feeble: `GrindFiftyFifty`, `GrindFiveO`, `GrindBackslash`) | by the closing speed; by speed |
 | `slide_start`, `slide_end` | the same for a slide on the deck (`GrindBoardslide`, `GrindTipslide`, `GrindDarkslide`) | the same |
 | `board_impact` | the deck or a truck newly hitting something at 1 m/s or more, not grinding (a slap on a ledge, the board tumbling in a bail), or the board landing on its own | by the closing speed (4 m/s is the loudest) |
 | `bail` | the state into `WipeoutGround`, or the body a ragdoll | by speed (8 m/s is the loudest) |
-| `step_off`, `step_on` | off the board (`BipedGround`, `BipedAir`, `OffBoardPushing`), and back on | always |
+| `step_off`, `step_on` | off the board (`BipedGround`, `BipedAir`, `OffBoardPushing`) for 3 ticks in a row with no wipeout or ragdoll (a bail passes through `BipedGround` for a tick), and back on | always |
 
 and the loops, which glide toward what each tick asks:
 
@@ -287,6 +287,12 @@ unoptimised, so run them with `--release`:
 HALO_SKATE_TEST_ASSETS=/path/to/skate-data/assets \
     cargo test --release -p halo-skate --test real_assets -- --nocapture
 ```
+
+`halo-skate/tests/real_assets_sound.rs` checks the sound events the same way,
+from the log: pushing makes no one-shot, an ollie pops then lands, onto the
+rail the grind starts (no landing) and ends, a bail sounds once (no step
+off, no landing when the engine puts the skater back), and Y steps off
+(`--test real_assets_sound`).
 
 In CI they run in the `skate-assets` job of `.github/workflows/build.yml`,
 on the owner's self-hosted runner (`opence-k8s`), which has the data

@@ -58,10 +58,21 @@ fn is_off_board(state: u32) -> bool {
 }
 const WIPEOUT: u32 = 300;
 const POWERSLIDE: u32 = 101;
+/// `Teleporting`: the engine putting the skater back (at a checkpoint after a
+/// bail).
+const TELEPORTING: u32 = 702;
 
 /// Ticks in the air before touching down counts as a landing (0.1 s): less is
 /// a bump.
 const LANDING_AIR_TICKS: u32 = 6;
+/// Ticks a landing waits before it sounds: onto a rail or ledge the wheels
+/// touch it a tick before the state becomes a grind, and then it is the
+/// grind starting, not a landing.
+const LANDING_HOLD_TICKS: u32 = 2;
+/// Ticks off the board (in a row, no wipeout or ragdoll) before it is a step
+/// off: on the way into a bail the engine passes through `BipedGround` for a
+/// tick.
+const STEP_OFF_TICKS: u32 = 3;
 /// A launch counts as a pop only so soon after the board was on something
 /// (wheels down or grinding).
 const POP_SUPPORT_TICKS: u32 = 10;
@@ -99,6 +110,13 @@ pub(crate) struct Detector {
     /// The fastest the board fell toward the ground in the air (m/s), for a
     /// landing whose contacts say less.
     falling: f32,
+    /// A landing waiting out LANDING_HOLD_TICKS: (ticks waited, how hard).
+    landing: Option<(u32, f32)>,
+    /// Off the board, a step off not sounded yet: (ticks off, the speed).
+    stepping_off: Option<(u32, f32)>,
+    /// The engine put the skater back (`Teleporting`): until the wheels are
+    /// down, coming down is being placed, not a landing.
+    placed: bool,
 }
 
 impl Detector {
@@ -145,10 +163,32 @@ impl Detector {
             self.launch = launch;
         }
 
+        // the engine putting the skater back: what follows until the wheels
+        // are down is the placing, not riding
+        if now.state == TELEPORTING {
+            self.placed = true;
+            self.landing = None;
+            self.stepping_off = None;
+        }
+
+        // a landing held back (LANDING_HOLD_TICKS): a grind starting instead
+        // takes its place (and how hard it hit)
+        let mut held_hit = 0.0f32;
+        if let Some((waited, hit)) = self.landing.take() {
+            if grinding {
+                held_hit = hit;
+            } else if waited + 1 >= LANDING_HOLD_TICKS {
+                emit(Sound::Land, hit / LOUDEST_LANDING, hit);
+            } else {
+                self.landing = Some((waited + 1, hit));
+            }
+        }
+
         // grinds and slides
         if grinding && !was_grinding {
             let start = if grind_sound(now.state) == Some(Sound::Slide) { Sound::SlideStart } else { Sound::GrindStart };
-            emit(start, (now.closing_speed.max(self.falling) / LOUDEST_LANDING).max(0.4), speed);
+            let hit = now.closing_speed.max(self.falling).max(held_hit);
+            emit(start, (hit / LOUDEST_LANDING).max(0.4), speed);
         } else if was_grinding && !grinding {
             let end = if grind_sound(last.state) == Some(Sound::Slide) { Sound::SlideEnd } else { Sound::GrindEnd };
             emit(end, (speed / LOUDEST_IMPACT).max(0.3), speed);
@@ -156,12 +196,13 @@ impl Detector {
 
         // the wheels back down after a while in the air, riding: a landing,
         // as loud as the board hit (its parts' closing speed, or how fast it
-        // was falling)
+        // was falling), held back LANDING_HOLD_TICKS. Not after the engine
+        // put the skater back: that is being placed.
         let mut landed = false;
-        if wheels > 0 && last_wheels == 0 && self.airborne >= LANDING_AIR_TICKS && !grinding {
+        if wheels > 0 && last_wheels == 0 && self.airborne >= LANDING_AIR_TICKS && !grinding && !self.placed {
             let hit = now.closing_speed.max(self.falling);
             if riding {
-                emit(Sound::Land, hit / LOUDEST_LANDING, hit);
+                self.landing = Some((0, hit));
                 landed = true;
             } else if hit >= IMPACT_SPEED {
                 // the board landing on its own
@@ -174,7 +215,7 @@ impl Detector {
         // the deck or a truck newly hitting something hard, not grinding:
         // the board slapping a ledge, landing primo, or tumbling in a bail
         let parts_hit = (now.deck && !last.deck) || (now.trucks[0] && !last.trucks[0]) || (now.trucks[1] && !last.trucks[1]);
-        if parts_hit && !landed && !grinding && now.closing_speed >= IMPACT_SPEED && self.impact_wait == 0 {
+        if parts_hit && !landed && !grinding && !self.placed && now.closing_speed >= IMPACT_SPEED && self.impact_wait == 0 {
             emit(Sound::BoardImpact, now.closing_speed / LOUDEST_IMPACT, now.closing_speed);
             self.impact_wait = IMPACT_TICKS;
         }
@@ -183,14 +224,28 @@ impl Detector {
         if wiping && !was_wiping {
             emit(Sound::Bail, speed / LOUDEST_BAIL, speed);
         }
+        // off the board, not from a wipeout: a step off once it has held
+        // STEP_OFF_TICKS with no wipeout or ragdoll (a bail passes through
+        // `BipedGround` for a tick on its way to `WipeoutGround`)
         if off && !was_off && !was_wiping && !wiping {
-            emit(Sound::StepOff, 0.6, speed);
-        } else if was_off && riding {
+            self.stepping_off = Some((0, speed));
+        }
+        if let Some((ticks, at)) = self.stepping_off.take() {
+            if off && !wiping {
+                if ticks + 1 >= STEP_OFF_TICKS {
+                    emit(Sound::StepOff, 0.6, at);
+                } else {
+                    self.stepping_off = Some((ticks + 1, at));
+                }
+            }
+        }
+        if was_off && riding {
             emit(Sound::StepOn, 0.6, speed);
         }
 
         // what the next tick measures from
         if wheels > 0 || grinding {
+            self.placed = false;
             self.unsupported = 0;
             self.airborne = 0;
             self.falling = 0.0;
@@ -282,7 +337,7 @@ mod tests {
         let mut ticks = vec![ground, ground, popped];
         ticks.extend(std::iter::repeat_n(air, 10));
         ticks.extend(std::iter::repeat_n(falling, 10));
-        ticks.extend([down, down]);
+        ticks.extend([down, down, down]);
         let events = run(&mut d, &ticks);
         assert_eq!(sounds(&events), [Sound::Pop, Sound::Land]);
         // as loud as it fell (3 m/s, more than the contacts' 2.5)
@@ -301,7 +356,7 @@ mod tests {
         off.board_velocity = [0.0, -1.0, 5.0];
         let mut ticks = vec![rolling(5.0)];
         ticks.extend(std::iter::repeat_n(off, 12));
-        ticks.push(rolling(5.0));
+        ticks.extend(std::iter::repeat_n(rolling(5.0), 3));
         assert_eq!(sounds(&run(&mut d, &ticks)), [Sound::Land]);
     }
 
@@ -367,8 +422,126 @@ mod tests {
         off.state = 500;
         let mut on = rolling(0.0);
         on.state = 503;
-        let events = run(&mut d, &[rolling(1.0), off, off, on, rolling(0.0)]);
+        let events = run(&mut d, &[rolling(1.0), off, off, off, off, on, rolling(0.0)]);
         assert_eq!(sounds(&events), [Sound::StepOff, Sound::StepOn]);
+    }
+
+    /// In the air a while, falling at 4 m/s: the jumped trajectory and the
+    /// ticks before the board comes down.
+    fn ollie_into_the_air() -> Vec<SoundObservation> {
+        let mut popped = rolling(5.0);
+        popped.launch = Some((2, true));
+        let mut air = popped;
+        air.state = 201;
+        air.wheels = [false; 4];
+        air.board_velocity = [0.0, -4.0, 5.0];
+        let mut ticks = vec![rolling(5.0), popped];
+        ticks.extend(std::iter::repeat_n(air, 20));
+        ticks
+    }
+
+    /// A landing sounds LANDING_HOLD_TICKS after the wheels touch down, as
+    /// loud as it hit then.
+    #[test]
+    fn a_landing_sounds_after_its_hold() {
+        let mut d = Detector::default();
+        let events = run(&mut d, &ollie_into_the_air());
+        assert_eq!(sounds(&events), [Sound::Pop]);
+        let mut down = rolling(5.0);
+        down.launch = Some((2, true));
+        let mut events = Vec::new();
+        d.observe(&down, &mut events);
+        for _ in 1..LANDING_HOLD_TICKS {
+            d.observe(&down, &mut events);
+            assert!(events.is_empty(), "held: {events:?}");
+        }
+        d.observe(&down, &mut events);
+        assert_eq!(sounds(&events), [Sound::Land]);
+        assert!((events[0].strength - 4.0 / LOUDEST_LANDING).abs() < 1e-5);
+        assert!(run(&mut d, &[down; 10]).is_empty(), "once");
+    }
+
+    /// Onto a rail, as the engine does it: the wheels touch the rail a tick
+    /// before the state becomes `GrindFiftyFifty`. That is the grind starting
+    /// (as loud as the landing would have been), not a landing.
+    #[test]
+    fn landing_onto_a_rail_is_the_grind_starting() {
+        let mut d = Detector::default();
+        let mut ticks = ollie_into_the_air();
+        let mut touch = ticks[ticks.len() - 1];
+        touch.wheels = [true, false, false, true];
+        let mut grind = touch;
+        grind.state = 401;
+        grind.trucks = [true; 2];
+        grind.board_velocity = [0.0, 0.0, 5.0];
+        ticks.push(touch);
+        ticks.extend(std::iter::repeat_n(grind, 20));
+        let events = run(&mut d, &ticks);
+        assert_eq!(sounds(&events), [Sound::Pop, Sound::GrindStart]);
+        assert!((events[1].strength - 4.0 / LOUDEST_LANDING).abs() < 1e-5);
+    }
+
+    /// Into a bail, as the engine does it: from the air through
+    /// `BipedGround` for one tick, then `WipeoutGround` and the ragdoll. A
+    /// bail, not a step off.
+    #[test]
+    fn a_bail_through_biped_ground_is_not_a_step_off() {
+        let mut d = Detector::default();
+        let mut ticks = ollie_into_the_air();
+        let mut biped = ticks[ticks.len() - 1];
+        biped.state = 500;
+        biped.deck = true;
+        let mut wipeout = biped;
+        wipeout.state = 300;
+        wipeout.ragdoll = true;
+        ticks.push(biped);
+        ticks.extend(std::iter::repeat_n(wipeout, 60));
+        let events = run(&mut d, &ticks);
+        assert_eq!(sounds(&events), [Sound::Pop, Sound::Bail]);
+        // nor is off the board for less than STEP_OFF_TICKS, then a ragdoll
+        let mut d = Detector::default();
+        let mut off = rolling(2.0);
+        off.state = 500;
+        let mut ragdoll = off;
+        ragdoll.ragdoll = true;
+        let mut ticks = vec![rolling(2.0)];
+        ticks.extend(std::iter::repeat_n(off, STEP_OFF_TICKS as usize - 1));
+        ticks.extend(std::iter::repeat_n(ragdoll, 10));
+        assert_eq!(sounds(&run(&mut d, &ticks)), [Sound::Bail]);
+    }
+
+    /// After a bail the engine puts the skater back (`Teleporting`), its
+    /// board a little above the ground, and it drops onto it: being placed,
+    /// not a landing. The next real landing sounds.
+    #[test]
+    fn being_put_back_after_a_bail_is_not_a_landing() {
+        let mut d = Detector::default();
+        let mut wipeout = rolling(4.0);
+        wipeout.state = 300;
+        wipeout.ragdoll = true;
+        wipeout.wheels = [false; 4];
+        wipeout.deck = true;
+        let mut teleport = wipeout;
+        teleport.state = TELEPORTING;
+        let mut placed = rolling(0.0);
+        placed.wheels = [false; 4];
+        let mut dropping = placed;
+        dropping.state = 200;
+        dropping.launch = Some((7, false));
+        dropping.board_velocity = [0.0, -2.4, 0.0];
+        let mut down = rolling(0.0);
+        down.launch = Some((7, false));
+        down.closing_speed = 2.4;
+        let mut ticks = vec![rolling(4.0)];
+        ticks.extend(std::iter::repeat_n(wipeout, 30));
+        ticks.extend([teleport, teleport]);
+        ticks.extend(std::iter::repeat_n(placed, 9));
+        ticks.extend(std::iter::repeat_n(dropping, 5));
+        ticks.extend(std::iter::repeat_n(down, 10));
+        assert_eq!(sounds(&run(&mut d, &ticks)), [Sound::Bail]);
+        let mut events = run(&mut d, &ollie_into_the_air());
+        events.extend(run(&mut d, &[down; 5]));
+        assert_eq!(sounds(&events), [Sound::Pop, Sound::Land]);
     }
 
     /// Getting on (J) in the air, grinding or bailing makes no sound of its
