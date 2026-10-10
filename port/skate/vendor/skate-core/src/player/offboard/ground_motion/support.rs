@@ -26,7 +26,17 @@ pub(super) fn update(s: &mut GroundMotionState, i: &GroundMotionInput) -> Frame 
             inverse_rigid(s.previous_support_frame_192),
             i.contact_frame_32,
         );
-        let moved = transform_point(s.frame_0[3], delta);
+        let mut moved = transform_point(s.frame_0[3], delta);
+        // halo-skate: transform_point reads only the point's x, y and z and
+        // writes w from the frames (0 in the host's geometric frames). A
+        // position whose w lane was not 0 (the skeleton's native lanes, through
+        // the entry frame) then "moved" by -w a tick: a support velocity of
+        // -60 w in w, fed back doubled by the prediction below into frame0's
+        // position, so w grew by the golden ratio a tick, flipping sign, to
+        // infinity in about 180 ticks (3 s) on one support, then NaN (and a
+        // BipedGround jump's launch packet failed its finite check). The
+        // support moves the point's x, y and z; its w is not motion.
+        moved[3] = s.frame_0[3][3];
         let velocity = scale(sub(moved, s.frame_0[3]), reciprocal(DT));
         let acceleration = madd(
             sub(velocity, s.support_velocity_256),
