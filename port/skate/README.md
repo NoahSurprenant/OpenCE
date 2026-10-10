@@ -52,6 +52,15 @@ camera follows from behind, turning to the way you travel: rolling back off
 a wall (fakie, still facing it), it comes round in about a third of a
 second. Slower than 1 m/s it holds its heading.
 
+As in Skate 3, you can step off the board and walk (the left stick), jump,
+and throw the board; that is still skating (the dot, the holstered weapon),
+and J still ends it. Off the board the camera follows the skater, not the
+board, wherever the board lies or flies: it turns to the way you walk, and,
+stood still for a second, comes slowly round behind the way you face.
+Getting off and back on, it turns from where it was, never snapping round.
+The board is drawn where the engine has it (its physical body), under you
+or not.
+
 Halo crouches on the left stick's click and zooms on the right's, so in a
 build with Skate 3 mode the first controller's stick clicks reach Halo a
 tenth of a second late (`xinput_sdl.c`): a click the other stick joins in
@@ -122,7 +131,7 @@ On Windows the engine is built with the static C runtime, as the game is
 | retarget | `halo-skate/src/rig.rs` | each of the biped's `bip01` nodes keeps its bone lengths and turns to point where the skater's matching bone points; the pelvis and chest take the hips' and shoulders' twist; the feet are put on the skater's feet, and while riding the soles on the deck (below) |
 | board | `halo-skate/src/board.rs`, `../linux/src/d3d8_gl.c` | the board meshes of the converted skater model (`private/skater.glb`: the skinned primitives whose material is named for the board, as the mashup picks them), skinned to the skater each tick and grown 5% (`skate_board_scale`); the game draws them between the last two ticks, as it draws the biped, right after the objects: depth tested, lit by the level's ambient and distant lights at the skater, without point lights or fog |
 | game glue | `../linux/game/skate.c` | the collision BSP as triangles, the toggle, the tick, the biped's position and node matrices, the board, the console's tuning |
-| camera | `halo-skate/src/camera.rs` | the heading the following camera keeps: toward the horizontal velocity's, a fifth of the way a tick the shorter way round, when faster than `skate_camera_speed`; held when slower; always within 0 to 2 pi |
+| camera | `halo-skate/src/camera.rs` | the heading the following camera keeps: on the board toward the board's horizontal velocity, off it (the engine's state category 500, as its own camera tells off the board) toward the skater's, a fifth of the way a tick the shorter way round, when faster than `skate_camera_speed`; held when slower, except that off the board and still for a second it turns a twentieth of the way a tick toward the way the skater faces (Skate 3's camera lines up so); always within 0 to 2 pi |
 | recovery | `halo-skate/src/recovery.rs` | where a failed step puts the skater back on the board (the last good pose's place and heading), and when it gives up and the session is made again (below, "When the engine fails") |
 | hooks | `source/main/main.c`, `hs/hs.c`, `scenario/scenario.c`, `game/game.c`, `units/bipeds.c`, `game/player_control.c`, `camera/director.c`, `render/render.c` | preload the skater at startup; take the tuning commands before the script compiler; build each structure BSP's collision as it loads; step before the objects update and pose after it; skip a skating biped's own movement; give the pad to the engine; follow the skater with the third-person camera; draw the board after the objects |
 | input | `../linux/src/sdl_platform.c`, `xinput_sdl.c` | J, and the first pad as an Xbox 360 pad |
@@ -158,8 +167,11 @@ ticks at 60 Hz, so each 30 Hz game tick runs two engine ticks.
 ### When the engine fails
 
 The engine checks some of its numbers as it goes and gives up a step on one
-that is not a number (a bail it cannot follow says `Nonfinite BipedAir launch
-packet`, with the packet's values). The session survives that, so the skater
+that is not a number (a launch it cannot follow says `Nonfinite BipedAir
+launch packet`, with the packet's values; Build 28's, a jump off the board,
+was a NaN in the unused fourth lane of two vectors, grown from the
+skeleton's native lanes by the walking skater's support velocity, now
+fixed in `vendor/skate-core`: `ground_motion/support.rs`, `controller/placement.rs`). The session survives that, so the skater
 is put back on the board where the last good tick had it, facing the same
 way, as J would (`recovery.rs`): the console says `skate: thrown, back on
 the board`. The log tells of each failure, with where the skater was, its

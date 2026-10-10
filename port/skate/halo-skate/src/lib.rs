@@ -73,8 +73,14 @@ pub struct HaloSkateFrame {
     pub position: [f32; 3],
     pub forward: [f32; 3],
     pub up: [f32; 3],
-    /// World units per second.
+    /// The board's, world units per second.
     pub velocity: [f32; 3],
+    /// The skater's own off the board, world units per second.
+    pub skater_velocity: [f32; 3],
+    /// The way the skater faces (`Pose::facing`), a unit vector.
+    pub facing: [f32; 3],
+    /// 1 while the skater is off the board (walking, or jumping off it).
+    pub off_board: i32,
     pub camera_position: [f32; 3],
     pub camera_forward: [f32; 3],
     pub camera_up: [f32; 3],
@@ -462,7 +468,8 @@ impl Last {
         Self {
             root: pose.root,
             state: pose.state.clone(),
-            velocity: pose.velocity,
+            // off the board, the skater's own (the board may lie still or fly)
+            velocity: if pose.off_board { pose.skater_velocity } else { pose.velocity },
             tick: pose.tick,
         }
     }
@@ -718,6 +725,9 @@ fn write_frame(pose: &Pose, out: &mut HaloSkateFrame) {
     out.forward = direction_from_skate(root.z_axis.truncate()).normalize_or_zero().to_array();
     out.up = direction_from_skate(root.y_axis.truncate()).normalize_or_zero().to_array();
     out.velocity = (direction_from_skate(pose.velocity) / METRES).to_array();
+    out.skater_velocity = (direction_from_skate(pose.skater_velocity) / METRES).to_array();
+    out.facing = direction_from_skate(pose.facing).normalize_or_zero().to_array();
+    out.off_board = i32::from(pose.off_board);
     match pose.camera {
         Some((position, basis, fov)) => {
             let basis: Mat3 = basis;
@@ -1059,13 +1069,35 @@ pub extern "C" fn halo_skate_set_feet(ankle_height: f32, offset: f32) {
     FEET_OFFSET.set(if offset.is_finite() { offset } else { 0.0 });
 }
 
-/// The following camera's next heading (radians, 0 to 2 pi): `heading`
-/// turned `fraction` of the way toward the heading of the horizontal
-/// velocity (`vx`, `vy`, world units a second), the shorter way round, when
-/// that is faster than `minimum_speed`; else `heading`, wrapped (camera.rs).
+/// The following camera's next heading (radians, 0 to 2 pi), `dt` seconds
+/// on from `follow`, for the skater of `frame` (camera.rs): on the board
+/// `fraction` of the way toward the way it travels, off it toward the way
+/// the skater walks, when faster than `minimum_speed` (world units a
+/// second); off it and still a while, slowly round behind its facing; else
+/// held. Updates `follow` and returns its heading; a null pointer leaves it
+/// and returns 0.
+///
+/// # Safety
+/// `follow` and `frame` are null or valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn halo_skate_follow_heading(heading: f32, vx: f32, vy: f32, minimum_speed: f32, fraction: f32) -> f32 {
-    camera::follow(heading, [vx, vy], minimum_speed, fraction)
+pub unsafe extern "C" fn halo_skate_follow(
+    follow: *mut camera::Follow,
+    frame: *const HaloSkateFrame,
+    minimum_speed: f32,
+    fraction: f32,
+    dt: f32,
+) -> f32 {
+    let (Some(follow), Some(frame)) = (unsafe { follow.as_mut() }, unsafe { frame.as_ref() }) else {
+        return 0.0;
+    };
+    let along = |v: [f32; 3]| [v[0], v[1]];
+    let subject = camera::Subject {
+        off_board: frame.off_board != 0,
+        board_velocity: along(frame.velocity),
+        skater_velocity: along(frame.skater_velocity),
+        facing: along(frame.facing),
+    };
+    follow.step(&subject, minimum_speed, fraction, dt)
 }
 
 #[repr(C)]

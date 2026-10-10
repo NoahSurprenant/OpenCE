@@ -21,7 +21,10 @@ struct halo_skate_frame
 	float position[3];
 	float forward[3];
 	float up[3];
-	float velocity[3]; /* world units a second */
+	float velocity[3]; /* the board's, world units a second */
+	float skater_velocity[3]; /* the skater's own off the board, world units a second */
+	float facing[3]; /* the way the skater faces, a unit vector */
+	int off_board; /* 1 while the skater is off the board (walking, or jumping off it) */
 	float camera_position[3];
 	float camera_forward[3];
 	float camera_up[3];
@@ -60,11 +63,20 @@ int halo_skate_pose_nodes(float *out, int capacity);
 units above its soles (0 for unknown: its ankles stay on the skater's), and
 raised offset world units more along the board's up */
 void halo_skate_set_feet(float ankle_height, float offset);
-/* the following camera's next heading, radians within 0 to 2 pi: heading
-turned fraction of the way toward the heading of the velocity (vx, vy world
-units a second) the shorter way round, when that is faster than
-minimum_speed; else heading, wrapped */
-float halo_skate_follow_heading(float heading, float vx, float vy, float minimum_speed, float fraction);
+/* the heading the following camera keeps (camera.rs) */
+struct halo_skate_follow
+{
+	float heading; /* radians, 0 to 2 pi */
+	float still; /* seconds off the board slower than minimum_speed */
+};
+/* the following camera's next heading, dt seconds on, radians within 0 to 2
+pi: on the board, follow turned fraction of the way toward the way the board
+travels (frame->velocity), off it toward the way the skater walks
+(frame->skater_velocity), the shorter way round, when that is faster than
+minimum_speed (world units a second); off it and still a second, slowly round
+behind the way it faces; else held. Updates follow and returns its heading */
+float halo_skate_follow(struct halo_skate_follow *follow, const struct halo_skate_frame *frame,
+	float minimum_speed, float fraction, float dt);
 
 /* the skateboard (board.rs): the board meshes of the converted skater model,
 skinned to the skater, which the game draws itself */
