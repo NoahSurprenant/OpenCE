@@ -10,16 +10,18 @@ use bevy_math::{Mat3, Quat, Vec3};
 use skate_host::bridge::Pose;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// How far from the line through a foot, in the board's plane, a vertex of
-/// the deck still counts as under it, when no triangle is (world units).
+/// How far past the board's edge, across it, a foot still partly counts as
+/// on the deck (world units): a foot stepping off fades out over it.
 const FOOT_RADIUS: f32 = 0.10 / METRES;
 /// The skater's ankle up to this far above the deck is riding on it...
 const DECK_NEAR: f32 = 0.15 / METRES;
 /// ...and from this far, off it; between, partly.
 const DECK_FAR: f32 = 0.35 / METRES;
-/// An ankle further below the deck's top than this is not on it either: the
-/// board is over the foot.
-const DECK_BELOW: f32 = 0.05 / METRES;
+/// An ankle down to the deck's top is on it, and one this far below it (the
+/// pushing foot, down at the ground beside the board) is off it; between,
+/// partly.
+const DECK_LOW: f32 = 0.0;
+const DECK_BELOW: f32 = 0.10 / METRES;
 
 /// The board as skinned for the pose, and how the biped stands on it.
 pub struct Deck<'a> {
@@ -35,14 +37,17 @@ pub struct Deck<'a> {
     pub scale: f32,
 }
 
-/// How much of the skater's ankle `height` above the deck counts as riding
-/// on it: 1 near it, 0 off it.
+/// How much of the skater's ankle `height` above the deck counts as on it:
+/// 1 near it, 0 well above it (lifted, in the air) or below it (pushing),
+/// and between, partly, so that a foot leaving or coming back moves nothing
+/// at once.
 fn near_deck(height: f32) -> f32 {
-    if !(height >= -DECK_BELOW) {
-        0.0
-    } else {
-        ((DECK_FAR - height) / (DECK_FAR - DECK_NEAR)).clamp(0.0, 1.0)
+    if !height.is_finite() {
+        return 0.0;
     }
+    let above = ((DECK_FAR - height) / (DECK_FAR - DECK_NEAR)).clamp(0.0, 1.0);
+    let below = ((height + DECK_BELOW - DECK_LOW) / DECK_BELOW).clamp(0.0, 1.0);
+    above.min(below)
 }
 
 /// A world-space node transform as the game stores one: scale, then the
@@ -224,44 +229,65 @@ impl Rig {
     pub fn mapped(&self) -> usize {
         self.nodes.iter().filter(|n| n.follow.is_some()).count()
     }
-
-    /// How far along the board's `up` the skeleton moves from standing its
-    /// ankles on the skater's, so that its soles rest on the deck: the deck's
-    /// top under each of the skater's feet, plus the biped's own ankle height
-    /// and the extra offset, less the skater's ankles. All of it while both
-    /// feet are near the deck, fading out as they leave it (an ollie, a flip,
-    /// the air), so that the biped follows the skater's feet there and does
-    /// not snap to a spinning board. None without a deck under both feet.
-    fn onto_deck(&self, deck: &Deck, up: Vec3, bone: &dyn Fn(&str) -> Option<Vec3>) -> Option<f32> {
+    /// How much further along the board's `up` the skeleton moves, past
+    /// standing its ankles' middle on the skater's (`base`, along up), so
+    /// that its soles rest on the deck. Each of the skater's feet on the deck
+    /// asks for the move that puts the biped's matching ankle (`ankles`, as
+    /// posed before any move) its own ankle height, plus the extra offset,
+    /// above the deck's top under it; the move is those feet's, weighed by
+    /// how much each is on the deck, so that while one foot pushes or is
+    /// lifted the other alone holds the biped on the deck, and a foot
+    /// leaving or coming back slides it over rather than jumping. As the
+    /// feet all leave the deck (an ollie, a flip, the air) it fades out, and
+    /// the biped follows the skater's feet there rather than snapping to a
+    /// spinning board. None without a deck under either foot.
+    fn onto_deck(
+        &self,
+        deck: &Deck,
+        up: Vec3,
+        bone: &dyn Fn(&str) -> Option<Vec3>,
+        ankles: [Vec3; 2],
+        base: f32,
+    ) -> Option<f32> {
         if !(deck.ankle > 0.0) || up.length_squared() < 0.5 {
             return None;
         }
-        let foot = |ankle: &str, toe: &str| {
+        // each foot: the skater's ankle above the deck, how much it is on
+        // the deck, and the move it asks for
+        let foot = |ankle: &str, toe: &str, biped: Vec3| {
             let ankle = bone(ankle)?;
             // under the middle of the foot, which is on the deck even when
             // the heel hangs off the tail
             let probe = bone(toe).map_or(ankle, |toe| (ankle + toe) * 0.5);
-            let (top, hit) = board::deck_top(deck.vertices, deck.indices, probe, up, FOOT_RADIUS)?;
-            Some((ankle.dot(up) - top, hit))
+            let top = board::deck_top(deck.vertices, deck.indices, probe, up, FOOT_RADIUS)?;
+            let height = ankle.dot(up) - top.height;
+            let weight = near_deck(height) * top.weight;
+            Some((height, weight, top.height + deck.ankle + deck.offset - biped.dot(up)))
         };
-        let (left, left_hit) = foot("LEFTFOOT", "LEFTTOEBASE")?;
-        let (right, right_hit) = foot("RIGHTFOOT", "RIGHTTOEBASE")?;
-        let weight = near_deck(left).min(near_deck(right));
-        if weight > 0.0 && !self.feet_logged.swap(true, Ordering::Relaxed) {
+        let feet = [
+            foot("LEFTFOOT", "LEFTTOEBASE", ankles[0]),
+            foot("RIGHTFOOT", "RIGHTTOEBASE", ankles[1]),
+        ];
+        let total: f32 = feet.iter().flatten().map(|&(_, w, _)| w).sum();
+        let on_deck = feet.iter().flatten().map(|&(_, w, _)| w).fold(0.0, f32::max);
+        if !(total > 0.0) {
+            return feet.iter().any(Option::is_some).then_some(0.0);
+        }
+        let wanted = feet.iter().flatten().map(|&(_, w, s)| w * s).sum::<f32>() / total;
+        if on_deck >= 1.0 && !self.feet_logged.swap(true, Ordering::Relaxed) {
+            let above = |f: &Option<(f32, f32, f32)>| f.map_or("no deck".into(), |(h, w, _)| format!("{:.3} m ({w:.2} on it)", h * METRES));
             eprintln!(
-                "halo-skate: feet on the deck: the skater's ankles {:.3} and {:.3} m above it (found by {:?} and {:?}), \
-                 the biped's {:.3} m ({:.4} world units) above its soles, extra offset {:.4} world units, board scale {:.3}",
-                left * METRES,
-                right * METRES,
-                left_hit,
-                right_hit,
+                "halo-skate: feet on the deck: the skater's ankles {} and {} above it, the biped's {:.3} m \
+                 ({:.4} world units) above its soles, extra offset {:.4} world units, board scale {:.3}",
+                above(&feet[0]),
+                above(&feet[1]),
                 deck.ankle * METRES,
                 deck.ankle,
                 deck.offset,
                 deck.scale
             );
         }
-        Some((deck.ankle + deck.offset - (left + right) * 0.5) * weight)
+        Some((wanted - base) * on_deck)
     }
 
     /// Writes every node's world matrix posed as `pose`, returning how many.
@@ -323,8 +349,11 @@ impl Rig {
         // Stand the feet on the skater's feet; riding, on the deck.
         let shift = self.feet.and_then(|(l, r)| {
             let skater = (bone("LEFTFOOT")? + bone("RIGHTFOOT")?) * 0.5;
-            let along_up = deck.and_then(|deck| self.onto_deck(deck, up, &bone)).unwrap_or(0.0);
-            Some(skater - (positions[l] + positions[r]) * 0.5 + up * along_up)
+            let base = skater - (positions[l] + positions[r]) * 0.5;
+            let along_up = deck
+                .and_then(|deck| self.onto_deck(deck, up, &bone, [positions[l], positions[r]], base.dot(up)))
+                .unwrap_or(0.0);
+            Some(base + up * along_up)
         });
         for &i in self.order.iter().filter(|&&i| i < count) {
             let node = &self.nodes[i];
@@ -480,5 +509,105 @@ mod tests {
         assert!((near_deck(0.1 / METRES) - 1.0).abs() < 1e-6);
         assert_eq!(near_deck(0.4 / METRES), 0.0);
         assert_eq!(near_deck(-0.1 / METRES), 0.0);
+    }
+
+    /// The skater upright at the origin with its ankles where given.
+    fn skater_feet(left: Vec3, right: Vec3) -> Pose {
+        let at = |p: Vec3| Mat4::from_translation(to_skate(p));
+        Pose {
+            root: Mat4::IDENTITY,
+            bones: vec![at(left), at(right)],
+            names: vec!["LEFTFOOT".into(), "RIGHTFOOT".into()],
+            camera: None,
+            velocity: Vec3::ZERO,
+            tick: 0,
+            state: String::new(),
+        }
+    }
+
+    /// A deck 1 world unit square sloping up along X: its top at
+    /// z = 1 + 0.1 x, so that each foot has its own deck height.
+    fn sloped_deck() -> (Vec<f32>, Vec<u32>) {
+        let vertices = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
+            .iter()
+            .flat_map(|[x, y]| [*x, *y, 1.0 + 0.1 * x, 0.0, 0.0, 1.0, 0.0, 0.0])
+            .collect::<Vec<f32>>();
+        (vertices, vec![0, 1, 2, 0, 2, 3])
+    }
+
+    /// The posed left and right ankles' heights.
+    fn ankles(rig: &Rig, pose: &Pose, deck: &Deck) -> (f32, f32) {
+        let mut out = [0.0; 3 * 13];
+        assert_eq!(rig.pose(pose, Some(deck), &mut out), 3);
+        (out[13 + 12], out[2 * 13 + 12])
+    }
+
+    const RIDING: f32 = 0.09 / METRES;
+
+    #[test]
+    fn a_push_stands_on_the_other_foot() {
+        let rig = rig();
+        let (vertices, indices) = sloped_deck();
+        let deck = Deck {
+            vertices: &vertices,
+            indices: &indices,
+            ankle: 0.03,
+            offset: 0.0,
+            scale: 1.0,
+        };
+        // both on the deck (tops 0.99 and 1.01): the biped's ankles 0.03
+        // over their middle
+        let both = skater_feet(Vec3::new(-0.1, 0.0, 0.99 + RIDING), Vec3::new(0.1, 0.0, 1.01 + RIDING));
+        let (l, r) = ankles(&rig, &both, &deck);
+        assert!((l - 1.03).abs() < 1e-4 && (r - 1.03).abs() < 1e-4, "{l} {r}");
+        // the right foot down at the ground beside the board, pushing: the
+        // left alone stands on the deck, its ankle 0.03 over its top
+        let push = skater_feet(Vec3::new(-0.1, 0.0, 0.99 + RIDING), Vec3::new(0.1, 0.8, 0.6));
+        let (l, _) = ankles(&rig, &push, &deck);
+        assert!((l - 1.02).abs() < 1e-4, "{l}");
+        // the right foot lifted high over the deck: the same
+        let lifted = skater_feet(Vec3::new(-0.1, 0.0, 0.99 + RIDING), Vec3::new(0.1, 0.0, 1.5));
+        let (l, _) = ankles(&rig, &lifted, &deck);
+        assert!((l - 1.02).abs() < 1e-4, "{l}");
+        // and the extra offset still raises it
+        let raised = Deck { offset: 0.01, ..deck };
+        let (l, _) = ankles(&rig, &push, &raised);
+        assert!((l - 1.03).abs() < 1e-4, "{l}");
+    }
+
+    #[test]
+    fn a_foot_leaving_and_coming_back_moves_nothing_at_once() {
+        let rig = rig();
+        let (vertices, indices) = sloped_deck();
+        let deck = Deck {
+            vertices: &vertices,
+            indices: &indices,
+            ankle: 0.03,
+            offset: 0.0,
+            scale: 1.0,
+        };
+        let left = Vec3::new(-0.1, 0.0, 0.99 + RIDING);
+        let start = Vec3::new(0.1, 0.0, 1.01 + RIDING);
+        // a push: the right foot out over the board's side and down to the
+        // ground, then back; and a lift: straight up and back down
+        let push = [start, Vec3::new(0.1, 0.45, 1.01 + RIDING), Vec3::new(0.1, 0.7, 0.6), start];
+        let lift = [start, Vec3::new(0.1, 0.0, 1.6), start];
+        for path in [&push[..], &lift[..]] {
+            let (mut last, _) = ankles(&rig, &skater_feet(left, start), &deck);
+            let first = last;
+            for leg in path.windows(2) {
+                for step in 1..=200 {
+                    let right = leg[0].lerp(leg[1], step as f32 / 200.0);
+                    let (now, _) = ankles(&rig, &skater_feet(left, right), &deck);
+                    // (the foot moves at most 0.005 a step)
+                    assert!((now - last).abs() < 0.003, "a jump with the right foot at {right}: {last} to {now}");
+                    // the left foot stays on the deck, between the two
+                    // heights the feet ask for
+                    assert!((1.02 - 1e-4..=1.03 + 1e-4).contains(&now), "{now} with the right foot at {right}");
+                    last = now;
+                }
+            }
+            assert!((last - first).abs() < 1e-5);
+        }
     }
 }

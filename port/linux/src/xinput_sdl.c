@@ -710,7 +710,105 @@ static void merge_button(XINPUT_GAMEPAD *pad, int analog_index, BOOL down)
 		pad->bAnalogButtons[analog_index] = 0xff;
 }
 
-static void sdl_gamepad_state(SDL_Gamepad *gamepad, XINPUT_GAMEPAD *pad)
+#ifdef HALO_SKATE
+/* ---------- Skate 3 mode's stick clicks
+
+Both sticks clicked in get on and off the board (skate.c, which reads the
+pad itself: halo_skate_platform_pad), but Halo crouches on the left stick's
+click and zooms on the right's. So the first gamepad's clicks are held back
+from the game for a moment after one goes down: if the other joins in that
+time both are swallowed until both are let go; if not, the click reaches the
+game, late by that moment, and from then on as it is. A click let go within
+the moment still reaches the game, briefly, so that a quick tap still
+crouches or zooms. */
+
+#define SKATE_THUMB_CLICKS (XINPUT_GAMEPAD_LEFT_THUMB | XINPUT_GAMEPAD_RIGHT_THUMB)
+/* how long a click waits for the other stick's, milliseconds */
+#define SKATE_CLICK_WINDOW_MS 100
+/* how long a click let go while it waited is given to the game: past a
+game tick (33 ms) */
+#define SKATE_CLICK_TAP_MS 50
+
+static struct
+{
+	/* the gamepad's clicks at the last poll */
+	WORD previous;
+	/* a click waiting for the other, since when */
+	WORD pending;
+	Uint64 pending_since_ms;
+	/* clicks the game has, while they are held */
+	WORD passed;
+	/* clicks of a pair, kept from the game until both sticks are let go */
+	WORD swallowed;
+	/* clicks let go while they waited, given to the game until tap_until_ms */
+	WORD tapped;
+	Uint64 tap_until_ms;
+} skate_clicks;
+
+/* the gamepad's stick clicks (clicks, XINPUT_GAMEPAD_LEFT_THUMB and
+RIGHT_THUMB) as the game is to see them at now_ms */
+static WORD skate_filter_stick_clicks(WORD clicks, Uint64 now_ms)
+{
+	WORD pressed;
+	WORD released;
+	WORD seen;
+
+	clicks &= SKATE_THUMB_CLICKS;
+	pressed = clicks & ~skate_clicks.previous;
+	released = skate_clicks.previous & ~clicks;
+	skate_clicks.previous = clicks;
+	skate_clicks.passed &= clicks;
+	if (skate_clicks.pending & released)
+	{
+		skate_clicks.tapped |= skate_clicks.pending & released;
+		skate_clicks.tap_until_ms = now_ms + SKATE_CLICK_TAP_MS;
+		skate_clicks.pending &= ~released;
+	}
+	if (skate_clicks.swallowed)
+	{
+		/* (and a click pressed again meanwhile goes with them) */
+		if (clicks)
+			skate_clicks.swallowed |= pressed;
+		else
+			skate_clicks.swallowed = 0;
+		pressed = 0;
+	}
+	if (pressed)
+	{
+		WORD other = clicks & ~pressed;
+
+		if (pressed == SKATE_THUMB_CLICKS || (other & skate_clicks.pending))
+		{
+			/* the pair: neither reaches the game */
+			skate_clicks.swallowed = SKATE_THUMB_CLICKS;
+			skate_clicks.pending = 0;
+		}
+		else if (other & skate_clicks.passed)
+		{
+			/* the other already reached the game: this one, which gets on
+			or off the board with it, does not */
+			skate_clicks.swallowed |= pressed;
+		}
+		else
+		{
+			skate_clicks.pending = pressed;
+			skate_clicks.pending_since_ms = now_ms;
+		}
+	}
+	if (skate_clicks.pending && now_ms - skate_clicks.pending_since_ms >= SKATE_CLICK_WINDOW_MS)
+	{
+		skate_clicks.passed |= skate_clicks.pending & clicks;
+		skate_clicks.pending = 0;
+	}
+	if (now_ms >= skate_clicks.tap_until_ms)
+		skate_clicks.tapped = 0;
+	seen = (skate_clicks.passed | skate_clicks.tapped) & ~skate_clicks.swallowed;
+	return seen;
+}
+#endif
+
+/* first_player: port 0's gamepad, whose stick clicks Skate 3 mode filters */
+static void sdl_gamepad_state(SDL_Gamepad *gamepad, XINPUT_GAMEPAD *pad, BOOL first_player)
 {
 	static const struct
 	{
@@ -730,12 +828,21 @@ static void sdl_gamepad_state(SDL_Gamepad *gamepad, XINPUT_GAMEPAD *pad)
 	int index;
 	int left_trigger, right_trigger;
 	SHORT value;
+	WORD buttons = 0;
 
 	for (index = 0; index < (int)(sizeof(digital) / sizeof(digital[0])); index++)
 	{
 		if (SDL_GetGamepadButton(gamepad, digital[index].button))
-			pad->wButtons |= digital[index].mask;
+			buttons |= digital[index].mask;
 	}
+#ifdef HALO_SKATE
+	/* (the keyboard's own clicks, merged in already, are left alone) */
+	if (first_player)
+		buttons = (buttons & ~SKATE_THUMB_CLICKS) | skate_filter_stick_clicks(buttons, SDL_GetTicks());
+#else
+	(void)first_player;
+#endif
+	pad->wButtons |= buttons;
 	merge_button(pad, XINPUT_GAMEPAD_A, SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH));
 	merge_button(pad, XINPUT_GAMEPAD_B, SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST));
 	merge_button(pad, XINPUT_GAMEPAD_X, SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_WEST));
@@ -878,7 +985,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 				keyboard_controls(&input, &state->Gamepad);
 		}
 		if (port_gamepad(gamepads, count, 0))
-			sdl_gamepad_state(gamepads[0], &state->Gamepad);
+			sdl_gamepad_state(gamepads[0], &state->Gamepad, TRUE);
 		test_input_gamepad(&state->Gamepad);
 		if (abs(state->Gamepad.sThumbRX) > STICK_AIMING_DEFLECTION ||
 			abs(state->Gamepad.sThumbRY) > STICK_AIMING_DEFLECTION)
@@ -890,7 +997,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	}
 	else if (port_gamepad(gamepads, count, port))
 	{
-		sdl_gamepad_state(port_gamepad(gamepads, count, port), &state->Gamepad);
+		sdl_gamepad_state(port_gamepad(gamepads, count, port), &state->Gamepad, FALSE);
 	}
 
 	if (memcmp(&state->Gamepad, &controllers[port].previous, sizeof(state->Gamepad)))
