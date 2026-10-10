@@ -127,6 +127,14 @@ HALO_SKATE_TEST_ASSETS=/path/to/skate-data/assets \
     cargo test --release -p halo-skate --test real_assets -- --nocapture
 ```
 
+In CI they run in the `skate-assets` job of `.github/workflows/build.yml`,
+on the owner's self-hosted runner (`opence-k8s`), which has the data
+read-only at `/skate-assets` and nothing else of the owner's. The job runs
+only in this repository, for its own pushes and branches, never a fork's pull
+request, and fails if the data is missing rather than letting the tests pass
+without running. The release does not wait for it: a build of `main` is
+published even when the runner is down.
+
 ## How it works
 
 | piece | where | what |
