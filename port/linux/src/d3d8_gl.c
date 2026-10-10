@@ -4648,6 +4648,188 @@ void halo_screen_anti_alias(short x0, short y0, short x1, short y1)
 	xgpu_gl_state_invalidate();
 }
 
+#ifdef HALO_SKATE
+/* ---------- Skate 3 mode's board (port/linux/game/skate.c)
+
+The skateboard is no model of the game's: its triangles come skinned, in
+world units, from the skate engine, and are drawn here with the transform
+the game's own vertex shaders take a world position to clip space with
+(c[-96] to c[-93], rasterizer_set_frustum_z), into the window being drawn,
+depth tested and written as the objects are. Lit by the skater's ambient
+and two distant lights as the game lights models (nv2a_psh.c
+model_lighting), without the point lights or fog. */
+
+#include "../../skate/include/halo_skate.h"
+
+static const char skate_board_vertex_source[] =
+	"#version 450 core\n"
+	"layout(location = 0) in vec3 position;\n"
+	"layout(location = 1) in vec3 normal;\n"
+	"layout(location = 2) in vec2 texture_coordinate;\n"
+	"uniform vec4 clip[4];\n"
+	"out vec3 world_normal;\n"
+	"out vec2 board_coordinate;\n"
+	"void main()\n"
+	"{\n"
+	"\tvec4 world = vec4(position, 1.0);\n"
+	"\tgl_Position = vec4(dot(clip[0], world), dot(clip[1], world), dot(clip[2], world), dot(clip[3], world));\n"
+	"\tworld_normal = normal;\n"
+	"\tboard_coordinate = texture_coordinate;\n"
+	"}\n";
+
+/* lights: the ambient color, then each distant light's direction (the way
+its light travels) and color */
+static const char skate_board_fragment_source[] =
+	"#version 450 core\n"
+	"in vec3 world_normal;\n"
+	"in vec2 board_coordinate;\n"
+	"uniform sampler2D board_texture;\n"
+	"uniform vec4 lights[5];\n"
+	"layout(location = 0) out vec4 color;\n"
+	"void main()\n"
+	"{\n"
+	"\tvec3 n = normalize(world_normal);\n"
+	"\tvec3 light = lights[0].rgb + max(dot(n, -lights[1].xyz), 0.0) * lights[2].rgb +\n"
+	"\t\tmax(dot(n, -lights[3].xyz), 0.0) * lights[4].rgb;\n"
+	"\tcolor = vec4(texture(board_texture, board_coordinate).rgb * light, 1.0);\n"
+	"}\n";
+
+static struct
+{
+	BOOL failed;
+	GLuint program;
+	GLint clip, lights;
+	GLuint vertex_array, vertex_buffer, index_buffer, sampler;
+	GLuint textures[HALO_SKATE_BOARD_TEXTURES];
+} skate_board;
+
+static BOOL skate_board_prepare(void)
+{
+	GLuint vertex_shader, fragment_shader;
+
+	if (skate_board.program || skate_board.failed)
+		return skate_board.program != 0;
+	vertex_shader = xgpu_compile_shader(GL_VERTEX_SHADER, skate_board_vertex_source, "skate board vertex shader");
+	fragment_shader = xgpu_compile_shader(GL_FRAGMENT_SHADER, skate_board_fragment_source,
+		"skate board fragment shader");
+	skate_board.program = vertex_shader && fragment_shader ?
+		xgpu_link_program(vertex_shader, fragment_shader, "skate board") : 0;
+	if (!skate_board.program)
+	{
+		platform_log("skate: the board's shaders do not build (refer to the log above): it is not drawn");
+		skate_board.failed = TRUE;
+		return FALSE;
+	}
+	skate_board.clip = glGetUniformLocation(skate_board.program, "clip");
+	skate_board.lights = glGetUniformLocation(skate_board.program, "lights");
+	glUseProgram(skate_board.program);
+	glUniform1i(glGetUniformLocation(skate_board.program, "board_texture"), 0);
+
+	glGenBuffers(1, &skate_board.vertex_buffer);
+	glGenBuffers(1, &skate_board.index_buffer);
+	glGenVertexArrays(1, &skate_board.vertex_array);
+	glBindVertexArray(skate_board.vertex_array);
+	glBindBuffer(GL_ARRAY_BUFFER, skate_board.vertex_buffer);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, skate_board.index_buffer);
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(2);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, HALO_SKATE_BOARD_VERTEX_FLOATS * sizeof(float), (const void *)0);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, HALO_SKATE_BOARD_VERTEX_FLOATS * sizeof(float),
+		(const void *)(3 * sizeof(float)));
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, HALO_SKATE_BOARD_VERTEX_FLOATS * sizeof(float),
+		(const void *)(6 * sizeof(float)));
+	glBindVertexArray(device.vertex_array);
+
+	glGenSamplers(1, &skate_board.sampler);
+	glSamplerParameteri(skate_board.sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glSamplerParameteri(skate_board.sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glSamplerParameteri(skate_board.sampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glSamplerParameteri(skate_board.sampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	xgpu_gl_state_invalidate();
+	return TRUE;
+}
+
+/* the board's texture slot (0 to HALO_SKATE_BOARD_TEXTURES - 1): width by
+height RGBA pixels, rows from the top, as texture coordinates have them */
+void halo_skate_platform_board_texture(int slot, int width, int height, const unsigned char *rgba)
+{
+	if (!device.gl_ready || slot < 0 || slot >= HALO_SKATE_BOARD_TEXTURES || width <= 0 || height <= 0 || !rgba)
+		return;
+	if (!skate_board.textures[slot])
+		glGenTextures(1, &skate_board.textures[slot]);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, skate_board.textures[slot]);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+	glGenerateMipmap(GL_TEXTURE_2D);
+	xgpu_gl_state_invalidate();
+}
+
+/* the board's triangles into the window being drawn: vertex_count vertices
+of HALO_SKATE_BOARD_VERTEX_FLOATS floats (world position, normal, texture
+coordinate), the surfaces' runs of indices, and lights[5][4] (above) */
+void halo_skate_platform_board_draw(const float *vertices, int vertex_count, const unsigned int *indices,
+	int index_count, const struct halo_skate_board_surface *surfaces, int surface_count, const float *lights)
+{
+	float clip[4][4];
+	BOOL has_depth = FALSE;
+	int surface_index;
+
+	if (!device.gl_ready || vertex_count <= 0 || index_count <= 0 || !skate_board_prepare())
+		return;
+	/* (only into a target with depth, which the 3D view's always has) */
+	if (!bind_targets(&has_depth) || !has_depth)
+	{
+		xgpu_gl_state_invalidate();
+		return;
+	}
+	/* the window's viewport and depth range, then the objects' opaque state
+	whatever the game's last draw left */
+	apply_raster_state(has_depth);
+	state_enable(&gl_state.depth_test, GL_DEPTH_TEST, TRUE);
+	glDepthFunc(GL_LEQUAL);
+	glDepthMask(GL_TRUE);
+	state_enable(&gl_state.stencil_test, GL_STENCIL_TEST, FALSE);
+	state_enable(&gl_state.blend, GL_BLEND, FALSE);
+	/* (both sides: the winding the converter leaves is not known here) */
+	state_enable(&gl_state.cull_face, GL_CULL_FACE, FALSE);
+	state_enable(&gl_state.offset_fill, GL_POLYGON_OFFSET_FILL, FALSE);
+	/* the game keeps scratch values in the destination's alpha */
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+	draw_flush();
+	glUseProgram(skate_board.program);
+	memcpy(clip, device.constants[XGPU_VERTEX_CONSTANT_BIAS - 96], sizeof(clip));
+	glUniform4fv(skate_board.clip, 4, &clip[0][0]);
+	glUniform4fv(skate_board.lights, 5, lights);
+	glBindVertexArray(skate_board.vertex_array);
+	glBindBuffer(GL_ARRAY_BUFFER, skate_board.vertex_buffer);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)vertex_count * HALO_SKATE_BOARD_VERTEX_FLOATS * sizeof(float), vertices,
+		GL_STREAM_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)index_count * sizeof(unsigned int), indices, GL_STREAM_DRAW);
+	glActiveTexture(GL_TEXTURE0);
+	glBindSampler(0, skate_board.sampler);
+	for (surface_index = 0; surface_index < surface_count; surface_index++)
+	{
+		const struct halo_skate_board_surface *surface = &surfaces[surface_index];
+
+		if (surface->texture < 0 || surface->texture >= HALO_SKATE_BOARD_TEXTURES ||
+			!skate_board.textures[surface->texture] || surface->first_index < 0 || surface->index_count <= 0 ||
+			surface->first_index + surface->index_count > index_count)
+		{
+			continue;
+		}
+		glBindTexture(GL_TEXTURE_2D, skate_board.textures[surface->texture]);
+		glDrawElements(GL_TRIANGLES, surface->index_count, GL_UNSIGNED_INT,
+			(const void *)((size_t)surface->first_index * sizeof(unsigned int)));
+	}
+	glBindVertexArray(device.vertex_array);
+	xgpu_gl_state_invalidate();
+}
+#endif
+
 /* ---------- presentation */
 
 static void write_screenshot(struct render_target_entry *target)

@@ -8,7 +8,8 @@ background too. Getting on a board is then immediate; one pressed for while
 something is still loading gets on when it is ready. While skating, a
 tick sends the pad to the engine and takes back the skater: the biped is put
 where the board is, its own movement is skipped (bipeds.c), and its nodes are
-posed as the skater's bones. */
+posed as the skater's bones; the board, skinned to them, is drawn with the
+objects (render.c). */
 
 #include "cseries.h"
 #include "math/real_math.h"
@@ -19,10 +20,12 @@ posed as the skater's bones. */
 #include "models/model_definitions.h"
 #include "objects/object_definitions.h"
 #include "objects/objects.h"
+#include "objects/object_lights_rendering.h"
 #include "physics/bsp3d.h"
 #include "physics/collision_bsp.h"
 #include "physics/collision_bsp_definitions.h"
 #include "physics/collisions.h"
+#include "render/render.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "tag_files/tag_files.h"
@@ -39,9 +42,12 @@ posed as the skater's bones. */
 
 #include "../../skate/include/halo_skate.h"
 
-/* the platform layer's (sdl_platform.c, xinput_sdl.c) */
+/* the platform layer's (sdl_platform.c, xinput_sdl.c, d3d8_gl.c) */
 int halo_skate_platform_toggle_pressed(void);
 void halo_skate_platform_pad(struct halo_skate_pad *pad);
+void halo_skate_platform_board_texture(int slot, int width, int height, const unsigned char *rgba);
+void halo_skate_platform_board_draw(const float *vertices, int vertex_count, const unsigned int *indices,
+	int index_count, const struct halo_skate_board_surface *surfaces, int surface_count, const float *lights);
 /* the platform layer's log (halo.log on Windows, stderr on Linux) */
 void platform_log(const char *format, ...);
 
@@ -50,6 +56,9 @@ void platform_log(const char *format, ...);
 /* how far below the biped its spawn looks for the ground */
 #define SKATE_GROUND_PROBE 1.f
 #define SKATE_THUMB_CLICKS 0x00C0
+/* world units the board may move in one tick before it is drawn there at
+once: past any speed on a board (90 m/s) */
+#define SKATE_BOARD_SNAP_DISTANCE 1.f
 
 static struct
 {
@@ -68,6 +77,29 @@ static struct
 	real yaw;
 	struct halo_skate_frame frame;
 } skate_globals = { FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, 0.f };
+
+/* the board as the engine last skinned it (skate_board_capture) */
+static struct
+{
+	/* the board taken, 0 for none */
+	unsigned int generation;
+	unsigned int uploaded_generation;
+	int vertex_count;
+	int index_count;
+	int surface_count;
+	int texture_count;
+	unsigned int *indices;
+	struct halo_skate_board_surface *surfaces;
+	/* the last two ticks' vertices, the latest of them, and a frame's
+	between them */
+	float *vertices[2];
+	short latest;
+	boolean has_latest;
+	boolean has_previous;
+	float *drawn;
+	/* the ambient light, then each distant light's direction and color */
+	float lights[5][4];
+} skate_board;
 
 static const char *skate_assets(void)
 {
@@ -274,6 +306,192 @@ static void skate_apply_frame(long unit_index)
 	object->object.translational_velocity.k = skate_globals.frame.velocity[2] / TICKS_PER_SECOND;
 }
 
+/* ---------- the board
+
+The skate engine skins the board each tick (halo_skate_board_vertices); a
+frame draws it between the last two ticks, as the biped's nodes are
+(render_interpolation.c), so that it stays under the skater's feet. */
+
+static void skate_board_free(void)
+{
+	free(skate_board.indices);
+	free(skate_board.surfaces);
+	free(skate_board.vertices[0]);
+	free(skate_board.vertices[1]);
+	free(skate_board.drawn);
+	memset(&skate_board, 0, sizeof(skate_board));
+}
+
+/* takes another board's mesh; FALSE if there is none to draw */
+static boolean skate_board_take(struct halo_skate_board_info const *info)
+{
+	size_t vertex_bytes = (size_t)info->vertex_count * HALO_SKATE_BOARD_VERTEX_FLOATS * sizeof(float);
+
+	skate_board_free();
+	skate_board.generation = info->generation;
+	if (info->vertex_count <= 0 || info->index_count <= 0 || info->surface_count <= 0)
+		return FALSE;
+	skate_board.indices = (unsigned int *)malloc((size_t)info->index_count * sizeof(unsigned int));
+	skate_board.surfaces = (struct halo_skate_board_surface *)malloc(
+		(size_t)info->surface_count * sizeof(struct halo_skate_board_surface));
+	skate_board.vertices[0] = (float *)malloc(vertex_bytes);
+	skate_board.vertices[1] = (float *)malloc(vertex_bytes);
+	skate_board.drawn = (float *)malloc(vertex_bytes);
+	if (!skate_board.indices || !skate_board.surfaces || !skate_board.vertices[0] || !skate_board.vertices[1] ||
+		!skate_board.drawn || halo_skate_board_mesh(skate_board.indices, info->index_count,
+		skate_board.surfaces, info->surface_count) != 0)
+	{
+		skate_board_free();
+		skate_board.generation = info->generation;
+		return FALSE;
+	}
+	skate_board.vertex_count = info->vertex_count;
+	skate_board.index_count = info->index_count;
+	skate_board.surface_count = info->surface_count;
+	skate_board.texture_count = info->texture_count < HALO_SKATE_BOARD_TEXTURES ?
+		info->texture_count : HALO_SKATE_BOARD_TEXTURES;
+	return TRUE;
+}
+
+/* the lights of the skater's place in the level (lights_prepare_for_object_static),
+as the shader of halo_skate_platform_board_draw takes them */
+static void skate_board_light(long unit_index)
+{
+	struct render_lighting lighting;
+	short light_index;
+	real total;
+
+	memset(&lighting, 0, sizeof(lighting));
+	lights_prepare_for_object_static(unit_index, &lighting);
+	memset(skate_board.lights, 0, sizeof(skate_board.lights));
+	skate_board.lights[0][0] = lighting.ambient_color.red;
+	skate_board.lights[0][1] = lighting.ambient_color.green;
+	skate_board.lights[0][2] = lighting.ambient_color.blue;
+	total = lighting.ambient_color.red + lighting.ambient_color.green + lighting.ambient_color.blue;
+	for (light_index = 0; light_index < lighting.distant_light_count && light_index < MAXIMUM_RENDERED_DISTANT_LIGHTS;
+		light_index++)
+	{
+		struct render_distant_light const *light = &lighting.distant_lights[light_index];
+
+		skate_board.lights[1 + 2 * light_index][0] = light->direction.i;
+		skate_board.lights[1 + 2 * light_index][1] = light->direction.j;
+		skate_board.lights[1 + 2 * light_index][2] = light->direction.k;
+		skate_board.lights[2 + 2 * light_index][0] = light->color.red;
+		skate_board.lights[2 + 2 * light_index][1] = light->color.green;
+		skate_board.lights[2 + 2 * light_index][2] = light->color.blue;
+		total += light->color.red + light->color.green + light->color.blue;
+	}
+	/* (no light found, or none that is a number: grey, lit from above,
+	rather than black) */
+	if (!(total > 0.f))
+	{
+		memset(skate_board.lights, 0, sizeof(skate_board.lights));
+		skate_board.lights[0][0] = skate_board.lights[0][1] = skate_board.lights[0][2] = 0.4f;
+		skate_board.lights[1][2] = -1.f;
+		skate_board.lights[2][0] = skate_board.lights[2][1] = skate_board.lights[2][2] = 0.6f;
+	}
+}
+
+/* nothing to draw from until the next tick on a board */
+static void skate_board_forget(void)
+{
+	skate_board.has_latest = FALSE;
+	skate_board.has_previous = FALSE;
+}
+
+/* the tick's board, skinned by the pose the engine just gave */
+static void skate_board_capture(long unit_index)
+{
+	struct halo_skate_board_info info;
+	short next;
+	float const *previous;
+	float const *latest;
+
+	if (halo_skate_board_info(&info) != 0)
+	{
+		skate_board_forget();
+		return;
+	}
+	if (info.generation != skate_board.generation && !skate_board_take(&info))
+		return;
+	if (!skate_board.vertex_count)
+		return;
+	next = skate_board.has_latest ? skate_board.latest ^ 1 : skate_board.latest;
+	if (halo_skate_board_vertices(skate_board.vertices[next], skate_board.vertex_count) != skate_board.vertex_count)
+	{
+		skate_board_forget();
+		return;
+	}
+	skate_board.has_previous = skate_board.has_latest;
+	skate_board.has_latest = TRUE;
+	skate_board.latest = next;
+	/* further than a tick of skating moves it (the engine put the skater
+	somewhere else): drawn there at once, not swept across the level */
+	if (skate_board.has_previous)
+	{
+		real dx, dy, dz;
+
+		previous = skate_board.vertices[next ^ 1];
+		latest = skate_board.vertices[next];
+		dx = latest[0] - previous[0];
+		dy = latest[1] - previous[1];
+		dz = latest[2] - previous[2];
+		if (!(dx * dx + dy * dy + dz * dz <= SKATE_BOARD_SNAP_DISTANCE * SKATE_BOARD_SNAP_DISTANCE))
+			skate_board.has_previous = FALSE;
+	}
+	skate_board_light(unit_index);
+}
+
+/* the board's textures, the first time a board is drawn */
+static void skate_board_upload_textures(void)
+{
+	int texture_index;
+
+	for (texture_index = 0; texture_index < skate_board.texture_count; texture_index++)
+	{
+		int width, height;
+		unsigned char *rgba;
+
+		if (halo_skate_board_texture(texture_index, &width, &height, NULL, 0) != 0 || width <= 0 || height <= 0)
+			continue;
+		rgba = (unsigned char *)malloc((size_t)width * height * 4);
+		if (!rgba)
+			continue;
+		if (halo_skate_board_texture(texture_index, &width, &height, rgba, width * height * 4) == 0)
+			halo_skate_platform_board_texture(texture_index, width, height, rgba);
+		free(rgba);
+	}
+	skate_board.uploaded_generation = skate_board.generation;
+}
+
+void skate_render_board(void)
+{
+	float const *previous;
+	float const *latest;
+	float const *drawn;
+	real fraction;
+	long index;
+
+	if (!skate_globals.skating || !skate_board.has_latest || !skate_board.vertex_count)
+		return;
+	if (skate_board.uploaded_generation != skate_board.generation)
+		skate_board_upload_textures();
+	latest = skate_board.vertices[skate_board.latest];
+	drawn = latest;
+	fraction = render_interpolation_fraction();
+	if (skate_board.has_previous && fraction < 1.f)
+	{
+		previous = skate_board.vertices[skate_board.latest ^ 1];
+		/* positions and normals blended (the shader normalises them), the
+		texture coordinates the same in both */
+		for (index = 0; index < skate_board.vertex_count * HALO_SKATE_BOARD_VERTEX_FLOATS; index++)
+			skate_board.drawn[index] = previous[index] + (latest[index] - previous[index]) * fraction;
+		drawn = skate_board.drawn;
+	}
+	halo_skate_platform_board_draw(drawn, skate_board.vertex_count, skate_board.indices, skate_board.index_count,
+		skate_board.surfaces, skate_board.surface_count, &skate_board.lights[0][0]);
+}
+
 static void skate_stop(const char *reason)
 {
 	if (skate_globals.skating)
@@ -285,6 +503,7 @@ static void skate_stop(const char *reason)
 	skate_globals.skating = FALSE;
 	skate_globals.activate_when_ready = FALSE;
 	skate_globals.unit_index = NONE;
+	skate_board_forget();
 }
 
 static void skate_start(long unit_index)
@@ -610,7 +829,11 @@ void skate_update_after_objects(void)
 	int written;
 
 	if (!skate_globals.skating || !skate_unit_can_skate(skate_globals.unit_index))
+	{
+		skate_board_forget();
 		return;
+	}
+	skate_board_capture(skate_globals.unit_index);
 	object = object_get(skate_globals.unit_index);
 	node_count = object->object.node_matrices.size / (int)sizeof(real_matrix4x3);
 	if (node_count <= 0 || node_count > SKATE_MAXIMUM_NODES)
@@ -653,6 +876,10 @@ void skate_update_before_objects(void)
 }
 
 void skate_update_after_objects(void)
+{
+}
+
+void skate_render_board(void)
 {
 }
 

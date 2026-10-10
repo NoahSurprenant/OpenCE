@@ -9,4 +9,10 @@ crate-type = ["staticlib"]
 
 [dependencies]
 bevy_math = "0.19"
+# the board's meshes and texture, from the converted skater model (board.rs)
+gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
+png = "0.18"
 skate-host = { path = "../vendor/skate-host" }
+
+[dev-dependencies]
+serde_json.workspace = true

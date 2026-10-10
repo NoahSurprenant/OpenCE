@@ -21,6 +21,9 @@ void skate_update_before_objects(void);
 drawing */
 void skate_update_after_objects(void);
 
+/* render_window: the board under the skater, drawn with the objects */
+void skate_render_board(void);
+
 /* whether the unit is on a board: its biped's own movement stops, and its
 camera follows it */
 boolean skate_unit_is_skating(long unit_index);

@@ -21,15 +21,16 @@ macro_rules! eprintln {
     };
 }
 
+mod board;
 mod rails;
 mod rig;
 
 use bevy_math::{Mat3, Vec3};
 use skate_host::bridge::{InputFrame, Pose, Session};
 use std::ffi::{CStr, CString, c_char};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -93,6 +94,9 @@ enum Job {
 enum Reply {
     Preloaded,
     Loaded { triangles: usize, rails: usize, generation: u64 },
+    /// The board of the skater model the session was made from (`board.rs`),
+    /// or None when it has none to draw.
+    Board(Option<Arc<board::Board>>),
     Pose(u64, Pose),
     Error(String),
 }
@@ -112,9 +116,17 @@ struct Host {
     sequence: u64,
     pose: Option<Pose>,
     rig: Option<rig::Rig>,
+    board: Option<Arc<board::Board>>,
+    /// Changes whenever another board is loaded, so that the game takes its
+    /// mesh and textures again.
+    board_generation: u32,
+    /// Whether a failure to skin the board was reported (once).
+    board_warned: bool,
 }
 
 static HOST: Mutex<Option<Host>> = Mutex::new(None);
+/// Boards loaded so far, across engine restarts: each one's generation.
+static BOARD_GENERATIONS: AtomicU32 = AtomicU32::new(0);
 
 fn with_host<T>(f: impl FnOnce(&mut Host) -> T) -> Option<T> {
     let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
@@ -143,6 +155,9 @@ impl Host {
             sequence: 0,
             pose: None,
             rig: None,
+            board: None,
+            board_generation: 0,
+            board_warned: false,
         })
     }
 
@@ -168,6 +183,11 @@ impl Host {
                     self.loading = false;
                     self.ready = true;
                 }
+            }
+            Reply::Board(board) => {
+                self.board = board;
+                self.board_generation = BOARD_GENERATIONS.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1);
+                self.board_warned = false;
             }
             Reply::Pose(_, pose) => self.pose = Some(pose),
             Reply::Error(message) => self.fail(message),
@@ -237,6 +257,8 @@ fn host_started(guard: &mut Option<Host>) -> Option<&mut Host> {
 
 fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
     let mut session: Option<(PathBuf, Session)> = None;
+    // the assets the board was last read from
+    let mut board_root: Option<PathBuf> = None;
     let mut accumulated = 0.0f32;
     let mut packet = 0u32;
     let current = |generation: u64| generation == latest.load(Ordering::SeqCst);
@@ -313,6 +335,17 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 continue;
             }
         };
+        // The board goes with the skater: read once the session is made from
+        // another assets folder (at the preload, or with a map when none was
+        // preloaded), before the reply that says it is ready.
+        if let Some((root, _)) = session.as_ref()
+            && board_root.as_ref() != Some(root)
+        {
+            board_root = Some(root.clone());
+            if replies.send(Reply::Board(load_board(root))).is_err() {
+                return;
+            }
+        }
         let failed = matches!(reply, Reply::Error(_));
         if replies.send(reply).is_err() || failed {
             return;
@@ -400,6 +433,28 @@ fn load(
     };
     eprintln!("halo-skate: map loaded in {}ms in all", started.elapsed().as_millis());
     Some(result.map(|()| counts))
+}
+
+/// The board of the skater model in `root`, or None (reported) when it has
+/// none to draw.
+fn load_board(root: &Path) -> Option<Arc<board::Board>> {
+    let started = Instant::now();
+    match board::Board::load(root) {
+        Ok(board) => {
+            eprintln!(
+                "halo-skate: board: {} vertices, {} triangles, {} textures in {}ms",
+                board.vertices.len(),
+                board.indices.len() / 3,
+                board.textures.len(),
+                started.elapsed().as_millis()
+            );
+            Some(Arc::new(board))
+        }
+        Err(e) => {
+            eprintln!("halo-skate: the board is not drawn: {e}");
+            None
+        }
+    }
 }
 
 /// The map's triangles and grind rails in Skate space. Triangles are sorted
@@ -748,6 +803,157 @@ pub unsafe extern "C" fn halo_skate_pose_nodes(out: *mut f32, capacity: i32) -> 
     with_host(|host| match (host.rig.as_ref(), host.pose.as_ref()) {
         (Some(rig), Some(pose)) => rig.pose(pose, out) as i32,
         _ => 0,
+    })
+    .unwrap_or(0)
+}
+
+#[repr(C)]
+pub struct HaloSkateBoardInfo {
+    /// Changes whenever another board is loaded (never 0).
+    pub generation: u32,
+    pub vertex_count: i32,
+    pub index_count: i32,
+    pub surface_count: i32,
+    pub texture_count: i32,
+}
+
+#[repr(C)]
+pub struct HaloSkateBoardSurface {
+    pub first_index: i32,
+    pub index_count: i32,
+    pub texture: i32,
+}
+
+/// Describes the board of the loaded assets. Returns 0 with `out` filled, or
+/// -1 when there is none (the skater is not loaded yet, or its model has no board).
+///
+/// # Safety
+/// `out` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_board_info(out: *mut HaloSkateBoardInfo) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    with_host(|host| {
+        host.drain();
+        let board = host.board.as_ref()?;
+        Some(HaloSkateBoardInfo {
+            generation: host.board_generation,
+            vertex_count: board.vertices.len() as i32,
+            index_count: board.indices.len() as i32,
+            surface_count: board.surfaces.len() as i32,
+            texture_count: board.textures.len() as i32,
+        })
+    })
+    .flatten()
+    .map(|info| {
+        unsafe { *out = info };
+        0
+    })
+    .unwrap_or(-1)
+}
+
+/// Writes the board's triangles (three vertex indices each) and its surfaces,
+/// the runs of indices drawn with each texture. Returns 0, or -1 when there
+/// is no board or the room given is short.
+///
+/// # Safety
+/// `indices` holds room for `index_capacity` and `surfaces` for
+/// `surface_capacity` elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_board_mesh(
+    indices: *mut u32,
+    index_capacity: i32,
+    surfaces: *mut HaloSkateBoardSurface,
+    surface_capacity: i32,
+) -> i32 {
+    if indices.is_null() || surfaces.is_null() {
+        return -1;
+    }
+    with_host(|host| {
+        let board = host.board.as_ref()?;
+        if board.indices.len() > index_capacity.max(0) as usize || board.surfaces.len() > surface_capacity.max(0) as usize {
+            return None;
+        }
+        let out = unsafe { std::slice::from_raw_parts_mut(indices, board.indices.len()) };
+        out.copy_from_slice(&board.indices);
+        let out = unsafe { std::slice::from_raw_parts_mut(surfaces, board.surfaces.len()) };
+        for (out, surface) in out.iter_mut().zip(&board.surfaces) {
+            *out = HaloSkateBoardSurface {
+                first_index: surface.first_index as i32,
+                index_count: surface.index_count as i32,
+                texture: surface.texture as i32,
+            };
+        }
+        Some(0)
+    })
+    .flatten()
+    .unwrap_or(-1)
+}
+
+/// Gives the board's texture `index`, RGBA rows from the top: its size, and
+/// with `rgba` (else null) its pixels. Returns 0, or -1 when there is no such
+/// texture or `rgba` is short.
+///
+/// # Safety
+/// `width` and `height` are writable; `rgba` is null or holds `capacity`
+/// bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_board_texture(
+    index: i32,
+    width: *mut i32,
+    height: *mut i32,
+    rgba: *mut u8,
+    capacity: i32,
+) -> i32 {
+    if width.is_null() || height.is_null() {
+        return -1;
+    }
+    with_host(|host| {
+        let texture = host.board.as_ref()?.textures.get(usize::try_from(index).ok()?)?;
+        unsafe {
+            *width = texture.width as i32;
+            *height = texture.height as i32;
+        }
+        if !rgba.is_null() {
+            if texture.rgba.len() > capacity.max(0) as usize {
+                return None;
+            }
+            unsafe { std::slice::from_raw_parts_mut(rgba, texture.rgba.len()) }.copy_from_slice(&texture.rgba);
+        }
+        Some(0)
+    })
+    .flatten()
+    .unwrap_or(-1)
+}
+
+/// Writes the board's vertices skinned by the skater's last pose, 8 floats
+/// each: the position in world units, the unit normal and the texture
+/// coordinate. Returns how many were written, or 0 (no board, no pose, or the
+/// skater lacks a bone the board follows, which is reported once).
+///
+/// # Safety
+/// `out` holds room for `capacity * 8` floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_board_vertices(out: *mut f32, capacity: i32) -> i32 {
+    if out.is_null() || capacity <= 0 {
+        return 0;
+    }
+    let out = unsafe { std::slice::from_raw_parts_mut(out, capacity as usize * board::VERTEX_FLOATS) };
+    with_host(|host| {
+        let (Some(board), Some(pose)) = (host.board.as_ref(), host.pose.as_ref()) else {
+            return 0;
+        };
+        match board.skin(pose, out) {
+            Ok(count) => count as i32,
+            Err(e) => {
+                if !host.board_warned {
+                    eprintln!("halo-skate: the board is not drawn: {e}");
+                    host.board_warned = true;
+                }
+                0
+            }
+        }
     })
     .unwrap_or(0)
 }
