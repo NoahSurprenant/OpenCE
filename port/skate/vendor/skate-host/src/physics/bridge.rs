@@ -4,6 +4,9 @@ use bevy::prelude::*;
 use skate_data::skate_map::{Collision, Geometry, Rail, SkateMap};
 use std::path::Path;
 
+mod sound;
+pub use sound::SoundObservation;
+
 #[derive(Clone, Copy, Default)]
 pub struct Controls {
     pub buttons: u16,
