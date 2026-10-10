@@ -393,6 +393,7 @@ symbols in this file:
 #include "text/font_group.h"
 #include "tag_files/files.h"
 #include "custom_edition_cache.h" /* port: custom_edition_level_name */
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 #if defined(HALO_WINDOWS) || defined(HALO_ANDROID) || defined(__linux__)
 #define HALO_NATIVE_BUILD_INFO 1
@@ -3332,6 +3333,9 @@ void main_loop(
 	debug_keys_initialize();
 	game_initialize();
 	console_startup();
+	/* port: Skate 3 mode makes its skater in the background now, so that
+	getting on a board in a game does not wait for it (skate.c) */
+	skate_initialize();
 	main_setup_connection();
 	main_initialize_time();
 

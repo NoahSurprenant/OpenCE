@@ -31,7 +31,19 @@ struct halo_skate_frame
 	char state[32];
 };
 
+/* sends the engine's log lines (load timings, failures) to log, one line a
+call without its line end, from the engine's thread too; NULL: back to stderr */
+void halo_skate_set_log(void (*log)(const char *line));
+/* makes the skate session (the skater, its animations, graphs and physics:
+the slow part) in the background before any map; 0, or -1 when the assets
+folder is missing or the engine could not start. Never waits */
+int halo_skate_preload(const char *assets);
+/* 1 while the preload is under way, else 0 */
+int halo_skate_preloading(void);
+/* builds a map's collision (triangles of 9 floats) in the background, after
+any preload; a map sent before the last was built replaces it. 0, or -1 */
 int halo_skate_load(const char *assets, const float *triangles, int count);
+/* the map's collision: 0 none, 1 loading, 2 ready, -1 failed (halo_skate_error) */
 int halo_skate_state(void);
 const char *halo_skate_error(void);
 int halo_skate_activate(const float *position, float yaw, struct halo_skate_frame *out);

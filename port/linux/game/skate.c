@@ -1,7 +1,11 @@
 /* skate.c: Skate 3 mode (skate.h, port/skate/README.md)
 
-The map's collision BSP goes to the skate engine as triangles the first time
-the player gets on a board, and again when the BSP changes. While skating, a
+Loading happens before the player wants to skate: the skate session (the
+skater, its animation banks, state graphs and physics, which can take a long
+while) is made in the background at startup, and each structure BSP's
+collision goes to the engine as triangles when it loads, to be built in the
+background too. Getting on a board is then immediate; one pressed for while
+something is still loading gets on when it is ready. While skating, a
 tick sends the pad to the engine and takes back the skater: the biped is put
 where the board is, its own movement is skipped (bipeds.c), and its nodes are
 posed as the skater's bones. */
@@ -18,6 +22,7 @@ posed as the skater's bones. */
 #include "physics/collision_bsp_definitions.h"
 #include "physics/collisions.h"
 #include "scenario/scenario.h"
+#include "scenario/scenario_definitions.h"
 #include "units/units.h"
 
 #include "skate.h"
@@ -33,6 +38,8 @@ posed as the skater's bones. */
 /* the platform layer's (sdl_platform.c, xinput_sdl.c) */
 int halo_skate_platform_toggle_pressed(void);
 void halo_skate_platform_pad(struct halo_skate_pad *pad);
+/* the platform layer's log (halo.log on Windows, stderr on Linux) */
+void platform_log(const char *format, ...);
 
 #define SKATE_TWO_SIDED_FLAG 0x01
 #define SKATE_MAXIMUM_NODES 64
@@ -42,6 +49,9 @@ void halo_skate_platform_pad(struct halo_skate_pad *pad);
 
 static struct
 {
+	/* the startup preload found the assets folder: maps are loaded as they
+	come; without it nothing loads until J (which says what is missing) */
+	boolean preloaded;
 	boolean skating;
 	boolean activate_when_ready;
 	long unit_index;
@@ -53,7 +63,7 @@ static struct
 	real height;
 	real yaw;
 	struct halo_skate_frame frame;
-} skate_globals = { FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, 0.f };
+} skate_globals = { FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, 0.f };
 
 static const char *skate_assets(void)
 {
@@ -120,30 +130,73 @@ static float *skate_collision_triangles(struct collision_bsp *bsp, long *count)
 	return triangles;
 }
 
+static void skate_stop(const char *reason);
+
 static boolean skate_map_loaded(void)
 {
 	return skate_globals.loaded_scenario_index == global_scenario_index &&
 		skate_globals.loaded_structure_bsp_index == global_structure_bsp_index;
 }
 
-static void skate_load_map(void)
+/* sends the BSP's collision to be built in the background; the engine copies
+the triangles, so this never waits for the build */
+static boolean skate_load_map(void)
 {
 	struct collision_bsp *bsp = global_collision_bsp_get();
 	long count;
 	float *triangles;
+	boolean sent = FALSE;
 
 	if (!bsp)
-		return;
+		return FALSE;
 	triangles = skate_collision_triangles(bsp, &count);
 	if (!triangles)
-		return;
+		return FALSE;
 	if (halo_skate_load(skate_assets(), triangles, (int)count) == 0)
 	{
 		skate_globals.loaded_scenario_index = global_scenario_index;
 		skate_globals.loaded_structure_bsp_index = global_structure_bsp_index;
-		console_printf(FALSE, "skate: loading (%ld triangles)", count);
+		sent = TRUE;
 	}
 	free(triangles);
+	return sent;
+}
+
+static void skate_log(const char *line)
+{
+	platform_log("%s", line);
+}
+
+void skate_initialize(void)
+{
+	/* the engine's lines (its load timings above all) go to the port's log:
+	a Windows release build has no console for its stderr */
+	halo_skate_set_log(skate_log);
+	/* (the engine says when there is no assets folder; nothing more happens
+	until J) */
+	skate_globals.preloaded = halo_skate_preload(skate_assets()) == 0;
+}
+
+void skate_structure_bsp_changed(void)
+{
+	struct scenario *scenario = global_scenario_get();
+	/* (a J still waiting for its load waits for this bsp's instead) */
+	boolean waiting = skate_globals.activate_when_ready && !skate_globals.skating;
+
+	/* the board is left in the old bsp's collision */
+	skate_stop("the level changed");
+	/* (and this bsp is not the one loaded, even where a new map's scenario
+	tag has the old one's index) */
+	skate_globals.loaded_scenario_index = NONE;
+	skate_globals.loaded_structure_bsp_index = NONE;
+	/* nobody skates in the main menu; a failed preload is retried on J */
+	if (!skate_globals.preloaded || !scenario || scenario->type == _scenario_type_main_menu ||
+		halo_skate_state() == -1)
+	{
+		return;
+	}
+	if (skate_load_map())
+		skate_globals.activate_when_ready = waiting;
 }
 
 static void skate_describe_skeleton(long unit_index)
@@ -286,9 +339,20 @@ void skate_update_before_objects(void)
 		}
 		else if (skate_unit_can_skate(unit_index))
 		{
+			/* (normally loaded already: at startup and as the bsp loaded.
+			Without the preload, or after a failure, it loads now) */
 			if (!skate_map_loaded() || halo_skate_state() == -1)
-				skate_load_map();
+			{
+				if (skate_load_map())
+					console_printf(FALSE, "skate: loading");
+			}
 			skate_globals.activate_when_ready = TRUE;
+			if (halo_skate_state() == 1)
+			{
+				console_printf(FALSE, halo_skate_preloading() ?
+					"skate: still loading the skater, on the board when it is ready" :
+					"skate: still loading the level, on the board when it is ready");
+			}
 		}
 	}
 
@@ -349,6 +413,14 @@ boolean skate_local_player_skating(short local_player_index, real *yaw)
 }
 
 #else
+
+void skate_initialize(void)
+{
+}
+
+void skate_structure_bsp_changed(void)
+{
+}
 
 void skate_update_before_objects(void)
 {
