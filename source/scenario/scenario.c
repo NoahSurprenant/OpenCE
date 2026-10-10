@@ -194,6 +194,7 @@ symbols in this file:
 #include "sound/sound_manager.h"
 #include "structures/structure_bsp_definitions.h"
 #include "units/units.h"
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 /* ---------- constants */
 
@@ -1152,6 +1153,9 @@ boolean scenario_switch_structure_bsp(
 			{
 				scenario_call_reconnect_to_structure_bsp_procs();
 			}
+			/* port: Skate 3 mode builds the new bsp's collision in the
+			background now, not when the player gets on a board (skate.c) */
+			skate_structure_bsp_changed();
 			/* port: (not when it is the old one, loaded again) */
 			result = structure_bsp_index != old_structure_bsp_index;
 		}

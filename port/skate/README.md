@@ -85,12 +85,30 @@ On Windows the engine is built with the static C runtime, as the game is
 | piece | where | what |
 | --- | --- | --- |
 | engine | `vendor/` | the mashup's `skate-core`, `skate-data`, `skate-net` and `skate-host` |
-| C interface | `halo-skate/src/lib.rs`, `include/halo_skate.h` | a worker thread with a 32 MB stack owns the skate session; the game sends it the map, an activation or a tick's pad and waits (at most 250 ms) for the pose |
+| C interface | `halo-skate/src/lib.rs`, `include/halo_skate.h` | a worker thread with a 32 MB stack owns the skate session; the game sends it a preload, the map, an activation or a tick's pad, and waits (at most 250 ms) only for the pose |
 | grind rails | `halo-skate/src/rails.rs` | the mashup's rail finder, unchanged: walkable edges where the ground drops away and nothing rises, chained into rails |
 | retarget | `halo-skate/src/rig.rs` | each of the biped's `bip01` nodes keeps its bone lengths and turns to point where the skater's matching bone points; the pelvis and chest take the hips' and shoulders' twist; the feet are put on the skater's feet |
 | game glue | `../linux/game/skate.c` | the collision BSP as triangles, the toggle, the tick, the biped's position and node matrices |
-| hooks | `source/game/game.c`, `units/bipeds.c`, `game/player_control.c`, `camera/director.c` | step before the objects update and pose after it; skip a skating biped's own movement; give the pad to the engine; follow the skater with the third-person camera |
+| hooks | `source/main/main.c`, `scenario/scenario.c`, `game/game.c`, `units/bipeds.c`, `game/player_control.c`, `camera/director.c` | preload the skater at startup; build each structure BSP's collision as it loads; step before the objects update and pose after it; skip a skating biped's own movement; give the pad to the engine; follow the skater with the third-person camera |
 | input | `../linux/src/sdl_platform.c`, `xinput_sdl.c` | J, and the first pad as an Xbox 360 pad |
+
+### Loading
+
+Nothing loads when you press J. At startup (`skate_initialize`), if the
+assets folder is there, the worker makes the skate session in the background:
+the animation banks, the state graphs, physics and the skater, on a flat
+placeholder floor. Each time a structure BSP loads (a new level, or a switch
+within one: `skate_structure_bsp_changed`) its collision goes to the worker,
+which finds its grind rails and builds and swaps in its collision, also in the
+background. J then gets on at once; pressed while something is still loading,
+it says so in the console and gets on when it is ready. The main menu's BSP is
+not loaded, and a BSP replaced before it was built is skipped.
+
+stderr times each phase: `halo-skate: preload: animation banks in`,
+`preload: session in` (with `IW4L_SKATE_LOAD graphs`, `physics` and `skater`
+inside it), and for each map `triangles deduplicated and sorted in`,
+`rails: ... in`, `collision built in`, `collision installed in` and
+`map loaded in ... in all`.
 
 Halo is Z up in world units of 10 feet; Skate is Y up in metres. The engine
 ticks at 60 Hz, so each 30 Hz game tick runs two engine ticks.

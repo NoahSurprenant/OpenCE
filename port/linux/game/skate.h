@@ -6,6 +6,14 @@ without --skate) nobody ever skates. */
 #ifndef HALO_SKATE_MODE_H
 #define HALO_SKATE_MODE_H
 
+/* main_loop: at startup, once the console is up: the skate session (the
+skater, its animations and physics, the slow part) is made in the background,
+before any game */
+void skate_initialize(void);
+/* scenario_switch_structure_bsp: a structure bsp was loaded (a new map's
+first, or a switch): its collision is built for skating in the background */
+void skate_structure_bsp_changed(void);
+
 /* game_tick: after the players' actions reach their units, before the
 objects update */
 void skate_update_before_objects(void);
