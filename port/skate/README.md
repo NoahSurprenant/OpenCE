@@ -50,6 +50,11 @@ ollie), so they play best on a stick: an arrow key only pushes it all the
 way. While skating, Halo's own movement, firing and looking are off, and the
 camera stays behind the board.
 
+On the board the crosshair is a small dot, and the weapon is holstered: a
+pistol on the right thigh, a rifle or anything larger across the back
+(`skate.c`), and a flag or a ball is put out of sight. Getting off puts it
+back in your hands.
+
 ## Build
 
 You need a recent stable Rust (it was built with 1.99) besides the usual
