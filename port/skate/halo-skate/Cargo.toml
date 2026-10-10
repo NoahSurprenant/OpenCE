@@ -5,7 +5,8 @@ edition.workspace = true
 publish.workspace = true
 
 [lib]
-crate-type = ["staticlib"]
+# (an rlib too, for tests/, which drive the C interface the way the game does)
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 bevy_math = "0.19"

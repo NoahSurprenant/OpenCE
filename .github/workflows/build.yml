@@ -259,6 +259,70 @@ jobs:
           path: dist/halo-windows-release-symbols
           retention-days: 3
 
+  skate-assets:
+    # Skate 3 mode's engine tests against the real Skate 3 data
+    # (port/skate/halo-skate/tests/real_assets.rs; port/skate/README.md), which
+    # GitHub's runners cannot have: the owner's own runner, opence-k8s (the
+    # arc-opence runner set in the owner's homelab), has it read-only at
+    # /skate-assets. It holds nothing else - no secrets, no way into the
+    # owner's network - but it can read the data, so it only runs this
+    # repository's own code: pushes and runs started by hand (both need write
+    # access), and - should this workflow ever run for pull requests - only
+    # pull requests from this repository's branches, never a fork's, and only
+    # ever pull_request, never pull_request_target. Outside contributors'
+    # workflows also wait for approval (the repository's Actions settings): a
+    # fork's pull request could bring a workflow of its own with
+    # runs-on: opence-k8s. Only in NoahSurprenant/OpenCE, the one repository
+    # the runner serves: in a fork, or upstream, the job would wait for a
+    # runner that never comes.
+    #
+    # Not needed by release or notify: the release is the six builds, which
+    # do not depend on the data, and the runner is one machine at home - when
+    # it is down or busy, main still gets its release. A failure here still
+    # fails the run.
+    if: >-
+      github.repository == 'NoahSurprenant/OpenCE' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: opence-k8s
+    timeout-minutes: 30
+    env:
+      HALO_SKATE_TEST_ASSETS: /skate-assets/skate-data/assets
+    steps:
+      # The tests pass without running when the data is not there; on this
+      # runner that would be a silent no, so check first.
+      - name: Skate 3 data
+        run: |
+          if [ ! -d "$HALO_SKATE_TEST_ASSETS/private" ]; then
+            echo "::error::no converted Skate 3 data at $HALO_SKATE_TEST_ASSETS (the runner's /skate-assets mount is missing or empty)"
+            exit 1
+          fi
+          ls "$HALO_SKATE_TEST_ASSETS"
+
+      - uses: actions/checkout@v4
+
+      # the engine as cargo built it for the host, and the crates it was
+      # built from; the runner starts empty each job, and both paths are on
+      # its writable home ($CARGO_HOME is ~/.cargo there)
+      - uses: actions/cache@v4
+        with:
+          path: |
+            port/skate/target
+            ~/.cargo/registry
+          key: skate-assets-${{ hashFiles('port/skate/**/Cargo.lock', 'port/skate/**/*.rs', 'port/skate/**/Cargo.toml') }}
+          restore-keys: skate-assets-
+
+      # As the README says; a test that says it skipped fails the job too.
+      - name: Test
+        working-directory: port/skate
+        run: |
+          set -o pipefail
+          cargo test --release -p halo-skate --test real_assets -- --nocapture 2>&1 | tee "$RUNNER_TEMP/real_assets.log"
+          if grep -q 'skipped, HALO_SKATE_TEST_ASSETS' "$RUNNER_TEMP/real_assets.log"; then
+            echo "::error::a test skipped: HALO_SKATE_TEST_ASSETS did not reach it"
+            exit 1
+          fi
+
   release:
     # The six builds (and the Windows builds' PDBs) as a release, tagged
     # build-<run number> and marked latest
