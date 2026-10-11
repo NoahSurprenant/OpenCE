@@ -70,6 +70,38 @@ pub fn assets(test: &str) -> Option<PathBuf> {
     }
 }
 
+/// Skate 3's own sound set as `port/skate/converter/extract_sounds.py`
+/// wrote it (`HALO_SKATE_TEST_SOUNDS`: its `skate-data/sounds` folder, with
+/// the `SOURCES.txt` it writes), or None when that is unset. A path that is
+/// set but is not such a folder fails the test.
+pub fn skate3_sounds() -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os("HALO_SKATE_TEST_SOUNDS").filter(|p| !p.is_empty())?);
+    assert!(
+        path.file_name().is_some_and(|n| n == "sounds") && path.join("SOURCES.txt").is_file(),
+        "HALO_SKATE_TEST_SOUNDS={} is not a sounds folder extract_sounds.py wrote",
+        path.display()
+    );
+    Some(path)
+}
+
+/// The `assets` folder beside a `sounds` folder, as the game passes it to
+/// `halo_skate_sound_load` (`skate-data/assets`, whose `../sounds` it reads;
+/// it need not exist).
+pub fn assets_beside(sounds: &std::path::Path) -> CString {
+    let assets = sounds.parent().expect("a sounds folder has a parent").join("assets");
+    CString::new(assets.to_string_lossy().into_owned()).unwrap()
+}
+
+/// Runs `f` with the engine's log captured, the other tests kept off the
+/// engine (whose sound set is global), and returns what `f` logged.
+pub fn logged<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let _turn = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe { halo_skate_set_log(Some(capture)) };
+    take_log();
+    let out = f();
+    (out, take_log())
+}
+
 pub fn metres(p: [f32; 3]) -> [f32; 3] {
     p.map(|v| v / METRES)
 }

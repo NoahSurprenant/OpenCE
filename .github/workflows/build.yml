@@ -80,7 +80,7 @@ jobs:
 
       - name: Test
         run: |
-          python -m pytest -q tools/test_linux_port.py tools/harness
+          python -m pytest -q tools/test_linux_port.py tools/harness port/skate/converter
           python tools/test_light_storage.py
 
       - name: Compile cache
@@ -288,6 +288,8 @@ jobs:
     timeout-minutes: 30
     env:
       HALO_SKATE_TEST_ASSETS: /skate-assets/skate-data/assets
+      # the extracted game, for Skate 3's own sounds (extract_sounds.py)
+      SKATE3_GAME: /skate-assets/skate3-original
     steps:
       # The tests pass without running when the data is not there; on this
       # runner that would be a silent no, so check first.
@@ -298,8 +300,36 @@ jobs:
             exit 1
           fi
           ls "$HALO_SKATE_TEST_ASSETS"
+          if [ ! -f "$SKATE3_GAME/data/audio/audiofiles.big" ]; then
+            echo "::error::no extracted Skate 3 at $SKATE3_GAME (the runner's /skate-assets mount is missing or empty)"
+            exit 1
+          fi
 
       - uses: actions/checkout@v4
+
+      # Skate 3's own sounds (port/skate/README.md, "Skate 3's own sounds"),
+      # written from the game by port/skate/converter/extract_sounds.py into
+      # the job's temporary folder, for the sound tests below
+      # (HALO_SKATE_TEST_SOUNDS). They are the game's: never uploaded (this
+      # job has no artifacts), and the runner's temporary folder goes with
+      # the job. vgmstream-cli decodes them: its official static Linux build
+      # (FFmpeg included, for Skate 3's XMA), a pinned release checked
+      # against its SHA-256; the runner image has the Python 3 and unzip it
+      # needs.
+      - name: Skate 3's sounds
+        env:
+          VGMSTREAM_URL: https://github.com/vgmstream/vgmstream/releases/download/r2117/vgmstream-linux.zip
+          VGMSTREAM_SHA256: 2f98c77f756079f63fbd119939067f1ed461d77e70993bc4cc372736d859c84a
+        run: |
+          mkdir -p "$RUNNER_TEMP/vgmstream"
+          curl -fsSL -o "$RUNNER_TEMP/vgmstream.zip" "$VGMSTREAM_URL"
+          echo "$VGMSTREAM_SHA256  $RUNNER_TEMP/vgmstream.zip" | sha256sum -c -
+          unzip -q -o "$RUNNER_TEMP/vgmstream.zip" -d "$RUNNER_TEMP/vgmstream"
+          chmod +x "$RUNNER_TEMP/vgmstream/vgmstream-cli"
+          sounds="$RUNNER_TEMP/skate-data/sounds"
+          python3 port/skate/converter/extract_sounds.py "$SKATE3_GAME" "$sounds" \
+            --vgmstream "$RUNNER_TEMP/vgmstream/vgmstream-cli"
+          echo "HALO_SKATE_TEST_SOUNDS=$sounds" >> "$GITHUB_ENV"
 
       # the engine as cargo built it for the host, and the crates it was
       # built from; the runner starts empty each job, and both paths are on
@@ -314,8 +344,9 @@ jobs:
 
       # As the README says, every real-data test file
       # (halo-skate/tests/real_assets*.rs: real_assets, real_assets_camera,
-      # and any added later) in one cargo test; a test that says it skipped,
-      # in any of them, fails the job too.
+      # real_assets_sound, and any added later) in one cargo test, the sound
+      # tests with Skate 3's own sounds; a test that says it skipped, in any
+      # of them, fails the job too.
       - name: Test
         working-directory: port/skate
         run: |
@@ -330,6 +361,15 @@ jobs:
             echo "::error::a test skipped: HALO_SKATE_TEST_ASSETS did not reach it"
             exit 1
           fi
+          if grep -q 'skipped, HALO_SKATE_TEST_SOUNDS' "$RUNNER_TEMP/real_assets.log"; then
+            echo "::error::a test skipped: HALO_SKATE_TEST_SOUNDS did not reach it"
+            exit 1
+          fi
+
+      # (the runner empties its temporary folder after each job anyway)
+      - name: Remove Skate 3's sounds
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/skate-data" "$RUNNER_TEMP/vgmstream" "$RUNNER_TEMP/vgmstream.zip"
 
   release:
     # The six builds (and the Windows builds' PDBs) as a release, tagged
