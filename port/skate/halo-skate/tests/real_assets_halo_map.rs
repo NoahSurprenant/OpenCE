@@ -8,7 +8,7 @@
 //! Xbox maps (`hangemhigh.map`) and `HALO_SKATE_TEST_ASSETS` the converted
 //! `assets` folder (the collision test needs only the maps); run with
 //! `--release`. `HALO_SKATE_TEST_SWEEP` sets how many spots the sweeps try
-//! (8 by default, about a minute and a half in all; 0 for every spot found).
+//! (8 by default, about 75 seconds in all; 0 for every spot found).
 
 mod common;
 
@@ -109,25 +109,31 @@ fn stand_then_jump(
         hold(engine, Pad::NEUTRAL, 15)?;
     }
     hold(engine, Pad::NEUTRAL, 10)?;
-    let since = get_off(engine)?;
-    jumps_from(engine, since, stick, jumps)
+    match get_off(engine)? {
+        Some(since) => jumps_from(engine, since, stick, jumps),
+        None => Ok(()),
+    }
 }
 
-/// Y, and the engine tick the skater was off the board.
-fn get_off(engine: &mut Engine) -> Result<u32, String> {
+/// Y, and the engine tick the skater was off the board; None when it did not
+/// get off (a spot at a drop, where getting on rolls the board off it, or
+/// riding ended in a bail: Y does nothing while the skater is down), which
+/// says so and leaves the rest of that run out.
+fn get_off(engine: &mut Engine) -> Result<Option<u32>, String> {
     let mut states = Vec::new();
     // (pressed again each second: Y in the air, say just after a bail's
     // reset, is not taken)
     for i in 0..90 {
         let s = engine.try_step(Pad::buttons(if i % 30 < 4 { Y } else { 0 }))?;
         if s.off_board() {
-            return Ok(s.tick);
+            return Ok(Some(s.tick));
         }
         if states.last() != Some(&s.state) {
             states.push(s.state.clone());
         }
     }
-    Err(format!("Y did not take the skater off the board (states {states:?})"))
+    eprintln!("    did not get off the board (states {states:?}): the rest of this run left out");
+    Ok(None)
 }
 
 /// `jumps` times: standing until 600 engine ticks after `since`, X with
@@ -257,7 +263,7 @@ fn sweep(
 ) {
     let started = std::time::Instant::now();
     let mut troubles = Vec::new();
-    let mut runs = 0;
+    let (mut runs, mut jumped) = (0, 0);
     for (i, &spot) in spots.iter().enumerate() {
         for (j, &yaw) in headings.iter().enumerate() {
             // each spot faces its own share of the headings
@@ -267,6 +273,7 @@ fn sweep(
             runs += 1;
             engine.history.clear();
             let result = f(engine, spot, yaw);
+            jumped += usize::from(engine.history.iter().any(|s| s.state == "BipedAir"));
             let log = take_log();
             let place = format!("{what} at {spot:?} facing {yaw:?}");
             if let Some(trouble) = trouble(&engine.history, &log) {
@@ -284,12 +291,14 @@ fn sweep(
         }
     }
     eprintln!(
-        "{what}: {runs} runs at {} spots in {:.1} s, {} with trouble",
+        "{what}: {runs} runs at {} spots in {:.1} s, {jumped} jumped off the board, {} with trouble",
         spots.len(),
         started.elapsed().as_secs_f32(),
         troubles.len()
     );
     assert!(troubles.is_empty(), "{what}:\n{}", troubles.join("\n\n"));
+    // (a run that never got off the board tested little)
+    assert!(jumped * 4 >= runs * 3, "{what}: only {jumped} of {runs} runs jumped off the board");
 }
 
 const HEADINGS: [f32; 4] = [0.0, std::f32::consts::FRAC_PI_2, std::f32::consts::PI, -std::f32::consts::FRAC_PI_2];
@@ -336,8 +345,10 @@ fn riding_into_walls_and_edges_on_hangemhigh() {
             }
         }
         // off, a jump 2 seconds later, and another 10 seconds after landing
-        let off = get_off(engine)?;
-        jumps_from(engine, off.saturating_sub(480), BUILD_28_STICK, 2)
+        match get_off(engine)? {
+            Some(off) => jumps_from(engine, off.saturating_sub(480), BUILD_28_STICK, 2),
+            None => Ok(()),
+        }
     });
 }
 
@@ -354,7 +365,9 @@ fn jumping_into_walls_from_walking_on_hangemhigh() {
         activate(engine, spot, yaw)?;
         take_log();
         hold(engine, Pad::NEUTRAL, 10)?;
-        get_off(engine)?;
+        if get_off(engine)?.is_none() {
+            return Ok(());
+        }
         hold(engine, Pad::NEUTRAL, 30)?;
         let walk = Pad::left(0, FULL);
         hold(engine, walk, 30)?;

@@ -401,9 +401,9 @@ landing, standing and jumping again (Build 28's way to its NaN, below,
 session given up is made again, as the next J does, and the sweep goes on).
 It needs the maps folder too (`HALO_SKATE_TEST_HALO_MAPS`, with
 `hangemhigh.map`; the collision test needs only that), and skips without
-either. The sweeps try 12 spots each, about a minute and a half in all;
-`HALO_SKATE_TEST_SWEEP` sets how many (0 for all 545 found, some 45
-minutes). Nothing read from the map is written anywhere.
+either. The sweeps try 8 spots each (two headings a spot), about 75
+seconds in all; `HALO_SKATE_TEST_SWEEP` sets how many (0 for all 545 found,
+over an hour). Nothing read from the map is written anywhere.
 
 ```text
 HALO_SKATE_TEST_ASSETS=/path/to/skate-data/assets \
