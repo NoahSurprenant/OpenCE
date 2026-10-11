@@ -8,12 +8,13 @@
 //! Xbox maps (`hangemhigh.map`) and `HALO_SKATE_TEST_ASSETS` the converted
 //! `assets` folder (the collision test needs only the maps); run with
 //! `--release`. `HALO_SKATE_TEST_SWEEP` sets how many spots the sweeps try
-//! (12 by default, about a minute; 0 for every spot found).
+//! (8 by default, about a minute and a half in all; 0 for every spot found).
 
 mod common;
 
 use common::halo_map::{HaloMap, halo_maps};
 use common::*;
+use halo_skate::halo_skate_state;
 use std::path::PathBuf;
 
 const MAP: &str = "hangemhigh";
@@ -27,7 +28,7 @@ const RAILS: &str = "rails: 2096 walkable edges, 525 lips, 494 runs, 470 rails";
 /// pad (X with the left stick at 23652, 30746).
 const BUILD_28_SPOT: [f32; 3] = [8.118, -11.901, -7.950];
 const BUILD_28_STICK: [i16; 2] = [23652, 30746];
-const SPOTS: usize = 12;
+const SPOTS: usize = 8;
 
 fn build_28_yaw() -> f32 {
     0.229_f32.atan2(0.973)
@@ -89,10 +90,18 @@ fn trouble(frames: &[Snapshot], log: &[String]) -> Option<String> {
 }
 
 /// Off the board at `at` facing `yaw`: on, `ride` game ticks of pushing, Y,
-/// standing until 600 engine ticks after getting off, then X with `stick`
-/// (pressed with it, from standing, as in Build 28's log) and landing.
-/// Returns what went wrong.
-fn stand_then_jump(engine: &mut Engine, at: [f32; 3], yaw: f32, ride: usize, stick: [i16; 2]) -> Result<(), String> {
+/// then `jumps` times: standing until 600 engine ticks after getting off (or
+/// landing), then X with `stick` (pressed with it, from standing, as in
+/// Build 28's log) and landing. (Build 28's NaN grew for some 180 engine
+/// ticks after a landing before the next jump met it.)
+fn stand_then_jump(
+    engine: &mut Engine,
+    at: [f32; 3],
+    yaw: f32,
+    ride: usize,
+    stick: [i16; 2],
+    jumps: usize,
+) -> Result<(), String> {
     activate(engine, at, yaw)?;
     take_log();
     for _ in 0..ride / 30 {
@@ -100,22 +109,45 @@ fn stand_then_jump(engine: &mut Engine, at: [f32; 3], yaw: f32, ride: usize, sti
         hold(engine, Pad::NEUTRAL, 15)?;
     }
     hold(engine, Pad::NEUTRAL, 10)?;
-    let mut off = None;
+    let since = get_off(engine)?;
+    jumps_from(engine, since, stick, jumps)
+}
+
+/// Y, and the engine tick the skater was off the board.
+fn get_off(engine: &mut Engine) -> Result<u32, String> {
+    let mut states = Vec::new();
+    // (pressed again each second: Y in the air, say just after a bail's
+    // reset, is not taken)
     for i in 0..90 {
-        let s = engine.try_step(Pad::buttons(if i < 4 { Y } else { 0 }))?;
+        let s = engine.try_step(Pad::buttons(if i % 30 < 4 { Y } else { 0 }))?;
         if s.off_board() {
-            off = Some(s.tick);
-            break;
+            return Ok(s.tick);
+        }
+        if states.last() != Some(&s.state) {
+            states.push(s.state.clone());
         }
     }
-    let off = off.ok_or("Y did not take the skater off the board")?;
-    while engine.history.last().unwrap().tick < off + 600 {
-        engine.try_step(Pad::NEUTRAL)?;
-    }
-    let pad = Pad { left: stick, ..Pad::NEUTRAL };
-    hold(engine, pad.with_buttons(X), 6)?;
-    for _ in 0..54 {
-        engine.try_step(Pad::NEUTRAL)?;
+    Err(format!("Y did not take the skater off the board (states {states:?})"))
+}
+
+/// `jumps` times: standing until 600 engine ticks after `since`, X with
+/// `stick`, and up to 3 seconds to land.
+fn jumps_from(engine: &mut Engine, mut since: u32, stick: [i16; 2], jumps: usize) -> Result<(), String> {
+    for _ in 0..jumps {
+        while engine.history.last().unwrap().tick < since + 600 {
+            engine.try_step(Pad::NEUTRAL)?;
+        }
+        hold(engine, Pad { left: stick, ..Pad::NEUTRAL }.with_buttons(X), 6)?;
+        let mut flying = false;
+        since = engine.history.last().unwrap().tick;
+        for _ in 0..90 {
+            let s = engine.try_step(Pad::NEUTRAL)?;
+            since = s.tick;
+            flying |= s.state == "BipedAir";
+            if flying && s.state == "BipedGround" {
+                break;
+            }
+        }
     }
     Ok(())
 }
@@ -128,7 +160,7 @@ fn stand_then_jump(engine: &mut Engine, at: [f32; 3], yaw: f32, ride: usize, sti
 fn build_28_jump_from_walking_on_hangemhigh() {
     let Some((mut engine, _)) = engine("build_28_jump") else { return };
     for (ride, what) in [(0, "straight off"), (60, "after riding")] {
-        let result = stand_then_jump(&mut engine, BUILD_28_SPOT, build_28_yaw(), ride, BUILD_28_STICK);
+        let result = stand_then_jump(&mut engine, BUILD_28_SPOT, build_28_yaw(), ride, BUILD_28_STICK, 2);
         let log = take_log();
         engine.trace(0, 60);
         let frames = engine.history.clone();
@@ -140,7 +172,7 @@ fn build_28_jump_from_walking_on_hangemhigh() {
             frames.last()
         );
         if let Err(e) = result {
-            panic!("{what}: the session was given up: {e}\n{}", log.join("\n"));
+            panic!("{what}: the run stopped: {e}\n{}", log.join("\n"));
         }
         if let Some(trouble) = trouble(&frames, &log) {
             panic!("{what}: {trouble}");
@@ -243,8 +275,11 @@ fn sweep(
                 troubles.push(format!("{place}: {trouble}"));
             }
             if let Err(e) = result {
-                troubles.push(format!("{place}: the session was given up: {e}"));
-                engine.reload(triangles);
+                troubles.push(format!("{place}: the run stopped: {e}"));
+                if halo_skate_state() == -1 {
+                    // the session was given up
+                    engine.reload(triangles);
+                }
             }
         }
     }
@@ -268,7 +303,7 @@ fn standing_then_jumping_across_hangemhigh() {
     let spots = floor_spots(&triangles, sweep_size());
     assert!(spots.len() >= SPOTS.min(sweep_size().max(1)), "found {} floor spots", spots.len());
     sweep(&mut engine, &triangles, "standing then jumping", &spots, &HEADINGS, |engine, spot, yaw| {
-        stand_then_jump(engine, spot, yaw, 0, BUILD_28_STICK)
+        stand_then_jump(engine, spot, yaw, 0, BUILD_28_STICK, 2)
     });
 }
 
@@ -292,18 +327,41 @@ fn riding_into_walls_and_edges_on_hangemhigh() {
                 hold(engine, Pad::right(0, FULL), 2)?;
             }
         }
-        for _ in 0..60 {
-            engine.try_step(Pad::NEUTRAL)?;
+        // 2 seconds, and up to 6 more for a bail's reset back onto the board
+        hold(engine, Pad::NEUTRAL, 60)?;
+        for _ in 0..180 {
+            let s = engine.try_step(Pad::NEUTRAL)?;
+            if !(s.state.starts_with("Wipeout") || s.state == "Teleporting" || s.airborne()) {
+                break;
+            }
         }
-        hold(engine, Pad::buttons(Y), 4)?;
-        for _ in 0..60 {
-            engine.try_step(Pad::NEUTRAL)?;
-        }
-        hold(engine, Pad { left: BUILD_28_STICK, ..Pad::NEUTRAL }.with_buttons(X), 6)?;
-        for _ in 0..40 {
-            engine.try_step(Pad::NEUTRAL)?;
-        }
-        Ok(())
+        // off, a jump 2 seconds later, and another 10 seconds after landing
+        let off = get_off(engine)?;
+        jumps_from(engine, off.saturating_sub(480), BUILD_28_STICK, 2)
+    });
+}
+
+/// 6. Build 28's way to its NaN: off the board, walking a second, then a jump
+/// with the stick still held, into whatever is ahead (a wall restarts the
+/// jump: its normal, a little off an axis on this level, gave the launch a w
+/// lane, which the landing placed into the walk), landing, standing 10
+/// seconds and jumping again.
+#[test]
+fn jumping_into_walls_from_walking_on_hangemhigh() {
+    let Some((mut engine, triangles)) = engine("jumping_into_walls") else { return };
+    let spots = floor_spots(&triangles, sweep_size());
+    sweep(&mut engine, &triangles, "jumping into walls", &spots, &HEADINGS, |engine, spot, yaw| {
+        activate(engine, spot, yaw)?;
+        take_log();
+        hold(engine, Pad::NEUTRAL, 10)?;
+        get_off(engine)?;
+        hold(engine, Pad::NEUTRAL, 30)?;
+        let walk = Pad::left(0, FULL);
+        hold(engine, walk, 30)?;
+        let tick = engine.history.last().unwrap().tick;
+        jumps_from(engine, tick.saturating_sub(600), [0, FULL], 1)?;
+        let landed = engine.history.last().unwrap().tick;
+        jumps_from(engine, landed, BUILD_28_STICK, 1)
     });
 }
 
