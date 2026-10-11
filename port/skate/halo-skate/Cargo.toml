@@ -16,4 +16,6 @@ png = "0.18"
 skate-host = { path = "../vendor/skate-host" }
 
 [dev-dependencies]
+# (tests/common/halo_map.rs: a Halo Xbox map is deflated after its header)
+flate2 = "1.1"
 serde_json.workspace = true

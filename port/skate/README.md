@@ -383,10 +383,39 @@ game finds them; the ollie checks its pop and landing came from there), and
 one more test, which needs no engine, checks the loader reads every file
 `SOURCES.txt` lists and takes each sound written from that folder.
 
+`halo-skate/tests/real_assets_halo_map.rs` does the same on a real level:
+Hang 'Em High's collision, read at test time from your own Halo Xbox map
+(`common/halo_map.rs`: the cache file's header, its inflated tags, the
+scenario's structure BSP and its collision BSP's planes, surfaces, edges and
+vertices, as OpenCE's own `source/cache` and `source/physics` lay them out)
+and made into triangles exactly as `skate_collision_triangles` in
+`../linux/game/skate.c` does. It checks they are what the game logs for the
+level (`map 1 sent, 2874 triangles`, `2874 triangles deduplicated`, `rails:
+2096 walkable edges, 525 lips, 494 runs, 470 rails`), then gets on where Build
+28's jump failed, gets off, stands 600 engine ticks and jumps with that log's
+pad (twice), and sweeps spots across the level's floors, four headings
+between them: standing then jumping, riding hard into walls and off edges
+(bailing) then jumping, and walking into walls and jumping into them, then
+landing, standing and jumping again (Build 28's way to its NaN, below,
+"When the engine fails"). Every frame must be finite and no step may fail (a
+session given up is made again, as the next J does, and the sweep goes on).
+It needs the maps folder too (`HALO_SKATE_TEST_HALO_MAPS`, with
+`hangemhigh.map`; the collision test needs only that), and skips without
+either. The sweeps try 8 spots each (two headings a spot), about 75
+seconds in all; `HALO_SKATE_TEST_SWEEP` sets how many (0 for all 545 found,
+over an hour). Nothing read from the map is written anywhere.
+
+```text
+HALO_SKATE_TEST_ASSETS=/path/to/skate-data/assets \
+HALO_SKATE_TEST_HALO_MAPS=/path/to/halo/maps \
+    cargo test --release -p halo-skate --test real_assets_halo_map -- --nocapture
+```
+
 In CI they run in the `skate-assets` job of `.github/workflows/build.yml`
 (every `halo-skate/tests/real_assets*.rs`, and a test that skipped fails it),
-on the owner's self-hosted runner (`opence-k8s`), which has the data and the
-extracted game read-only at `/skate-assets` and nothing else of the owner's.
+on the owner's self-hosted runner (`opence-k8s`), which has the data, the
+extracted game and the Halo maps read-only at `/skate-assets` (the maps in
+`/skate-assets/halo/maps`) and nothing else of the owner's.
 The job writes Skate 3's sounds with `extract_sounds.py` (and vgmstream's
 static Linux build, a pinned release checked by its SHA-256) into its
 temporary folder for the sound tests, and never uploads them. The job runs
@@ -443,10 +472,29 @@ ticks at 60 Hz, so each 30 Hz game tick runs two engine ticks.
 
 The engine checks some of its numbers as it goes and gives up a step on one
 that is not a number (a launch it cannot follow says `Nonfinite BipedAir
-launch packet`, with the packet's values; Build 28's, a jump off the board,
-was a NaN in the unused fourth lane of two vectors, grown from the
-skeleton's native lanes by the walking skater's support velocity, now
-fixed in `vendor/skate-core`: `ground_motion/support.rs`, `controller/placement.rs`). The session survives that, so the skater
+launch packet`, with the packet's values). Two came from real levels'
+geometry, whose surfaces are not quite along the axes, and are fixed in
+`vendor/skate-core`; `halo-skate/tests/real_assets_halo_map.rs` finds both on
+Hang 'Em High:
+
+- Build 28's, a jump off the board: NaN in the unused fourth (w) lane of
+  two vectors. A jump from walking into a wall restarts the jump along the
+  wall's normal, which the native permute builds with X repeated in w
+  (`biped_air/collision.rs`); a wall off an axis gave the launch, the
+  trajectory and so the root frame a w, the landing put it into the walk,
+  and the walking skater's support velocity grew it by the golden ratio a
+  tick, to NaN within some 180 ticks, which the next jump's launch packet
+  met. The restart normal is now a direction (w 0), the Biped placement
+  takes geometric vectors and the support velocity ignores w
+  (`ground_motion/support.rs`, `controller/placement.rs`).
+- `Non-finite torque_acceleration before shared solve`, riding: standing
+  still, the filtered up and ground normal decay to within 1e-20 of an axis
+  they nearly lie on, a vector's squared length goes subnormal, and the
+  Newton refinement of its reciprocal square root overflows to NaN, which
+  the Xbox 360 (denormals as zero) never meets. A subnormal squared length
+  is now a zero length (`physics/native_arithmetic.rs`).
+
+The session survives a failed step, so the skater
 is put back on the board where the last good tick had it, facing the same
 way, as J would (`recovery.rs`): the console says `skate: thrown, back on
 the board`. The log tells of each failure, with where the skater was, its

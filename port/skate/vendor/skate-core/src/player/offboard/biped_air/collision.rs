@@ -72,7 +72,19 @@ impl State {
         let above_root =
             self.result.scalar_392 > self.frame_208[3][1] && self.result.normal_304[1] > 0.7; //82D2FB64..BF0
         if restart_allowed_8493 && !above_root {
-            response.restart = Some(normal); //82D2FBF8..FC14
+            // halo-skate: the restart takes the normal as a direction, w 0.
+            // The permute above repeats X in W, and restart_packet's 4-lane
+            // arithmetic carried that w into the launch velocity, the
+            // trajectory's position and so the root frame, which the landing
+            // placed into BipedGround's frame0, where the support velocity
+            // grew it without bound (Build 28: a jump off the board into one
+            // of Hang 'Em High's walls, whose normal is not quite along an
+            // axis, then landing, standing and jumping again: `Nonfinite
+            // BipedAir launch packet`, NaN in the w lanes). An axis-aligned
+            // wall (X 0) never showed it.
+            let mut direction = normal;
+            direction[3] = 0.;
+            response.restart = Some(direction); //82D2FBF8..FC14
         }
         response
     }
