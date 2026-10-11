@@ -16,6 +16,8 @@
 //! ```
 #![allow(dead_code)]
 
+pub mod halo_map;
+
 use halo_skate::*;
 use std::ffi::{CStr, CString, c_char};
 use std::path::PathBuf;
@@ -37,6 +39,8 @@ pub const FULL: i16 = 32767;
 static ENGINE: Mutex<()> = Mutex::new(());
 /// The engine's log lines since the last `take_log`.
 static LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// What loading the map logged (`Engine::start_with`).
+static MAP_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 unsafe extern "C" fn capture(line: *const c_char) {
     let line = unsafe { CStr::from_ptr(line) }.to_string_lossy().into_owned();
@@ -336,6 +340,7 @@ impl Pad {
 /// it keeps the other tests off the engine.
 pub struct Engine {
     _turn: MutexGuard<'static, ()>,
+    assets: PathBuf,
     pub frame: HaloSkateFrame,
     /// Every frame stepped since `activate`, in order.
     pub history: Vec<Snapshot>,
@@ -345,6 +350,15 @@ impl Engine {
     /// Waits for its turn, then preloads the skater and loads the test map
     /// unless the engine has them already.
     pub fn start(assets: &std::path::Path) -> Engine {
+        Self::start_with(assets, TestMap::triangles)
+    }
+
+    /// As `start`, with the map `triangles` makes (nine floats each, world
+    /// units, as the game sends a level's collision) instead of the test
+    /// map. A test binary loads one map: the first test to start the engine
+    /// loads it, and the others find it loaded (`map_log` has what its load
+    /// logged).
+    pub fn start_with(assets: &std::path::Path, triangles: impl FnOnce() -> Vec<f32>) -> Engine {
         let turn = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { halo_skate_set_log(Some(capture)) };
         if halo_skate_state() != 2 {
@@ -353,14 +367,45 @@ impl Engine {
             assert_eq!(unsafe { halo_skate_preload(root.as_ptr()) }, 0, "halo_skate_preload");
             wait("the preload", Duration::from_secs(600), || halo_skate_preloading() == 0);
             assert_ne!(halo_skate_state(), -1, "the preload failed: {}", error());
-            let triangles = TestMap::triangles();
+            take_log();
+            let triangles = triangles();
             let count = (triangles.len() / 9) as i32;
             assert_eq!(unsafe { halo_skate_load(root.as_ptr(), triangles.as_ptr(), count) }, 0, "halo_skate_load");
             wait("the map", Duration::from_secs(300), || halo_skate_state() != 1);
             assert_eq!(halo_skate_state(), 2, "the map did not load: {}", error());
+            *MAP_LOG.lock().unwrap_or_else(|e| e.into_inner()) = take_log();
             eprintln!("engine ready in {:.1} s", started.elapsed().as_secs_f32());
         }
-        Engine { _turn: turn, frame: zeroed_frame(), history: Vec::new() }
+        Engine { _turn: turn, assets: assets.to_path_buf(), frame: zeroed_frame(), history: Vec::new() }
+    }
+
+    /// What loading the map logged (its triangles and rails).
+    pub fn map_log(&self) -> Vec<String> {
+        MAP_LOG.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// After a failure that gave the session up, sends the map again, as the
+    /// game's next J does (skate.c): the engine makes the session again.
+    pub fn reload(&mut self, triangles: &[f32]) {
+        let root = CString::new(self.assets.to_string_lossy().into_owned()).unwrap();
+        let count = (triangles.len() / 9) as i32;
+        assert_eq!(unsafe { halo_skate_load(root.as_ptr(), triangles.as_ptr(), count) }, 0, "halo_skate_load");
+        wait("the map again", Duration::from_secs(600), || halo_skate_state() != 1);
+        assert_eq!(halo_skate_state(), 2, "the map did not load again: {}", error());
+        self.history.clear();
+    }
+
+    /// One game tick with `pad` held, as `step`, but a step that fails (-1:
+    /// the session given up) comes back as its error instead of a panic.
+    pub fn try_step(&mut self, pad: Pad) -> Result<Snapshot, String> {
+        let code = unsafe { halo_skate_step(&pad.c(), GAME_TICK, &mut self.frame) };
+        if code == -1 {
+            return Err(error());
+        }
+        assert_ne!(code, 1, "the engine missed the game's 250 ms wait: run these tests with --release");
+        let snapshot = Snapshot::of(code, &self.frame);
+        self.history.push(snapshot.clone());
+        Ok(snapshot)
     }
 
     /// Gets on the board at `at` (metres, on the floor) facing `yaw` from +X.
@@ -372,6 +417,20 @@ impl Engine {
         let snapshot = Snapshot::of(code, &self.frame);
         self.history.push(snapshot.clone());
         snapshot
+    }
+
+    /// As `activate`, but a failure (the session given up) comes back as its
+    /// error instead of a panic.
+    pub fn try_activate(&mut self, at: [f32; 3], yaw: f32) -> Result<Snapshot, String> {
+        let position = metres(at);
+        let code = unsafe { halo_skate_activate(position.as_ptr(), yaw, &mut self.frame) };
+        if code != 0 {
+            return Err(error());
+        }
+        self.history.clear();
+        let snapshot = Snapshot::of(code, &self.frame);
+        self.history.push(snapshot.clone());
+        Ok(snapshot)
     }
 
     /// One game tick (two engine ticks) with `pad` held.

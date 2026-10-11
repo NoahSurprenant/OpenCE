@@ -383,10 +383,36 @@ game finds them; the ollie checks its pop and landing came from there), and
 one more test, which needs no engine, checks the loader reads every file
 `SOURCES.txt` lists and takes each sound written from that folder.
 
+`halo-skate/tests/real_assets_halo_map.rs` does the same on a real level:
+Hang 'Em High's collision, read at test time from your own Halo Xbox map
+(`common/halo_map.rs`: the cache file's header, its inflated tags, the
+scenario's structure BSP and its collision BSP's planes, surfaces, edges and
+vertices, as OpenCE's own `source/cache` and `source/physics` lay them out)
+and made into triangles exactly as `skate_collision_triangles` in
+`../linux/game/skate.c` does. It checks they are what the game logs for the
+level (`map 1 sent, 2874 triangles`, `2874 triangles deduplicated`, `rails:
+2096 walkable edges, 525 lips, 494 runs, 470 rails`), then gets on where Build
+28's jump failed, gets off, stands 600 engine ticks and jumps with that log's
+pad, and sweeps spots across the level's floors, four headings between them:
+standing then jumping, and riding hard into walls and off edges, bailing.
+Every frame must be finite and no step may fail (a session given up is made
+again, as the next J does, and the sweep goes on). It needs the maps folder
+too (`HALO_SKATE_TEST_HALO_MAPS`, with `hangemhigh.map`; the collision test
+needs only that), and skips without either. The sweeps try 12 spots, about 40
+seconds in all; `HALO_SKATE_TEST_SWEEP` sets how many (0 for every one
+found). Nothing read from the map is written anywhere.
+
+```text
+HALO_SKATE_TEST_ASSETS=/path/to/skate-data/assets \
+HALO_SKATE_TEST_HALO_MAPS=/path/to/halo/maps \
+    cargo test --release -p halo-skate --test real_assets_halo_map -- --nocapture
+```
+
 In CI they run in the `skate-assets` job of `.github/workflows/build.yml`
 (every `halo-skate/tests/real_assets*.rs`, and a test that skipped fails it),
-on the owner's self-hosted runner (`opence-k8s`), which has the data and the
-extracted game read-only at `/skate-assets` and nothing else of the owner's.
+on the owner's self-hosted runner (`opence-k8s`), which has the data, the
+extracted game and the Halo maps read-only at `/skate-assets` (the maps in
+`/skate-assets/halo/maps`) and nothing else of the owner's.
 The job writes Skate 3's sounds with `extract_sounds.py` (and vgmstream's
 static Linux build, a pinned release checked by its SHA-256) into its
 temporary folder for the sound tests, and never uploads them. The job runs

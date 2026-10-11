@@ -288,6 +288,9 @@ jobs:
     timeout-minutes: 30
     env:
       HALO_SKATE_TEST_ASSETS: /skate-assets/skate-data/assets
+      # the owner's Halo Xbox maps, for the real-level tests
+      # (real_assets_halo_map.rs reads Hang 'Em High's collision from its map)
+      HALO_SKATE_TEST_HALO_MAPS: /skate-assets/halo/maps
       # the extracted game, for Skate 3's own sounds (extract_sounds.py)
       SKATE3_GAME: /skate-assets/skate3-original
     steps:
@@ -302,6 +305,10 @@ jobs:
           ls "$HALO_SKATE_TEST_ASSETS"
           if [ ! -f "$SKATE3_GAME/data/audio/audiofiles.big" ]; then
             echo "::error::no extracted Skate 3 at $SKATE3_GAME (the runner's /skate-assets mount is missing or empty)"
+            exit 1
+          fi
+          if [ ! -f "$HALO_SKATE_TEST_HALO_MAPS/hangemhigh.map" ]; then
+            echo "::error::no Halo maps at $HALO_SKATE_TEST_HALO_MAPS (the runner's /skate-assets mount is missing or empty)"
             exit 1
           fi
 
@@ -344,9 +351,9 @@ jobs:
 
       # As the README says, every real-data test file
       # (halo-skate/tests/real_assets*.rs: real_assets, real_assets_camera,
-      # real_assets_sound, and any added later) in one cargo test, the sound
-      # tests with Skate 3's own sounds; a test that says it skipped, in any
-      # of them, fails the job too.
+      # real_assets_sound, real_assets_halo_map, and any added later) in one
+      # cargo test, the sound tests with Skate 3's own sounds; a test that
+      # says it skipped, in any of them, fails the job too.
       - name: Test
         working-directory: port/skate
         run: |
@@ -363,6 +370,10 @@ jobs:
           fi
           if grep -q 'skipped, HALO_SKATE_TEST_SOUNDS' "$RUNNER_TEMP/real_assets.log"; then
             echo "::error::a test skipped: HALO_SKATE_TEST_SOUNDS did not reach it"
+            exit 1
+          fi
+          if grep -q 'skipped, HALO_SKATE_TEST_HALO_MAPS' "$RUNNER_TEMP/real_assets.log"; then
+            echo "::error::a test skipped: HALO_SKATE_TEST_HALO_MAPS did not reach it"
             exit 1
           fi
 
