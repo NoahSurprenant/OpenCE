@@ -27,9 +27,14 @@ fn position(events: &[String], name: &str) -> Option<usize> {
 
 fn start(assets: &std::path::Path) -> Engine {
     let engine = Engine::start(assets);
-    // the built-in sound set, as the game loads it with no sounds of its own
-    let loaded = unsafe { halo_skate_sound_load(std::ptr::null()) };
-    assert!(loaded > 0, "the built-in sound set: {loaded} sounds");
+    // the built-in sound set, as the game loads it with no sounds of its own;
+    // or Skate 3's, when HALO_SKATE_TEST_SOUNDS gives it, found beside the
+    // converted data as the game finds it
+    let loaded = match skate3_sounds() {
+        Some(sounds) => unsafe { halo_skate_sound_load(assets_beside(&sounds).as_ptr()) },
+        None => unsafe { halo_skate_sound_load(std::ptr::null()) },
+    };
+    assert!(loaded > 0, "the sound set: {loaded} sounds");
     unsafe { halo_skate_sound_set_log(1) };
     engine
 }
@@ -65,9 +70,68 @@ fn an_ollie_pops_then_lands() {
     take_log();
     ollie(&mut engine, Pad::NEUTRAL);
     engine.hold(Pad::NEUTRAL, 60);
-    let events = sounds(&take_log());
+    let log = take_log();
+    let events = sounds(&log);
     eprintln!("sound: ollie {events:?}");
     assert_eq!(events, ["pop", "land"], "an ollie on the flat");
+    // with Skate 3's set, both played its samples
+    if let Some(folder) = skate3_sounds() {
+        let folder = folder.parent().unwrap().join("sounds").display().to_string();
+        for name in ["pop", "land"] {
+            let line = log.iter().find(|l| l.starts_with(&format!("halo-skate: sound: {name} ("))).unwrap();
+            assert!(line.contains(&folder), "{name} played a sample of {folder}: {line}");
+        }
+    }
+}
+
+/// 7f. Skate 3's own sounds, as `port/skate/converter/extract_sounds.py`
+/// wrote them (`HALO_SKATE_TEST_SOUNDS`): found beside the converted data, as
+/// the game looks for them, every file it lists in `SOURCES.txt` is read, and
+/// each sound it wrote comes from that folder. Needs no engine.
+#[test]
+fn the_converted_sound_set_loads() {
+    let Some(sounds) = skate3_sounds() else {
+        eprintln!("sound_set: skipped, HALO_SKATE_TEST_SOUNDS is not set");
+        return;
+    };
+    let manifest = std::fs::read_to_string(sounds.join("SOURCES.txt")).unwrap();
+    let rows: Vec<(&str, &str)> = manifest
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| {
+            let mut fields = l.split('\t');
+            (fields.next().unwrap(), fields.next().expect("a file and its sound"))
+        })
+        .collect();
+    assert!(!rows.is_empty(), "SOURCES.txt lists no files");
+    for (file, _) in &rows {
+        assert!(sounds.join(file).is_file(), "{file} is listed but missing");
+    }
+    // the sounds written (a surface's file is its sound's: roll_metal is roll's)
+    let mut mapped: Vec<&str> = rows
+        .iter()
+        .map(|(_, sound)| {
+            ["concrete", "metal", "wood", "rough"]
+                .iter()
+                .find_map(|s| sound.strip_suffix(&format!("_{s}")))
+                .unwrap_or(sound)
+        })
+        .collect();
+    mapped.sort();
+    mapped.dedup();
+
+    let assets = assets_beside(&sounds);
+    let (loaded, log) = logged(|| unsafe { halo_skate_sound_load(assets.as_ptr()) });
+    let folder = sounds.parent().unwrap().join("sounds").display().to_string();
+    eprintln!("sound_set: {loaded} sounds have samples; Skate 3's: {mapped:?}");
+    let refused: Vec<&String> =
+        log.iter().filter(|l| l.contains("is not played") || l.contains("is not a name")).collect();
+    assert!(refused.is_empty(), "files the loader refused: {refused:?}");
+    for sound in &mapped {
+        let line = format!("halo-skate: sound: {sound} from {folder}");
+        assert!(log.contains(&line), "{sound} does not come from {folder}: {log:?}");
+    }
+    assert!(loaded as usize >= mapped.len(), "{loaded} sounds have samples, {} mapped", mapped.len());
 }
 
 /// 7c. Onto the rail: a pop, the grind starting, and at its end the grind

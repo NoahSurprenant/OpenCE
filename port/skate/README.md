@@ -95,7 +95,8 @@ measured ankle height.
 
 The skate engine has no sound of its own, so Skate 3 mode makes its own
 from what the engine knows each tick, and plays samples for it: a set built
-into the game (below), or your own, or later Skate 3's (the plan, below).
+into the game (below), your own, or Skate 3's own, taken from your copy of
+the game (below).
 
 ### What makes a sound
 
@@ -224,33 +225,103 @@ pop off it has its own sound). Nobody has listened to these in a game yet:
 they were picked and cut by their loudness and spectra.
 
 
-### Skate 3's own sounds, later
+### Skate 3's own sounds
 
-The plan is for the converter to write Skate 3's sounds into
-`skate-data/sounds` under the names above, where they replace the built-in
-set sound by sound with nothing else to change. What that step needs:
+`converter/extract_sounds.py` takes Skate 3's own sounds from your extracted
+copy of the game and writes them into `skate-data/sounds` under the names
+above, where they replace the built-in set sound by sound. Like the converted
+data, what it writes is the game's and stays on your machine: never commit,
+share or upload it.
 
-- **Finding them.** The mashup's converter (`iw4l_skate_convert.py`, which
-  runs skate-3-rust-engine's `tools/asset_pipeline`) extracts animation,
-  graphs, physics and the skater from `miscload.big`, `miscboot.big`,
-  `db.big` and `createacharacter.big`, and nothing of the sound: neither it
-  nor the engine at `cb79689` reads audio (the engine's surface records carry
-  an `audio` type, packed from `EncodeRwSurfaceId`, which is what Skate 3's
-  own sound would have keyed its wheel and grind sounds by). Skate 3's audio
-  is most likely in its own `.big` archives (which the `tools/owned_game/big.py`
-  reader already opens) or loose under `data/`; that has not been checked
-  against a disc.
-- **Decoding them.** EA's games of that time on the Xbox 360 use EA's audio
-  formats: the older SCHl streams and banks (`.asf`, `.bnk`, `.abk`, `.ast`)
-  or the newer EA Audio Core ones (`.snr` with `.sns`, `.sps`, `.snu`, and
-  the MPF/MUS, SBR/SBS containers), with codecs such as EA-XAS, EALayer3 or
-  XMA. [vgmstream](https://github.com/vgmstream/vgmstream) decodes all of
-  those families (its `ea_schl*` and `ea_eaac*` readers), so the converter
-  could call `vgmstream-cli` to write WAV. Which of them Skate 3 uses is not
-  verified.
-- **Naming them.** The hard part: mapping Skate 3's sound events (wheel roll
-  per surface type, pop, land, grind and slide per surface, bail) to the file
-  names above, which needs either the event names in its banks or listening.
+**On Windows**, once:
+
+1. [Python](https://www.python.org/downloads/) 3.8 or later (the script needs
+   nothing but its standard library).
+2. vgmstream, which decodes the sounds: `vgmstream-win64.zip` from
+   [its releases](https://github.com/vgmstream/vgmstream/releases) (r2117 or
+   later), unzipped into a folder of its own, say `C:\tools\vgmstream`. Keep
+   the DLLs beside `vgmstream-cli.exe`: they are its FFmpeg, which Skate 3's
+   sounds (XMA) need.
+3. From this repository's folder, with the extracted Skate 3 (the folder with
+   `default.xex` and `data`) and the `skate-data` beside `halo.exe`:
+
+   ```text
+   python port\skate\converter\extract_sounds.py "D:\Skate 3" "C:\Games\Halo\skate-data\sounds" --vgmstream C:\tools\vgmstream\vgmstream-cli.exe
+   ```
+
+On Linux the same, with `vgmstream-linux.zip` from the same releases (one
+static `vgmstream-cli`, FFmpeg included): `python3
+port/skate/converter/extract_sounds.py ~/Skate3 path/to/skate-data/sounds
+--vgmstream path/to/vgmstream-cli`. Without `--vgmstream` it looks beside the
+script, then on `PATH`.
+
+It takes a few seconds and says what it wrote, file by file, with where each
+came from and how sure the mapping is (below); `SOURCES.txt` in the folder
+keeps that list. The same game gives the same files. Run again, it replaces
+the sound-set WAVs in the folder and leaves anything else. `--list` prints the
+mapping without decoding anything; `--min-confidence medium` (or `high`)
+leaves the sounds mapped with less confidence to the built-in set. To give one
+sound back to the built-in set, delete its files (`pop*.wav`).
+
+#### Where Skate 3 keeps its sounds
+
+On the Xbox 360 disc they are in `data/audio`, in EA's `.big` archives of
+the "EB" kind (version 3, big-endian: a 0x30-byte header, then 16-byte
+entries of offset, in units of `1 << shift`, size and name hash, then
+fixed-width names):
+
+| archive | holds |
+| --- | --- |
+| `grains.big` | 14 recordings of rolling, one per surface and wheel (`concrete_smooth_hard.grain`, `metal_smooth_hard`, `wood_ramp_hard`, `asphalt_rough_soft`, ...): a header, a table, then an EA Audio Core SNR header and its data, about 20 s each, getting faster as they go |
+| `wheels.big` | the wheels spinning in the air (`Whls_spins_Jump_1.snr`, `Whls_spins_Man_1.snr`) |
+| `audiofiles.big` | 428 entries: the banks of every sound effect (EA ABK banks of SNR/SNS streams, `.abk`; EA "SPLC" sample banks, `.bnk`), the AEMS project files that drive them (`.csi`, `.ems`) and the ambiences (`.sns`) |
+| `ambience.big`, `post.big`, `english/*.big`, `music` | ambiences, stingers, speech and music |
+
+The codec is XMA2 throughout, mono, at 48 kHz (the grains 44.1 kHz).
+vgmstream reads the grains (as `.snr`) and the ABK banks; it does not read
+SPLC banks, so the script takes them apart: patches (each a few layers, each
+a choice among samples), groups of patches (a sound and its variations), and
+the samples, each an SNR header followed by its data. The banks are named for
+what they hold (`GRINDS.abk`, `WHEEL_SKID_BANK.abk`, `Skate_Collisions.bnk`,
+`fstep_skateshoe1_sm.abk`, ...), but nothing inside names the sounds, and the
+event names in the `.csi` files (`play_grind_start`, `wheelskid_smth_shuff`)
+do not say which sample they play. So the mapping comes from the banks'
+names and structure and from each sound itself, unheard: its length, loop
+points, envelope, spectrum and tonality.
+
+#### The mapping
+
+`MAPPING` in the script; each row with how sure it is.
+
+| file | from | confidence |
+| --- | --- | --- |
+| `roll` | `grains.big`: `concrete_smooth_hard` (also every surface without its own) | high |
+| `roll_metal` | `grains.big`: `metal_smooth_hard` | high |
+| `roll_wood` | `grains.big`: `wood_ramp_hard` | high |
+| `roll_rough` | `grains.big`: `asphalt_rough_hard`, the roughest: Skate 3 has no dirt or grass grain | medium |
+| `powerslide` (2) | `WHEEL_SKID_BANK.abk`, its third table: wheel-skid grains, joined into loops | medium |
+| `grind_metal` (4) | `GRINDS.abk` 115, 116, 118, 119: loops with the ringing lines of a metal rail | medium |
+| `grind` (3) | `GRINDS.abk` 10-12: broadband, gritty loops, a concrete ledge by their sound | low |
+| `land` (8) | `Skate_Collisions.bnk` group 181: the board's layered hit with the most variations of the bank (11, of up to seven layers), in the set of the board's hits (groups 179-190) | medium |
+| `pop` (6) | `Skate_Collisions.bnk` groups 183, 186: the short single hits of the same set | low |
+| `board_impact` (6) | `Skate_Collisions.bnk` groups 191, 194: rattling multiple hits, the board bouncing | low |
+| `bail` (6) | `Skate_Collisions.bnk` groups 171, 173: low, heavy thuds, a body hitting the ground | low |
+| `step_off` (4) | `fstep_skateshoe1_sm.abk`, its seventh table: skate-shoe footsteps | medium |
+
+(the number of variants in brackets). The rest stay as they are: `slide`
+keeps the built-in sample (no loop of `GRINDS.abk` could be told from a
+grind), `grind_start` and `slide_start` fall back on `land`, `grind_end` and
+`slide_end` stay silent, `step_on` falls back on `board_impact`, and the
+other surfaces of `grind` on `grind`. Nobody has listened to the mapped ones
+in a game yet.
+
+The loops are cut from the grains past their middle (3 s) or joined from the
+wheel-skid grains (2 s), their last 150 ms faded into their start, and the
+grind loops (which loop whole in the game) have their last 10 ms faded into
+their start; all are levelled to -17 dBFS RMS like the built-in loops. The
+one-shots are a patch's layers mixed, trimmed to the hit, faded out and
+peak-normalised to -3 dBFS like the built-in ones. Each file is 16-bit mono
+at the sound's own rate.
 
 ## Build
 
@@ -305,12 +376,20 @@ HALO_SKATE_TEST_ASSETS=/path/to/skate-data/assets \
 from the log: pushing makes no one-shot, an ollie pops then lands, onto the
 rail the grind starts (no landing) and ends, a bail sounds once (no step
 off, no landing when the engine puts the skater back), and Y steps off
-(`--test real_assets_sound`).
+(`--test real_assets_sound`). With `HALO_SKATE_TEST_SOUNDS` naming the
+`skate-data/sounds` folder `extract_sounds.py` wrote, they play Skate 3's own
+sounds instead of the built-in set (found beside the converted data, as the
+game finds them; the ollie checks its pop and landing came from there), and
+one more test, which needs no engine, checks the loader reads every file
+`SOURCES.txt` lists and takes each sound written from that folder.
 
 In CI they run in the `skate-assets` job of `.github/workflows/build.yml`
 (every `halo-skate/tests/real_assets*.rs`, and a test that skipped fails it),
-on the owner's self-hosted runner (`opence-k8s`), which has the data
-read-only at `/skate-assets` and nothing else of the owner's. The job runs
+on the owner's self-hosted runner (`opence-k8s`), which has the data and the
+extracted game read-only at `/skate-assets` and nothing else of the owner's.
+The job writes Skate 3's sounds with `extract_sounds.py` (and vgmstream's
+static Linux build, a pinned release checked by its SHA-256) into its
+temporary folder for the sound tests, and never uploads them. The job runs
 only in this repository, for its own pushes and branches, never a fork's pull
 request, and fails if the data is missing rather than letting the tests pass
 without running. The release does not wait for it: a build of `main` is
