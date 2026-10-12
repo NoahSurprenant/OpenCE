@@ -270,6 +270,11 @@ static const struct config_setting config_settings[] =
 		"as CUSTOM SINGLEPLAYER and CUSTOM MULTIPLAYER. Their tags are checked\n"
 		"as the game's own maps' are before they run; false refuses them\n"
 		"(docs/custom_edition_caches.md)." },
+	{ "game.long_nose_chief", _config_boolean, "false", "HALO_LONG_NOSE_CHIEF", _environment_value, _platform_all,
+		"Master Chief with a long gold nose out of his visor, a toothy smile\n"
+		"under it and a golden orange visor, on every player and in cutscenes.\n"
+		"Only what this machine draws changes. At the console, long_nose_chief\n"
+		"true or false switches it until the game quits." },
 
 	{ "paths.data", _config_string, "\"\"", "HALO_DATA_ROOT", _environment_value, _platform_desktop,
 		"The folder holding the game data's maps folder; empty looks in the\n"

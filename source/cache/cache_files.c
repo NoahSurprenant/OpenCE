@@ -591,6 +591,14 @@ char const *cache_files_map_directory(
 void scenario_tags_unload(
 	void)
 {
+	/* port: the cyborg's own parts and visor back, and the long nose's
+	buffers freed, while the map's tags are all there
+	(port/linux/game/long_nose_chief.c) */
+	{
+		extern void long_nose_chief_tags_unloaded(void);
+
+		long_nose_chief_tags_unloaded();
+	}
 	/* port: the high-res HUD forgets this map's bitmaps (port/linux/game/hud_hires_tags.c) */
 	{
 		extern void hud_hires_tags_unloaded(void);
@@ -1200,6 +1208,12 @@ long scenario_tags_load(
 
 				loose_sounds_tags_loaded();
 			}
+			/* (and the long-nose Master Chief, as below) */
+			{
+				extern void long_nose_chief_tags_loaded(void);
+
+				long_nose_chief_tags_loaded();
+			}
 			result = cache_file_globals.tag_header->scenario_tag_index;
 		}
 
@@ -1308,6 +1322,13 @@ long scenario_tags_load(
 				extern void loose_sounds_tags_loaded(void);
 
 				loose_sounds_tags_loaded();
+			}
+			/* port: the cyborg's long nose and smile (game.long_nose_chief:
+			port/linux/game/long_nose_chief.c) */
+			{
+				extern void long_nose_chief_tags_loaded(void);
+
+				long_nose_chief_tags_loaded();
 			}
 			result = cache_file_globals.tag_header->scenario_tag_index;
 		}

@@ -3380,7 +3380,7 @@ typedef void (*hs_token_enumerator)(
 
 struct hs_function_table_storage
 {
-	struct hs_function_definition const *functions[418 + 4];
+	struct hs_function_definition const *functions[418 + 5];
 	struct profile_section profile;
 	hs_token_enumerator token_enumerators[18];
 };
@@ -11735,7 +11735,28 @@ static struct hs_function_definition_with_1_parameter const loose_sounds_definit
 	},
 };
 
-long const hs_function_table_count= 418 + 4;
+/* port: the cyborg's long nose and smile (game.long_nose_chief:
+port/linux/game/long_nose_chief.c), at the console */
+void long_nose_chief_enable(boolean enabled);
+
+HS_EVALUATE_VOID_BOOLEAN(hs_long_nose_chief_evaluate, long_nose_chief_enable)
+
+static struct hs_function_definition_with_1_parameter const long_nose_chief_definition=
+{
+	{
+		_hs_type_void,
+		0,
+		"long_nose_chief",
+		hs_macro_function_parse,
+		hs_long_nose_chief_evaluate,
+		"gives Master Chief a long gold nose, a toothy smile and a golden orange visor, or (false) takes them away, until the game quits.",
+		NULL,
+		1,
+		{ _hs_type_boolean },
+	},
+};
+
+long const hs_function_table_count= 418 + 5;
 
 struct hs_enum_definition const hs_enum_table[]=
 {
@@ -12171,6 +12192,7 @@ struct hs_function_table_storage hs_function_table=
 		&sv_end_game_definition,
 		&loose_sounds_reload_definition,
 		&loose_sounds_definition.definition,
+		&long_nose_chief_definition.definition,
 	},
 	{
 		"hs_update",
@@ -12676,6 +12698,9 @@ static boolean const hs_function_allowed_in_maps[]=
 	/* the port's, for those making sounds */
 	FALSE, /* loose_sounds_reload */
 	FALSE, /* loose_sounds */
+
+	/* the port's, for the long-nose Master Chief */
+	FALSE, /* long_nose_chief */
 };
 typedef char verify_hs_function_allowed_in_maps_size[
 	NUMBEROF(hs_function_allowed_in_maps) == NUMBEROF(hs_function_table.functions) ? 1 : -1];
