@@ -417,7 +417,7 @@ HALO_SKATE_TEST_HALO_MAPS=/path/to/halo/maps \
 sent every tick as the game sends them: a person (Master Chief's collision
 pill) and a parked vehicle (a Warthog-sized box). After one push (4.8 m/s)
 the board stops at the vehicle's side and the skater stays on; catching up
-with a person walking away (closing at 1.5 m/s) is a bump too; at full speed
+with a person walking away (closing at 2 m/s) is a bump too; at full speed
 (8.5 m/s) both are a bail, nothing passes through, and the engine puts the
 skater back on the board; and a vehicle driving at 5 m/s into the slowly
 rolling skater (closing at 9.8 m/s) knocks them over. Every frame must be
