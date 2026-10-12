@@ -20,7 +20,8 @@ fn an_attached_body_exchanges_reactions_with_the_board_before_both_integrate() {
     BoardStep::default().advance(&mut expected, &mut target, &queue, &[], [0.;2], config);
     BoardStep::default().advance_attached(&mut actual, &mut inactive_hook(), &queue,
         &[], [0.;2], config, AttachedStep { bodies: vec![&mut attached_body],
-            contacts: &mut [], joints: &mut [], drives: &mut attached_drives });
+            contacts: &mut [], joints: &mut [], drives: &mut attached_drives,
+            kinematic_from: AttachedStep::NO_KINEMATIC });
     for (a,b) in actual.iter().zip(expected.iter()) {
         assert_eq!(a.rates.position, b.rates.position);
         assert_eq!(a.rates.linear_velocity, b.rates.linear_velocity);

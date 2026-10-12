@@ -91,6 +91,20 @@ pub(crate) struct GamePhysics {
     pub(crate) network_proxies: network::Proxies,
     pub(crate) network_active: bool,
     pub(crate) network_contacts: usize,
+    /// halo-skate: the host's kinematic obstacles (`Session::set_obstacles`),
+    /// as sent, and how long ago (seconds of simulation); their bodies in
+    /// this tick's solve, after the remote actors'; and how many contacts
+    /// the last solve had with them.
+    pub(crate) obstacles: Vec<skate_core::physics::kinematic_obstacle::KinematicObstacle>,
+    pub(crate) obstacle_age: f32,
+    pub(crate) obstacle_bodies: Vec<skate_core::physics::assembly::BodySnapshot>,
+    pub(crate) obstacle_contacts: usize,
+    /// ... and the obstacle the fastest of them closed on, and how fast
+    /// (metres a second along the contact normal).
+    pub(crate) obstacle_hit: Option<(skate_core::physics::kinematic_obstacle::ObstacleKind, f32)>,
+    /// ... and how fast (m/s) running into a person or vehicle knocks the
+    /// skater over (`kinematic_obstacle::knocks_over`).
+    pub(crate) obstacle_bail_speed: f32,
     clock: clock::SimulationClock,
     pub board: BoardRuntime,
     pub riding: RidingOutputs,
@@ -323,6 +337,12 @@ impl GamePhysics {
             network_proxies: network::Proxies::default(),
             network_active: false,
             network_contacts: 0,
+            obstacles: Vec::new(),
+            obstacle_age: 0.0,
+            obstacle_bodies: Vec::new(),
+            obstacle_contacts: 0,
+            obstacle_hit: None,
+            obstacle_bail_speed: 6.0,
             clock: clock::SimulationClock::default(),
             board,
             riding,

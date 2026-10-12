@@ -2,6 +2,8 @@
 //! The caller publishes forces and drive targets before entering this phase.
 mod assembly_contacts;
 mod diagnostics;
+mod obstacles;
+pub(super) use obstacles::group as obstacle_group;
 use super::{GamePhysics, SkaterRuntime, colliders, skeleton_colliders};
 use skate_core::physics::{
     board::BodyId,
@@ -68,6 +70,10 @@ pub(super) fn advance(
         }
     }
     physics.network_contacts = contacts.len() - before_remote;
+    let obstacle_base = skater.skeleton.bodies().len()
+        + skater.skeleton_drives.targets.bodies.len()
+        + physics.network_proxies.bodies.len();
+    obstacles::append(physics, &board_volumes, &skeleton_world_volumes, obstacle_base, &mut contacts);
     physics.contact_count = contacts.len();
     let dt = physics.settings.step.simulation.time_step;
     let mut joints =
@@ -96,6 +102,7 @@ pub(super) fn advance(
         .iter_mut()
         .chain(skater.skeleton_drives.targets.bodies.iter_mut())
         .chain(physics.network_proxies.bodies.iter_mut())
+        .chain(physics.obstacle_bodies.iter_mut())
         .collect();
     physics.board.advance_attached(
         &contacts,
@@ -106,6 +113,7 @@ pub(super) fn advance(
             contacts: &mut [],
             joints: &mut joints,
             drives: &mut drives.rows,
+            kinematic_from: obstacle_base,
         },
     );
     if let Err(error) = diagnostics::validate(

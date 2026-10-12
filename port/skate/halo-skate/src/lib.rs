@@ -24,6 +24,8 @@ macro_rules! eprintln {
 mod board;
 mod camera;
 mod mixer;
+pub mod obstacles;
+pub use obstacles::HaloSkateObstacle;
 mod rails;
 mod recovery;
 mod rig;
@@ -99,6 +101,8 @@ enum Job {
     Preload { root: PathBuf },
     Load { root: PathBuf, triangles: Vec<[Vec3; 3]>, generation: u64 },
     Activate { sequence: u64, spawn: Vec3, yaw: f32 },
+    /// The obstacles the next steps collide with (`obstacles.rs`).
+    Obstacles { obstacles: Vec<skate_host::bridge::KinematicObstacle>, bail_speed: f32 },
     Step { sequence: u64, pad: HaloSkatePad, dt: f32 },
     Suspend,
 }
@@ -176,6 +180,9 @@ static BOARD_SCALE: Setting = Setting::new(1.05);
 static ANKLE_HEIGHT: Setting = Setting::new(0.0);
 /// Raises the riding biped along the board's up, world units.
 static FEET_OFFSET: Setting = Setting::new(0.0);
+/// How fast (world units a second) running into a person or a vehicle
+/// knocks the skater over (`halo_skate_set_obstacle_bail_speed`): 6 m/s.
+static OBSTACLE_BAIL_SPEED: Setting = Setting::new(6.0 / METRES);
 
 fn with_host<T>(f: impl FnOnce(&mut Host) -> T) -> Option<T> {
     let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
@@ -336,6 +343,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
     // tell of a failure by; and the failures recovered from lately
     let mut last: Option<Last> = None;
     let mut recovery = recovery::Recovery::default();
+    let mut hits = obstacles::HitLog::default();
     let current = |generation: u64| generation == latest.load(Ordering::SeqCst);
     for job in jobs {
         let reply = match job {
@@ -367,6 +375,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 Some((_, s)) => {
                     accumulated = 0.0;
                     recovery.reset();
+                    hits.reset();
                     // Skate's board faces its local +Z; a yaw of zero faces +X.
                     match s.activate(to_skate(spawn).to_array(), yaw + std::f32::consts::FRAC_PI_2) {
                         Ok(pose) => {
@@ -399,6 +408,13 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                         result = s.advance();
                         if result.is_ok() {
                             sound::observe(s);
+                            let (contacts, hit) = s.obstacle_contacts();
+                            if contacts > 0 || hits.listening() {
+                                let pose = s.pose();
+                                for line in hits.observe(contacts, hit, &pose.state, pose.tick) {
+                                    eprintln!("{line}");
+                                }
+                            }
                         }
                         accumulated -= period;
                     }
@@ -440,6 +456,12 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 }
                 None => Reply::Error("no map is loaded for skating".into()),
             },
+            Job::Obstacles { obstacles, bail_speed } => {
+                if let Some((_, s)) = session.as_mut() {
+                    s.set_obstacles(&obstacles, bail_speed);
+                }
+                continue;
+            }
             Job::Suspend => {
                 if let Some((_, s)) = session.as_mut() {
                     s.suspend_input();
@@ -1024,6 +1046,42 @@ pub extern "C" fn halo_skate_suspend() {
     });
 }
 
+/// The obstacles the board and the skater collide with from the next step
+/// (`obstacles.rs`): `count` of them (0 for none), where they are now and how
+/// they move; they carry on at their velocities until the next call. Those of
+/// a kind or shape not known, or not valid, are left out, as are any past
+/// the engine's most (HALO_SKATE_MAXIMUM_OBSTACLES); the game sends the
+/// nearest first. Returns how many were sent on, or -1.
+///
+/// # Safety
+/// `obstacles` holds `count` obstacles (or is NULL with `count` 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_set_obstacles(obstacles: *const obstacles::HaloSkateObstacle, count: i32) -> i32 {
+    if count < 0 || (count > 0 && obstacles.is_null()) {
+        return -1;
+    }
+    let given = if count == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(obstacles, count as usize) }
+    };
+    let taken: Vec<_> = given
+        .iter()
+        .filter_map(|o| o.to_engine())
+        .filter_map(|o| o.validated())
+        .take(skate_host::bridge::MAXIMUM_OBSTACLES)
+        .collect();
+    let sent = taken.len() as i32;
+    with_host(|host| {
+        let bail_speed = OBSTACLE_BAIL_SPEED.get() * METRES;
+        if host.jobs.send(Job::Obstacles { obstacles: taken, bail_speed }).is_err() {
+            return -1;
+        }
+        sent
+    })
+    .unwrap_or(-1)
+}
+
 /// Describes the biped's skeleton: `count` nodes, each with a 32-byte name,
 /// its parent's index (-1 for none) and the 13 floats of its default inverse
 /// matrix (scale, forward, left, up, position). Returns how many nodes follow
@@ -1110,6 +1168,17 @@ pub extern "C" fn halo_skate_set_board_scale(scale: f32) -> f32 {
         BOARD_SCALE.set(scale);
     }
     BOARD_SCALE.get()
+}
+
+/// How fast (world units a second, along the contact) running into a person
+/// or a vehicle knocks the skater over (6 m/s at first; slower is a bump),
+/// for this session. Returns the speed kept: the last that made sense.
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_set_obstacle_bail_speed(speed: f32) -> f32 {
+    if speed.is_finite() && speed >= 0.0 {
+        OBSTACLE_BAIL_SPEED.set(speed);
+    }
+    OBSTACLE_BAIL_SPEED.get()
 }
 
 /// How the riding biped stands on the deck: its ankle node `ankle_height`

@@ -25,11 +25,15 @@ objects (render.c). */
 #include "physics/bsp3d.h"
 #include "physics/collision_bsp.h"
 #include "physics/collision_bsp_definitions.h"
+#include "physics/collision_model_definitions.h"
+#include "physics/collision_models.h"
 #include "physics/collisions.h"
 #include "render/render.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "tag_files/tag_files.h"
+#include "units/biped_definitions.h"
+#include "units/bipeds.h"
 #include "units/units.h"
 
 #include "skate.h"
@@ -105,6 +109,10 @@ slower, so that it neither spins at a standstill nor wobbles at a crawl */
 /* the part of the way to that heading the camera turns each tick: rolling
 back off a wall it comes round in about a third of a second */
 #define SKATE_CAMERA_TURN 0.2f
+/* running into a person or a vehicle faster than this (world units a second
+along the contact: 6 m/s) knocks the skater over; slower is a bump */
+#define SKATE_DEFAULT_OBSTACLE_BAIL_SPEED (6.f / 3.048f)
+#define SKATE_MAXIMUM_OBSTACLE_BAIL_SPEED 100.f
 /* how far around the foot nodes, across the ground, a vertex of the bind
 pose counts as the foot's (world units) */
 #define SKATE_FOOT_REGION 0.15f
@@ -122,7 +130,9 @@ static struct
 	/* the biped's ankles above its soles (skate_describe_skeleton), 0 for
 	unknown */
 	real ankle_height;
-} skate_settings = { SKATE_DEFAULT_BOARD_SCALE, 0.f, SKATE_DEFAULT_CAMERA_SPEED, 0.f };
+	/* how fast running into a person or vehicle knocks the skater over */
+	real obstacle_bail_speed;
+} skate_settings = { SKATE_DEFAULT_BOARD_SCALE, 0.f, SKATE_DEFAULT_CAMERA_SPEED, 0.f, SKATE_DEFAULT_OBSTACLE_BAIL_SPEED };
 
 static boolean skate_text_has(char const *text, char const *word, boolean whole);
 
@@ -261,6 +271,7 @@ void skate_initialize(void)
 	halo_skate_set_log(skate_log);
 	halo_skate_set_board_scale(skate_settings.board_scale);
 	halo_skate_set_feet(skate_settings.ankle_height, skate_settings.feet_offset);
+	halo_skate_set_obstacle_bail_speed(skate_settings.obstacle_bail_speed);
 	/* (the engine says when there is no assets folder; nothing more happens
 	until J) */
 	skate_globals.preloaded = halo_skate_preload(skate_assets()) == 0;
@@ -890,6 +901,263 @@ static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
 		pad->right[1] = 32767;
 }
 
+/* ---------- obstacles
+
+Each tick the objects near the skater go to the engine as obstacles the
+board and the skater collide with (halo_skate_set_obstacles; the engine's
+side is skate-core's kinematic_obstacle.rs): other bipeds, players and AI,
+yours and other machines' alike, as their collision pills, and vehicles,
+scenery and devices as a box for each node of their collision model, the
+box around that node's BSP as the object is now (a turret, a door, a lift
+moves with its node). Each carries on at its velocity until the next tick.
+Nothing is pushed back on Halo's side: the skater bumps or bails off them. */
+
+/* how far from the skater objects are looked for (world units, 24 m: a
+tick at any board speed is under 3 m) */
+#define SKATE_OBSTACLE_RADIUS 8.f
+/* scenery and devices larger than this (half a side, world units: 6 m) are
+left out: a box would fill a building's doors and arches, or a bridge's
+underside. Vehicles are taken up to the engine's most (50 m) */
+#define SKATE_MAXIMUM_SCENERY_HALF_EXTENT 2.f
+#define SKATE_OBSTACLE_SEARCH 128
+/* a biped's velocity is taken up to this (world units a second: 10 m/s,
+past any run): another machine's unit jumps where the host says after a
+respawn, a teleporter or a correction, and its velocity briefly says so */
+#define SKATE_MAXIMUM_BIPED_OBSTACLE_SPEED (10.f / 3.048f)
+
+/* the box around a collision BSP's vertices in its node's space: FALSE for
+none */
+static boolean skate_bsp_bounds(struct collision_bsp *bsp, real_point3d *minimum, real_point3d *maximum)
+{
+	long index;
+
+	if (bsp->vertices.count <= 0)
+		return FALSE;
+	for (index = 0; index < bsp->vertices.count; index++)
+	{
+		struct collision_vertex *vertex = TAG_BLOCK_GET_ELEMENT(&bsp->vertices, index, struct collision_vertex);
+
+		if (index == 0)
+		{
+			*minimum = vertex->point;
+			*maximum = vertex->point;
+			continue;
+		}
+		minimum->x = MIN(minimum->x, vertex->point.x);
+		minimum->y = MIN(minimum->y, vertex->point.y);
+		minimum->z = MIN(minimum->z, vertex->point.z);
+		maximum->x = MAX(maximum->x, vertex->point.x);
+		maximum->y = MAX(maximum->y, vertex->point.y);
+		maximum->z = MAX(maximum->z, vertex->point.z);
+	}
+	return TRUE;
+}
+
+/* the obstacles kept so far, nearest first, and how far each is */
+struct skate_obstacles
+{
+	struct halo_skate_obstacle obstacles[HALO_SKATE_MAXIMUM_OBSTACLES];
+	real distances[HALO_SKATE_MAXIMUM_OBSTACLES];
+	int count;
+};
+
+/* keeps obstacle, distance world units away, among the nearest */
+static void skate_obstacle_keep(struct skate_obstacles *kept, struct halo_skate_obstacle const *obstacle, real distance)
+{
+	int slot = kept->count;
+
+	if (slot == HALO_SKATE_MAXIMUM_OBSTACLES)
+	{
+		if (distance >= kept->distances[slot - 1])
+			return;
+		slot--;
+	}
+	else
+		kept->count++;
+	while (slot > 0 && kept->distances[slot - 1] > distance)
+	{
+		kept->obstacles[slot] = kept->obstacles[slot - 1];
+		kept->distances[slot] = kept->distances[slot - 1];
+		slot--;
+	}
+	kept->obstacles[slot] = *obstacle;
+	kept->distances[slot] = distance;
+}
+
+static void skate_obstacle_velocity(struct object_datum const *object, struct halo_skate_obstacle *obstacle)
+{
+	obstacle->velocity[0] = object->object.translational_velocity.i * TICKS_PER_SECOND;
+	obstacle->velocity[1] = object->object.translational_velocity.j * TICKS_PER_SECOND;
+	obstacle->velocity[2] = object->object.translational_velocity.k * TICKS_PER_SECOND;
+}
+
+static real skate_distance(real_point3d const *a, float const *b)
+{
+	real dx = a->x - b[0];
+	real dy = a->y - b[1];
+	real dz = a->z - b[2];
+
+	return (real)sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+/* a biped as its collision pill (bipeds.c's biped_get_physics_pill, but as
+tall as it stands for AI too, whose pill Halo keeps a sphere) */
+static void skate_biped_obstacle(long object_index, real_point3d const *skater, struct skate_obstacles *kept)
+{
+	struct biped_datum *biped = biped_get(object_index);
+	struct biped_definition *definition = biped_definition_get(biped->definition_index);
+	struct halo_skate_obstacle obstacle;
+	real radius = definition->biped.collision_radius;
+	real height = definition->biped.collision_height_standing +
+		(definition->biped.collision_height_crouching - definition->biped.collision_height_standing) *
+		biped->biped.crouch;
+	real segment;
+	real_point3d base;
+
+	if (!(radius > 0.f))
+		return;
+	segment = TEST_FLAG(definition->biped.flags, _biped_spherical_bit) ? 0.f : MAX(height - 2.f * radius, 0.f);
+	object_get_origin(object_index, &base);
+	if (!TEST_FLAG(definition->biped.flags, _biped_pill_centered_at_origin_bit))
+		base.z += radius;
+	memset(&obstacle, 0, sizeof(obstacle));
+	obstacle.kind = HALO_SKATE_OBSTACLE_BIPED;
+	obstacle.shape = HALO_SKATE_OBSTACLE_CAPSULE;
+	obstacle.center[0] = base.x;
+	obstacle.center[1] = base.y;
+	obstacle.center[2] = base.z + segment / 2.f;
+	obstacle.forward[0] = 1.f;
+	obstacle.left[1] = 1.f;
+	obstacle.up[2] = 1.f;
+	obstacle.half_extents[0] = radius;
+	obstacle.half_extents[2] = segment / 2.f + radius;
+	skate_obstacle_velocity(&biped->object, &obstacle);
+	{
+		real speed = (real)sqrt(obstacle.velocity[0] * obstacle.velocity[0] +
+			obstacle.velocity[1] * obstacle.velocity[1] + obstacle.velocity[2] * obstacle.velocity[2]);
+
+		if (speed > SKATE_MAXIMUM_BIPED_OBSTACLE_SPEED)
+		{
+			obstacle.velocity[0] *= SKATE_MAXIMUM_BIPED_OBSTACLE_SPEED / speed;
+			obstacle.velocity[1] *= SKATE_MAXIMUM_BIPED_OBSTACLE_SPEED / speed;
+			obstacle.velocity[2] *= SKATE_MAXIMUM_BIPED_OBSTACLE_SPEED / speed;
+		}
+	}
+	skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - obstacle.half_extents[2]);
+}
+
+/* an object as a box for each node of its collision model that has a BSP */
+static void skate_box_obstacles(long object_index, real_point3d const *skater, struct skate_obstacles *kept)
+{
+	struct object_datum *object = object_get(object_index);
+	struct collision_model_instance instance;
+	int kind = object->object.type == _object_type_vehicle ? HALO_SKATE_OBSTACLE_VEHICLE : HALO_SKATE_OBSTACLE_SCENERY;
+	short node_index;
+
+	if (!collision_model_instance_new(&instance, object_index) || !instance.matrices)
+		return;
+	for (node_index = 0; node_index < instance.node_count; node_index++)
+	{
+		struct collision_node const *node = TAG_BLOCK_GET_ELEMENT(&instance.model->nodes, node_index,
+			struct collision_node);
+		real_matrix4x3 const *matrix = &instance.matrices[node_index];
+		struct collision_bsp *bsp;
+		struct halo_skate_obstacle obstacle;
+		real_point3d minimum, maximum, middle, center;
+		real largest;
+		short permutation;
+
+		if (node->region_index < 0 || node->region_index >= MAXIMUM_REGIONS_PER_OBJECT || node->bsps.count <= 0)
+			continue;
+		permutation = instance.region_permutation_indices[node->region_index];
+		permutation = PIN(permutation, 0, (short)(node->bsps.count - 1));
+		bsp = TAG_BLOCK_GET_ELEMENT(&node->bsps, permutation, struct collision_bsp);
+		if (!skate_bsp_bounds(bsp, &minimum, &maximum))
+			continue;
+		memset(&obstacle, 0, sizeof(obstacle));
+		obstacle.kind = kind;
+		obstacle.shape = HALO_SKATE_OBSTACLE_BOX;
+		obstacle.half_extents[0] = (maximum.x - minimum.x) / 2.f * matrix->scale;
+		obstacle.half_extents[1] = (maximum.y - minimum.y) / 2.f * matrix->scale;
+		obstacle.half_extents[2] = (maximum.z - minimum.z) / 2.f * matrix->scale;
+		largest = MAX(obstacle.half_extents[0], MAX(obstacle.half_extents[1], obstacle.half_extents[2]));
+		if (kind != HALO_SKATE_OBSTACLE_VEHICLE && largest > SKATE_MAXIMUM_SCENERY_HALF_EXTENT)
+			continue;
+		middle.x = (minimum.x + maximum.x) / 2.f;
+		middle.y = (minimum.y + maximum.y) / 2.f;
+		middle.z = (minimum.z + maximum.z) / 2.f;
+		matrix4x3_transform_point(matrix, &middle, &center);
+		obstacle.center[0] = center.x;
+		obstacle.center[1] = center.y;
+		obstacle.center[2] = center.z;
+		obstacle.forward[0] = matrix->forward.i;
+		obstacle.forward[1] = matrix->forward.j;
+		obstacle.forward[2] = matrix->forward.k;
+		obstacle.left[0] = matrix->left.i;
+		obstacle.left[1] = matrix->left.j;
+		obstacle.left[2] = matrix->left.k;
+		obstacle.up[0] = matrix->up.i;
+		obstacle.up[1] = matrix->up.j;
+		obstacle.up[2] = matrix->up.k;
+		skate_obstacle_velocity(object, &obstacle);
+		skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - largest);
+	}
+}
+
+/* the obstacles around the skater's biped unit_index, to the engine */
+static void skate_send_obstacles(long unit_index)
+{
+	struct object_datum *unit = object_get(unit_index);
+	long object_indices[SKATE_OBSTACLE_SEARCH];
+	struct skate_obstacles kept;
+	real_point3d skater;
+	short count;
+	short index;
+
+	kept.count = 0;
+	object_get_origin(unit_index, &skater);
+	/* (collideable objects only: class bit 0) */
+	count = objects_in_sphere(FLAG(0),
+		_object_mask_biped | _object_mask_vehicle | _object_mask_scenery | _object_mask_machine | _object_mask_control,
+		&unit->object.location, &skater, SKATE_OBSTACLE_RADIUS, object_indices, NUMBEROF(object_indices));
+	for (index = 0; index < count; index++)
+	{
+		long object_index = object_indices[index];
+		struct object_datum *object = object_get(object_index);
+
+		/* (not the skater, nor what rides or is carried: a vehicle's riders
+		are inside its boxes) */
+		if (object_index == unit_index || object->object.parent_object_index != NONE)
+			continue;
+		if (object->object.type == _object_type_biped)
+		{
+			if (!(object->object.damage_flags & FLAG(_object_dead_bit)))
+				skate_biped_obstacle(object_index, &skater, &kept);
+		}
+		else
+			skate_box_obstacles(object_index, &skater, &kept);
+	}
+	halo_skate_set_obstacles(kept.obstacles, kept.count);
+	/* (the network test, debug.network_test_skate, tells what is near once a
+	second; the engine tells of each hit: "halo-skate: hit a biped at ...") */
+	if (game_time_get() % TICKS_PER_SECOND == 0 && config_real("debug.network_test_skate") > 0.)
+	{
+		int kinds[3] = { 0, 0, 0 };
+
+		for (index = 0; index < kept.count; index++)
+			kinds[kept.obstacles[index].kind]++;
+		if (kept.count)
+		{
+			platform_log("skate test: %d obstacles near (%d bipeds, %d vehicle boxes, %d scenery boxes), "
+				"the nearest a %s %.2f world units away", kept.count, kinds[0], kinds[1], kinds[2],
+				kept.obstacles[0].kind == HALO_SKATE_OBSTACLE_BIPED ? "biped" :
+				kept.obstacles[0].kind == HALO_SKATE_OBSTACLE_VEHICLE ? "vehicle" : "scenery", kept.distances[0]);
+		}
+		else
+			platform_log("skate test: no obstacles near");
+	}
+}
+
 void skate_update_before_objects(void)
 {
 	long unit_index = player_control_get_unit_index(0);
@@ -953,6 +1221,7 @@ void skate_update_before_objects(void)
 	}
 	if (!skate_globals.skating)
 		return;
+	skate_send_obstacles(skate_globals.unit_index);
 	stepped = halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skate_globals.frame);
 	if (stepped == 2)
 	{
@@ -1355,6 +1624,21 @@ boolean skate_console_setting(char const *word, char const *arguments)
 			skate_settings.camera_speed = value;
 		console_printf(FALSE, "skate_camera_speed %.3f world units a second, %.2f m/s (default %.3f)",
 			skate_settings.camera_speed, skate_settings.camera_speed * 3.048f, SKATE_DEFAULT_CAMERA_SPEED);
+		return TRUE;
+	}
+	if (!strcmp(word, "skate_obstacle_bail_speed"))
+	{
+		if (given && !(valid && value >= 0.f && value <= SKATE_MAXIMUM_OBSTACLE_BAIL_SPEED))
+		{
+			console_printf(FALSE, "skate_obstacle_bail_speed: world units a second from 0 to %.0f "
+				"(skate_obstacle_bail_speed 2)", SKATE_MAXIMUM_OBSTACLE_BAIL_SPEED);
+			return FALSE;
+		}
+		if (given)
+			skate_settings.obstacle_bail_speed = halo_skate_set_obstacle_bail_speed(value);
+		console_printf(FALSE, "skate_obstacle_bail_speed %.3f world units a second, %.2f m/s (default %.3f)",
+			skate_settings.obstacle_bail_speed, skate_settings.obstacle_bail_speed * 3.048f,
+			SKATE_DEFAULT_OBSTACLE_BAIL_SPEED);
 		return TRUE;
 	}
 	/* skate_volume and skate_sound_log (skate_sound.c) */
