@@ -118,6 +118,13 @@ enum
 	_distributed_message_voice_up = 80,
 	_distributed_message_voice_down = 81,
 	_distributed_message_voice_config = 82,
+	/* Skate 3 mode (skate_network.c): a client's own skaters' states, every
+	tick while they skate (unreliable); and every other machine's players'
+	states, from the host, as often as their units go. A build without them
+	drops both as kinds it does not know, so the network version is
+	unchanged */
+	_distributed_message_skate_up = 90,
+	_distributed_message_skate_down = 91,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };

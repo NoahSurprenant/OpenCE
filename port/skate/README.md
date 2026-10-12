@@ -439,6 +439,7 @@ published even when the runner is down.
 | hooks | `source/main/main.c`, `hs/hs.c`, `scenario/scenario.c`, `game/game.c`, `units/bipeds.c`, `game/player_control.c`, `camera/director.c`, `render/render.c` | preload the skater at startup; take the tuning commands before the script compiler; build each structure BSP's collision as it loads; step before the objects update and pose after it; skip a skating biped's own movement; give the pad to the engine; follow the skater with the third-person camera; draw the board after the objects |
 | input | `../linux/src/sdl_platform.c`, `xinput_sdl.c` | J, and the first pad as an Xbox 360 pad |
 | sound | `halo-skate/src/sound.rs`, `sound_set.rs`, `mixer.rs`, `include/halo_skate_sound.h`, `../linux/game/skate_sound.c`, `../linux/src/dsound_sdl.c` | the events and loops from the engine's ticks, the sound set, the voices mixed into the game's output, and the listener, surface and volume from the game (above, "Sound") |
+| multiplayer | `../linux/game/skate_network.c`, `../linux/game/network_distributed.c`, `halo-skate/src/board.rs` | each machine's skater's state to the others, and theirs posed and their boards drawn here (below, "Multiplayer") |
 
 ### Loading
 
@@ -540,14 +541,134 @@ failing that, above the model's origin. The log says what it found once
 measured the first time the feet were on the deck (`halo-skate: feet on the
 deck: the skater's ankles ... above it`).
 
+## Multiplayer
+
+In a network game (system link, internet play, co-op) everyone sees
+everyone's skating: the skater's pose, their board under them and their
+weapon holstered, wherever they ride. Each machine still runs the skate
+engine for its own skater alone; the others see them from a small state sent
+every tick (`../linux/game/skate_network.c`).
+
+The skate rig keeps every node's bone length (`rig.rs`: a node is its
+parent's place plus its parent's turn of the bind pose's offset between
+them), so the pose is each node's turn from the bind pose and the root
+node's place, and any machine rebuilds it from the biped's own model. The
+state of a skater, 20 bytes and 4 a node (96 bytes for the cyborg's 19):
+
+| bytes | what |
+| --- | --- |
+| 1 | the player (their absolute index) |
+| 1 | on a board (or walking off it in the skate engine), the board's place given, walking |
+| 1 | how many nodes follow (0: no pose) |
+| 1 | the format, 1: a state of another format is skipped |
+| 6 | the root node from the unit's origin, 16 bits a part, 1/1024 world units (at most 32 world units) |
+| 6 | the board from the unit's origin, the same way |
+| 4 | the board's turn: a quaternion's three smallest parts, 10 bits each, and which part was left out |
+| 4 a node | each node's turn from its bind pose, the same way |
+
+A client sends its own skater's state to the host every tick, unreliably
+(`_distributed_message_skate_up`, 90), and for a second and a half after it
+gets off a state that says so. The host sends each client the states of the
+players on the other machines, its own skater's too
+(`_distributed_message_skate_down`, 91), as often as it sends those players'
+units (every tick near, less often far or out of sight), and getting off
+every tick. A late state that a newer overtook is dropped, as the netcode's
+other unreliable messages are. Another machine's state counts for a second
+and a half; one not heard of since is no longer skating, nor is a player
+who died or got into a vehicle.
+
+Each machine poses another machine's skater from the latest state it has,
+around where it has their unit, after the objects update (so it is drawn
+between ticks like any biped), and holsters their weapon on that pose
+(`skate.c`). The board is placed whole where the state has it (its deck's
+joint, `board.rs`'s `placement` and `place`), drawn between the last two
+ticks it was placed at, lit at the skater. Halo's own movement and animation
+of a skater's biped stop on every machine (`bipeds.c`, as for your own); the
+unit goes where the host says, gliding as other players' units do, and
+carried on at its velocity between the host's words, so it keeps up rather
+than trailing a tick behind each one.
+
+The host decides where players are, as for everyone: it takes a client's
+word on where its own player is within bounds of how far and how fast a
+player can go (`port/linux/NETCODE.md`). While a client's state says its
+player skates, the host holds them to a board's bounds instead of a
+runner's: across and up 40 m/s (where a runner is held to twice as fast as
+they run and jump, some 15 to 20 m/s, which a board passes downhill), up as
+high as a 15 m/s launch takes them, never held to a fall (the host's copy
+does not move by itself, so its airborne flag says nothing), and, once it
+has taken a place of theirs, as far from it as a board goes in the ticks
+since rather than within 3.5 world units of its copy, so that a few
+datagrams lost never leave the copy too far behind to take again. A client
+corrects no skater of its own: the skate engine has them where they are.
+The host takes no hit from a skater, who has no weapon in hand.
+
+What it costs and allows:
+
+- **Bandwidth**: 96 bytes a skater a tick, 2.9 KB/s at 30 ticks a second,
+  each way per skater, less for far players; nothing for one who is not
+  skating. Nodes that follow no skater's bone (the hands) inherit their
+  parent's turn but are sent anyway, to keep the format simple.
+- **Cheating**: a client that says its player skates may move them as fast
+  as a board goes (40 m/s), where a runner is held to twice their running
+  speed: a speed hack by that much, but with no weapon (its hits are
+  refused while it skates). Nothing checks that the skating is real; the
+  host does not run the client's skate engine.
+- **Latency**: the pose is where the client had it, a one-way trip late on
+  the host and a round trip late on other clients, as their units are.
+- **Lost datagrams** (`debug.network_loss`): the latest state is held, so a
+  lost one shows the pose a tick older; the unit carries on at its velocity.
+  `debug.network_latency` holds everything back alike, and the pose and the
+  unit stay together.
+
+Machines that cannot skate play on: a build without Skate 3 mode (Android,
+or without `--skate`) still sends and takes the states, poses others' skaters
+and holds the host's bounds; it draws no board. A build older than this one
+drops both messages as kinds it does not know, so the network version is
+unchanged: its players see a skater as Halo's own biped gliding where the
+host says, and its host holds them to a runner's bounds, as before. A
+machine that joins a game in progress hears the states as soon as it has
+loaded. Co-op plays the same way. There is no host migration: when the host
+leaves, the game ends for everyone.
+
+### Testing multiplayer
+
+`debug.network_test_skate` (`HALO_NETWORK_TEST_SKATE`) puts this machine's
+player on a board that many seconds into a network test game
+(`port/linux/NETCODE.md`, "Testing"), riding a scripted pad: pushes, a slow
+carve and an ollie every four seconds, stepping back on after a fall; off
+the board 40 seconds on, and on again 5 later.
+`debug.network_test_skate_watch` (`HALO_NETWORK_TEST_SKATE_WATCH`) turns this
+machine's player to watch another machine's skater, and a host stands its
+player near them. Once a second each machine logs its own skater (where,
+how fast, how big its state is, and how far the state's pose rebuilt is from
+the pose: some 0.0007 world units and 0.1 degrees at worst) and every other
+machine's (posed or not, the board, how old the state is, and on the host
+how many of the skater's places it took and refused).
+
+`tools/test_linux_port.py`'s `test_skate_multiplayer` runs a host and a
+client on Blood Gulch on one machine, the client skating, with a round trip
+of 150 ms and a tenth of the datagrams lost, and checks those logs (about
+two and a half minutes). It needs a build with `--skate`, the converted data and the
+maps, and skips without them:
+
+```text
+HALO_TEST_GAME=build/linux/halo \
+HALO_SKATE_TEST_ASSETS=/path/to/skate-data/assets \
+HALO_SKATE_TEST_HALO_MAPS=/path/to/halo/maps \
+    python -m pytest -q tools/test_linux_port.py -k skate_multiplayer
+```
+
+`tools/harness/tests/test_skate_state.py` checks the state itself, without
+any data, on every build: poses of a random skeleton sent and rebuilt within
+0.003 world units and a third of a degree, offsets too far to send left out,
+and damaged or foreign bytes refused.
+
 ## Known gaps
 
 - **Play-tested in part.** The physics, the controls, the following camera
   and the pose work in a game. The Windows build was cross-compiled and linked
   on Linux, not built on Windows.
-- **The board is drawn but not seen yet.** It builds, and loading and skinning
-  are tested on a small model, but it has not been looked at in a game. A
-  skater model without board meshes leaves the board undrawn (the log says
+- A skater model without board meshes leaves the board undrawn (the log says
   why).
 - **Only the level's BSP is solid.** Scenery, vehicles and other objects are
   not part of the skater's collision; they are passed through.
@@ -558,9 +679,12 @@ deck: the skater's ankles ... above it`).
 - **The node names are assumed.** The retarget expects the cyborg's
   `bip01 pelvis`, `bip01 l thigh` and so on. The game's console prints how many
   nodes follow the skater, and stderr lists the biped's node names.
-- **Multiplayer:** the skater's position replicates, but a host clamps a
-  client faster than about twice running speed, and other machines see Halo's
-  own animation rather than the skating pose.
+- **In a network game, other players are not solid to a skater** (above),
+  and a skater is not solid to them on their machines' boards either. A
+  teleporter does not take a skater (the skate engine puts them back).
+- **Another machine's board is placed whole**: its wheels and trucks do not
+  turn, and a machine without the Skate 3 data draws no board at all (it
+  still poses the skater).
 - The camera cannot be turned by hand while skating; it follows the way you
   travel.
 

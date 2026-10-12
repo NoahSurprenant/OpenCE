@@ -274,6 +274,16 @@ A speed hack of less than a tenth is let be: the host's bounds on how far
 and how fast a client's player moves and fires hold it to the host's time
 anyway.
 
+Skate 3 mode's states (`port/linux/game/skate_network.c`, `port/skate/README.md`,
+"Multiplayer") travel as distributed messages too: a client's own skater's to
+the host every tick (`_distributed_message_skate_up`), and every other
+machine's players' from the host as often as their units go
+(`_distributed_message_skate_down`), unreliably. While a client's state says
+its player skates, the host holds that player to a board's bounds (40 m/s
+across and up, a 15 m/s launch, as far from the last place it took as a board
+goes since) instead of a runner's, and takes none of their hits. Builds
+without them drop both kinds as unknown, so the network version is unchanged.
+
 ## Joining a game in progress
 
 A game stays open when it starts (on the Xbox it closed, since every
@@ -615,6 +625,10 @@ own client over the loopback is damaged too, so the game is set up and
 started first), to test that nothing another machine sends can crash the
 game: a host and a client with a third of their datagrams damaged must play
 on, their logs noting what they refused.
+
+`debug.network_test_skate` and `debug.network_test_skate_watch` script a
+Skate 3 skater and a machine watching them (`port/skate/README.md`,
+"Testing multiplayer").
 
 The host logs to `debug.txt` when a player on another machine presses the
 action button where the host has nothing for them to pick up, with where it

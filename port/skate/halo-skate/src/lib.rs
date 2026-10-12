@@ -1260,6 +1260,63 @@ pub unsafe extern "C" fn halo_skate_board_vertices(out: *mut f32, capacity: i32)
     .unwrap_or(0)
 }
 
+/// Where the skater's last pose has the board (`board.rs`'s `placement`),
+/// for another machine to draw it (multiplayer, `../linux/game/skate_network.c`):
+/// 7 floats, a unit quaternion (x, y, z, w) and a position in world units.
+/// Returns 0, or -1 without a board or a pose.
+///
+/// # Safety
+/// `out` holds room for 7 floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_board_placement(out: *mut f32) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    with_host(|host| {
+        let (Some(board), Some(pose)) = (host.board.as_ref(), host.pose.as_ref()) else {
+            return None;
+        };
+        board.placement(pose)
+    })
+    .flatten()
+    .map(|(rotation, position)| {
+        let out = unsafe { std::slice::from_raw_parts_mut(out, 7) };
+        out[..4].copy_from_slice(&rotation.to_array());
+        out[4..].copy_from_slice(&position.to_array());
+        0
+    })
+    .unwrap_or(-1)
+}
+
+/// Writes the board's vertices placed whole at `placement` (7 floats, as
+/// `halo_skate_board_placement` gives them: another machine's skater's
+/// board), grown `halo_skate_set_board_scale` times, 8 floats each as
+/// `halo_skate_board_vertices` writes them. Returns how many, or 0 (no board,
+/// or a placement that is not one).
+///
+/// # Safety
+/// `placement` holds 7 floats and `out` room for `capacity * 8`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_board_vertices_at(placement: *const f32, out: *mut f32, capacity: i32) -> i32 {
+    if placement.is_null() || out.is_null() || capacity <= 0 {
+        return 0;
+    }
+    let placement = unsafe { std::slice::from_raw_parts(placement, 7) };
+    let rotation = bevy_math::Quat::from_xyzw(placement[0], placement[1], placement[2], placement[3]);
+    let position = Vec3::new(placement[4], placement[5], placement[6]);
+    if !rotation.is_finite() || !position.is_finite() || (rotation.length() - 1.0).abs() > 0.01 {
+        return 0;
+    }
+    let out = unsafe { std::slice::from_raw_parts_mut(out, capacity as usize * board::VERTEX_FLOATS) };
+    with_host(|host| {
+        host.drain();
+        host.board
+            .as_ref()
+            .map_or(0, |board| board.place(rotation.normalize(), position, BOARD_SCALE.get(), out) as i32)
+    })
+    .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

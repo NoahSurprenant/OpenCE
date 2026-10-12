@@ -110,4 +110,12 @@ int halo_skate_board_vertices(float *out, int capacity);
 Chief is larger than the skater it was made for); returns the scale kept */
 float halo_skate_set_board_scale(float scale);
 
+/* multiplayer (../linux/game/skate_network.c): where the skater's last pose
+has the board, 7 floats (a unit quaternion x, y, z, w, and a position in world
+units), 0 or -1 with no board or pose; and the board's vertices placed whole
+there (another machine's skater's board), as halo_skate_board_vertices writes
+them: how many, or 0 */
+int halo_skate_board_placement(float *out);
+int halo_skate_board_vertices_at(const float *placement, float *out, int capacity);
+
 #endif

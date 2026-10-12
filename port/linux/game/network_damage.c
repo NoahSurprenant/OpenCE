@@ -56,6 +56,7 @@ being hit looks and feels like on the clients).
 #include "scenario/scenario.h"
 #include "units/units.h"
 #include "network_distributed.h"
+#include "skate.h"
 
 #include <math.h>
 
@@ -1763,6 +1764,10 @@ static boolean distributed_report_valid(
 	{
 		return FALSE;
 	}
+	/* port: nor on a Skate 3 board, which they ride with no weapon in hand
+	and faster than they run (skate_network.c) */
+	if (skate_network_player_skating(player_index))
+		return FALSE;
 	/* one of the host's objects (the index whole: identifier 0 is any
 	object at the index) */
 	if (!distributed_object_index_valid(report->object_index))

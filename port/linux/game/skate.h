@@ -39,6 +39,55 @@ number (or in a build without the mode) */
 	"skate_volume", "skate_sound_log" }
 boolean skate_console_setting(char const *word, char const *arguments);
 
+/* ---------- multiplayer (skate_network.c)
+Each machine runs the engine for its own skater; the others see them from a
+state sent every tick (port/skate/README.md, "Multiplayer"). */
+
+/* a player's state on the wire (skate_state_write): its player's absolute
+index, the flags, the node count and the format, the root node's and the
+board's offsets from the unit's origin (16 bits a part, 1/1024 world units),
+the board's turn, then each node's turn from its bind pose (a quaternion in
+32 bits: its smallest three parts, 10 bits each) */
+#define SKATE_STATE_FORMAT 1
+#define SKATE_STATE_HEADER_SIZE 20
+#define SKATE_STATE_MAXIMUM_NODES 64
+#define SKATE_STATE_MAXIMUM_SIZE (SKATE_STATE_HEADER_SIZE + 4 * SKATE_STATE_MAXIMUM_NODES)
+
+/* network_distributed.c: a new game, nothing known of anyone's skating */
+void skate_network_new_game(void);
+/* the player's latest state, if it is to be sent (fresh: this machine's
+skater's of this tick, or another machine's of the last second and a half),
+into entry (SKATE_STATE_MAXIMUM_SIZE bytes): its size, 0 for none */
+short skate_network_entry(short player_index, byte *entry, boolean *skating);
+/* the states of a message (machine_index the sender's on the host, NONE on a
+client); each checked, and on the host taken only for that machine's players */
+void skate_network_handle_entries(long machine_index, byte const *data, byte const *end, short count);
+/* whether another machine's player skates, as their latest state says */
+boolean skate_network_player_skating(short player_index);
+/* ... whether the unit is another machine's skater's (skate_unit_is_skating) */
+boolean skate_network_unit_skating(long unit_index);
+
+/* skate.c, each tick: this machine's skater (unit NONE: none, or not
+skating), its pose already in the unit's nodes, and where the engine has the
+board (NULL: nowhere) */
+void skate_network_note_local(long player_index, long unit_index, boolean off_board, real const *board_placement);
+/* before the objects update: another machine's skater carried on at its
+velocity (its biped's own movement is off); after it: posed */
+void skate_network_update_before_objects(void);
+void skate_network_update_after_objects(void);
+/* where another machine's skater's board is drawn, between its last two
+ticks: its unit, and its placement (halo_skate_board_vertices_at); FALSE for
+none */
+boolean skate_network_board(short player_index, real fraction, long *unit_index, real *placement);
+/* the most players there are (skate_network_board) */
+#define SKATE_NETWORK_PLAYERS HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* player_control.c: debug.network_test_skate_watch turns the local player
+to another machine's skater, to see them (the network test) */
+boolean skate_local_player_watching(short local_player_index, real *yaw, real *pitch);
+/* skate.c: a unit's weapon holstered on its posed nodes */
+struct real_matrix4x3;
+void skate_holster_weapon(long unit_index, struct real_matrix4x3 const *node_matrices, int node_count);
+
 /* the camera's pitch behind a skater, radians */
 #define SKATE_CAMERA_PITCH (-0.2f)
 /* the seat state a skater reports to the director (director.c): one no seat
