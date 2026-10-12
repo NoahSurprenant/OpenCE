@@ -269,6 +269,12 @@ impl Host {
             self.fail("the skate engine stopped".into());
             return false;
         }
+        self.await_pose(sequence, wait)
+    }
+
+    /// Waits up to `wait` for the pose answering `sequence`, taking the
+    /// older answers and other replies on the way.
+    fn await_pose(&mut self, sequence: u64, wait: Duration) -> bool {
         let deadline = std::time::Instant::now() + wait;
         loop {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -952,6 +958,44 @@ pub unsafe extern "C" fn halo_skate_step(pad: *const HaloSkatePad, dt: f32, out:
         host.sequence += 1;
         let sequence = host.sequence;
         let answered = host.request(Job::Step { sequence, pad, dt }, sequence, STEP_WAIT);
+        if host.error.is_some() {
+            return -1;
+        }
+        match host.pose.as_ref() {
+            Some(pose) => {
+                write_frame(pose, unsafe { &mut *out });
+                if std::mem::take(&mut host.recovered) {
+                    2
+                } else if answered {
+                    0
+                } else {
+                    1
+                }
+            }
+            None => -1,
+        }
+    })
+    .unwrap_or(-1)
+}
+
+/// After `halo_skate_step` returned 1 (no answer in time; the worker still
+/// runs that step, and its pose comes with the next call), waits up to
+/// `wait_ms` for that pose. Returns 0 with `out` filled from it, 2 if the
+/// step failed and was recovered from, 1 if it is still not there, or -1 on
+/// failure. The game does not call this: it moves on with the last pose
+/// rather than hold its frame. The tests do, so that under load each tick's
+/// frame is that tick's.
+///
+/// # Safety
+/// `out` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_await_step(wait_ms: u32, out: *mut HaloSkateFrame) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    with_host(|host| {
+        let sequence = host.sequence;
+        let answered = host.await_pose(sequence, Duration::from_millis(u64::from(wait_ms)));
         if host.error.is_some() {
             return -1;
         }
