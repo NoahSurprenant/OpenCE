@@ -121,6 +121,11 @@ with ideas from VALORANT's netcode articles, keeping the 30 Hz tick:
   jump's), so a client that says it goes faster (a copy said to hover and
   fall, gaining the host's gravity each tick) gains nothing by it. A
   teleporter, which moves the host's own copy too, starts afresh.
+- **Skaters' hits** (Skate 3 mode): a skater's machine reports its
+  skater's hit on another player, a vehicle or another skater, and the host
+  decides who bails and how a player on foot is pushed, checking the report
+  against its own copies, and sends every machine the verdict
+  (`port/skate/README.md`, "Multiplayer").
 - **Shooter's hits.** A client reports what its own players hit; the host
   checks the report (the player's, a weapon they carry, fired from within
   its reach, the target where the host had it when the shooter saw it, no
