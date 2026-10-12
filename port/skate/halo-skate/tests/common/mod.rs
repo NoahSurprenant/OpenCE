@@ -7,7 +7,7 @@
 //! `HALO_SKATE_TEST_ASSETS` to its `assets` folder to run these tests; without
 //! it each test says so and passes, as on GitHub's runners and in normal builds.
 //!
-//! The engine is slow unoptimised (a step can miss the game's 250 ms wait), so
+//! The engine is slow unoptimised (a step can take seconds), so
 //! run them with `--release`:
 //!
 //! ```text
@@ -34,6 +34,9 @@ pub const B: u16 = 0x2000;
 pub const X: u16 = 0x4000;
 pub const Y: u16 = 0x8000;
 pub const FULL: i16 = 32767;
+
+/// How long a test waits for a step that missed the game's 250 ms wait.
+const STEP_PATIENCE_MS: u32 = 30_000;
 
 /// The tests share the one engine the C interface keeps: one at a time.
 static ENGINE: Mutex<()> = Mutex::new(());
@@ -398,14 +401,26 @@ impl Engine {
     /// One game tick with `pad` held, as `step`, but a step that fails (-1:
     /// the session given up) comes back as its error instead of a panic.
     pub fn try_step(&mut self, pad: Pad) -> Result<Snapshot, String> {
-        let code = unsafe { halo_skate_step(&pad.c(), GAME_TICK, &mut self.frame) };
+        let code = self.game_tick(pad);
         if code == -1 {
             return Err(error());
         }
-        assert_ne!(code, 1, "the engine missed the game's 250 ms wait: run these tests with --release");
         let snapshot = Snapshot::of(code, &self.frame);
         self.history.push(snapshot.clone());
         Ok(snapshot)
+    }
+
+    /// `halo_skate_step` as the game calls it, but a step that misses the
+    /// game's 250 ms wait (a busy machine: the worker still runs it, in
+    /// order) is waited for, so that each tick's frame is that tick's and
+    /// the tests do not depend on how loaded the machine is. Its code.
+    fn game_tick(&mut self, pad: Pad) -> i32 {
+        let mut code = unsafe { halo_skate_step(&pad.c(), GAME_TICK, &mut self.frame) };
+        if code == 1 {
+            code = unsafe { halo_skate_await_step(STEP_PATIENCE_MS, &mut self.frame) };
+            assert_ne!(code, 1, "a step took longer than {STEP_PATIENCE_MS} ms: run these tests with --release");
+        }
+        code
     }
 
     /// Gets on the board at `at` (metres, on the floor) facing `yaw` from +X.
@@ -435,9 +450,8 @@ impl Engine {
 
     /// One game tick (two engine ticks) with `pad` held.
     pub fn step(&mut self, pad: Pad) -> Snapshot {
-        let code = unsafe { halo_skate_step(&pad.c(), GAME_TICK, &mut self.frame) };
+        let code = self.game_tick(pad);
         assert_ne!(code, -1, "halo_skate_step failed: {}", error());
-        assert_ne!(code, 1, "the engine missed the game's 250 ms wait: run these tests with --release");
         let snapshot = Snapshot::of(code, &self.frame);
         self.history.push(snapshot.clone());
         snapshot

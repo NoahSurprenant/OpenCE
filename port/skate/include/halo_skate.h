@@ -54,6 +54,9 @@ int halo_skate_activate(const float *position, float yaw, struct halo_skate_fram
 step failed and the skater was put back on the board where it last was; -1:
 failed (halo_skate_error) */
 int halo_skate_step(const struct halo_skate_pad *pad, float dt, struct halo_skate_frame *out);
+/* after halo_skate_step returned 1, waits up to wait_ms for that step's pose
+(the tests; the game moves on with the last pose): codes as halo_skate_step */
+int halo_skate_await_step(unsigned int wait_ms, struct halo_skate_frame *out);
 void halo_skate_suspend(void);
 int halo_skate_set_skeleton(int count, const char *names, const short *parents, const float *inverse_defaults);
 /* the biped's nodes posed as the skater; riding, its soles rest on the deck

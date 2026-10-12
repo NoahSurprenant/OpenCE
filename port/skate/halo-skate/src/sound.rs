@@ -243,9 +243,14 @@ impl Detector {
             emit(Sound::StepOn, 0.6, speed);
         }
 
-        // what the next tick measures from
+        // what the next tick measures from. Being placed ends with the wheels
+        // down after the engine has put the skater back, not with wheels that
+        // touch while it is still putting it back: the bailed board, where it
+        // came to rest, can lie on its wheels through the Teleporting ticks.
         if wheels > 0 || grinding {
-            self.placed = false;
+            if now.state != TELEPORTING {
+                self.placed = false;
+            }
             self.unsupported = 0;
             self.airborne = 0;
             self.falling = 0.0;
@@ -529,6 +534,43 @@ mod tests {
         dropping.state = 200;
         dropping.launch = Some((7, false));
         dropping.board_velocity = [0.0, -2.4, 0.0];
+        let mut down = rolling(0.0);
+        down.launch = Some((7, false));
+        down.closing_speed = 2.4;
+        let mut ticks = vec![rolling(4.0)];
+        ticks.extend(std::iter::repeat_n(wipeout, 30));
+        ticks.extend([teleport, teleport]);
+        ticks.extend(std::iter::repeat_n(placed, 9));
+        ticks.extend(std::iter::repeat_n(dropping, 5));
+        ticks.extend(std::iter::repeat_n(down, 10));
+        assert_eq!(sounds(&run(&mut d, &ticks)), [Sound::Bail]);
+        let mut events = run(&mut d, &ollie_into_the_air());
+        events.extend(run(&mut d, &[down; 5]));
+        assert_eq!(sounds(&events), [Sound::Pop, Sound::Land]);
+    }
+
+    /// As above, but the bailed board has come to rest on two wheels through
+    /// the Teleporting ticks, and the skater, put back higher than it lands,
+    /// falls a while (longer than LANDING_AIR_TICKS) before its wheels are
+    /// down: still being placed, not a landing or an impact. (The real data
+    /// does this after some runs and not others: `real_assets_sound.rs`.)
+    #[test]
+    fn wheels_touching_while_put_back_are_not_the_placing_done() {
+        let mut d = Detector::default();
+        let mut wipeout = rolling(4.0);
+        wipeout.state = 300;
+        wipeout.ragdoll = true;
+        wipeout.wheels = [false; 4];
+        wipeout.deck = true;
+        let mut teleport = wipeout;
+        teleport.state = TELEPORTING;
+        teleport.wheels = [true, true, false, false];
+        let mut placed = rolling(0.0);
+        placed.wheels = [false; 4];
+        let mut dropping = placed;
+        dropping.state = 200;
+        dropping.launch = Some((7, false));
+        dropping.board_velocity = [0.0, -2.3, 0.0];
         let mut down = rolling(0.0);
         down.launch = Some((7, false));
         down.closing_speed = 2.4;
