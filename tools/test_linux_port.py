@@ -444,12 +444,15 @@ def test_skate_multiplayer(tmp_path):
     and a client on Blood Gulch, the client getting on a board and riding a
     scripted pad (debug.network_test_skate), the host watching
     (debug.network_test_skate_watch) and stepping into their way every five
-    seconds (debug.network_test_skate_block). The host must pose the client's
-    skater from its state and draw their board, and take every place the
-    client gives (but a stray few), the client's state must rebuild its own
-    pose within a hair, and the skater must hit the host's player (an
-    obstacle on the client: skate.c) rather than pass through; with a round
-    trip of 150 ms and a tenth of the datagrams lost. It needs a Linux build
+    seconds (debug.network_test_skate_block), on foot at first, then on a board
+    of its own (debug.network_test_skate_duel). The host must pose the
+    client's skater from its state and draw their board, and take every place
+    the client gives (but a stray few), the client's state must rebuild its
+    own pose within a hair, the skater must hit the host's player (an obstacle
+    on the client: skate.c) rather than pass through, on foot and skating, and
+    the host's skater the client's (each machine's skater solid to the other's);
+    and each loads Blood Gulch's scenery into the level's collision. With a
+    round trip of 150 ms and a tenth of the datagrams lost. It needs a Linux build
     with --skate (HALO_TEST_GAME), the converted Skate 3 data
     (HALO_SKATE_TEST_ASSETS) and the Halo maps (HALO_SKATE_TEST_HALO_MAPS),
     and skips without them; about two and a half minutes."""
@@ -464,7 +467,8 @@ def test_skate_multiplayer(tmp_path):
               "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75", "HALO_NETWORK_LOSS": "10"}
     machines = {"host": {"HALO_NET_ADDRESS": "127.0.0.210", "HALO_NET_BROADCAST": "127.0.0.211",
                          "HALO_NETWORK_TEST": "host:bloodgulch", "HALO_NETWORK_TEST_START": "12",
-                         "HALO_NETWORK_TEST_SKATE_WATCH": "1", "HALO_NETWORK_TEST_SKATE_BLOCK": "1"},
+                         "HALO_NETWORK_TEST_SKATE_WATCH": "1", "HALO_NETWORK_TEST_SKATE_BLOCK": "1",
+                         "HALO_NETWORK_TEST_SKATE_DUEL": "56"},
                 "join": {"HALO_NET_ADDRESS": "127.0.0.211", "HALO_NET_BROADCAST": "127.0.0.210",
                          "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15"}}
     games = {}
@@ -512,7 +516,7 @@ def test_skate_multiplayer(tmp_path):
     # (debug.network_test_skate_block): on the client it is another machine's
     # biped, an obstacle (skate.c), which the skater must hit - bump or bail -
     # rather than pass through
-    blocks = re.findall(r"the watcher steps into the skater's way", host)
+    blocks = re.findall(r"the watcher steps into the skater's way at", host)
     near = [int(n) for n in re.findall(r"skate test: (\d+) obstacles near", join)]
     hits = re.findall(r"halo-skate: hit a biped at ([\d.]+) m/s", join)
     outcomes = re.findall(r"halo-skate: hit a biped at [\d.]+ m/s [^\n]*: (bailed|rode on)", join)
@@ -521,3 +525,25 @@ def test_skate_multiplayer(tmp_path):
     assert len(blocks) >= 3, f"the watcher stepped in {len(blocks)} times:\n{host[-4000:]}"
     assert near, f"the client never had the watcher as an obstacle:\n{join[-4000:]}"
     assert hits, f"the skater never hit the watcher:\n{join[-4000:]}"
+    # later the host's player skates too (debug.network_test_skate_duel) and
+    # is put on its board in the skater's way: each machine has the other's
+    # skater as their body and board (skate.c's skate_skater_obstacles), and
+    # the skater riding in hits the host's skater on the client, and on the
+    # host the client's skater hits the host's
+    duels = re.findall(r"the watcher steps into the skater's way on a board", host)
+    skater_parts = [int(n) for n in re.findall(r"obstacles near \(\d+ bipeds, (\d+) of skaters", join)]
+    join_hits = re.findall(r"halo-skate: hit a skater at [\d.]+ m/s [^\n]*: (bailed|rode on)", join)
+    host_hits = re.findall(r"halo-skate: hit a skater at [\d.]+ m/s [^\n]*: (bailed|rode on)", host)
+    print(f"{len(duels)} duels; a skater near in {sum(1 for n in skater_parts if n)} logged seconds; "
+          f"the client's skater hit the host's {join_hits}, the host's the client's {host_hits}")
+    assert "skate test: on the board, to stand in the skater's way" in host, host[-4000:]
+    assert len(duels) >= 2, f"the host's skater stepped in {len(duels)} times:\n{host[-4000:]}"
+    assert any(skater_parts), f"the client never had the host's skater as an obstacle:\n{join[-4000:]}"
+    assert join_hits, f"the client's skater never hit the host's:\n{join[-4000:]}"
+    assert host_hits, f"the host's skater was never hit by the client's:\n{host[-4000:]}"
+    # Blood Gulch's scenery goes to the engine with the level's collision
+    # (skate.c's skate_add_scenery), as solid as the level and its edges rails
+    scenery = re.findall(r"skate: the level's collision: (\d+) triangles, (\d+) of them (\d+) pieces of scenery",
+                         join)
+    print(f"the level's collision: {scenery}")
+    assert scenery and int(scenery[-1][2]) > 0, f"no scenery in the level's collision:\n{join[:4000]}"

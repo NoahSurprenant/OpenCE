@@ -38,6 +38,9 @@ pub const BOX_ROUNDING: f32 = 0.02;
 pub enum ObstacleKind {
     /// A person: another player, or an AI.
     Biped,
+    /// Another skater: their body and their board (another machine's, posed
+    /// from what it sends), a person to the solve and the bail.
+    Skater,
     Vehicle,
     /// Anything else solid that does not move by itself (crates, barrels,
     /// devices).
@@ -51,7 +54,7 @@ impl ObstacleKind {
     /// for a vehicle, the world (0) for scenery.
     pub fn contact_group(self) -> u32 {
         match self {
-            Self::Biped => 5,
+            Self::Biped | Self::Skater => 5,
             Self::Vehicle => 8,
             Self::Scenery => 0,
         }
@@ -188,6 +191,90 @@ impl KinematicObstacle {
                 }
             }
         }
+    }
+
+    /// Its outside as triangles wound to face out, `age` seconds on, for
+    /// the off-board controller's queries, which sweep triangles alone
+    /// (`BoardWorld::set_offboard_obstacles`): a box's twelve, and a capsule
+    /// as the eight-sided prism around it, as long as it with its caps (a
+    /// walking skater meets its side; its ends are flat).
+    pub fn triangles_at(&self, age: f32) -> Vec<[Vector3; 3]> {
+        let center = self.center_at(age);
+        let mut out = Vec::with_capacity(28);
+        let mut push = |t: [Vector3; 3]| {
+            // (wound so that its normal points away from the middle)
+            let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+            let middle = scale(add(add(t[0], t[1]), t[2]), 1.0 / 3.0);
+            out.push(if dot(n, sub(middle, center)) < 0.0 {
+                [t[0], t[2], t[1]]
+            } else {
+                t
+            });
+        };
+        match self.shape {
+            ObstacleShape::Box {
+                basis,
+                half_extents,
+                ..
+            } => {
+                let axis = |i: usize| {
+                    let c = basis.columns[i];
+                    Vector3::new(c[0], c[1], c[2])
+                };
+                let extents = [half_extents.x, half_extents.y, half_extents.z];
+                for i in 0..3 {
+                    let (j, k) = ((i + 1) % 3, (i + 2) % 3);
+                    let u = scale(axis(j), extents[j]);
+                    let v = scale(axis(k), extents[k]);
+                    for sign in [-1.0, 1.0] {
+                        let face = add(center, scale(axis(i), sign * extents[i]));
+                        let corner = |a: f32, b: f32| add(face, add(scale(u, a), scale(v, b)));
+                        let (p0, p1) = (corner(-1.0, -1.0), corner(1.0, -1.0));
+                        let (p2, p3) = (corner(1.0, 1.0), corner(-1.0, 1.0));
+                        push([p0, p1, p2]);
+                        push([p0, p2, p3]);
+                    }
+                }
+            }
+            ObstacleShape::Capsule {
+                axis,
+                half_length,
+                radius,
+                ..
+            } => {
+                const SIDES: usize = 8;
+                // (two directions square to the axis and to each other)
+                let other = if axis.x.abs() < 0.9 {
+                    Vector3::new(1.0, 0.0, 0.0)
+                } else {
+                    Vector3::new(0.0, 1.0, 0.0)
+                };
+                let u = unit(cross(axis, other)).unwrap_or(Vector3::new(0.0, 0.0, 1.0));
+                let v = cross(axis, u);
+                // (the prism's sides touch the capsule's round)
+                let reach = radius / (std::f32::consts::PI / SIDES as f32).cos();
+                let end = half_length + radius;
+                let ring = |k: usize, along: f32| {
+                    let angle = k as f32 * std::f32::consts::TAU / SIDES as f32;
+                    add(
+                        add(center, scale(axis, along)),
+                        add(scale(u, reach * angle.cos()), scale(v, reach * angle.sin())),
+                    )
+                };
+                for k in 0..SIDES {
+                    let next = (k + 1) % SIDES;
+                    let (a, b) = (ring(k, -end), ring(next, -end));
+                    let (c, d) = (ring(next, end), ring(k, end));
+                    push([a, b, c]);
+                    push([a, c, d]);
+                }
+                for k in 1..SIDES - 1 {
+                    push([ring(0, end), ring(k, end), ring(k + 1, end)]);
+                    push([ring(0, -end), ring(k, -end), ring(k + 1, -end)]);
+                }
+            }
+        }
+        out
     }
 
     /// Its body in the solve `age` seconds on: fixed (state flags 1, no
@@ -347,6 +434,9 @@ fn scale(v: Vector3, s: f32) -> Vector3 {
 }
 fn dot(a: Vector3, b: Vector3) -> f32 {
     a.x * b.x + a.y * b.y + a.z * b.z
+}
+fn cross(a: Vector3, b: Vector3) -> Vector3 {
+    Vector3::new(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
 }
 
 #[cfg(test)]

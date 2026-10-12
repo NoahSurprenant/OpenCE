@@ -287,6 +287,23 @@ impl Board {
         scale_about_middle(&mut out[..count * VERTEX_FLOATS], scale);
         count
     }
+
+    /// The box around the board as `place` puts it, grown `scale` times about
+    /// its middle, in the placement's own axes: its middle and half sizes,
+    /// world units (another machine's board as an obstacle: skate.c). None
+    /// without vertices.
+    pub fn local_box(&self, scale: f32) -> Option<(Vec3, Vec3)> {
+        let points: Vec<Vec3> = self.vertices.iter().map(|v| from_skate(v.position)).collect();
+        if points.is_empty() {
+            return None;
+        }
+        let middle = points.iter().sum::<Vec3>() / points.len() as f32;
+        let low = points.iter().fold(Vec3::INFINITY, |a, &p| a.min(p));
+        let high = points.iter().fold(Vec3::NEG_INFINITY, |a, &p| a.max(p));
+        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        let (low, high) = (middle + (low - middle) * scale, middle + (high - middle) * scale);
+        Some(((low + high) / 2.0, (high - low) / 2.0))
+    }
 }
 
 /// Grows skinned vertices (VERTEX_FLOATS each) `scale` times about their
@@ -786,6 +803,30 @@ mod tests {
         board.skin(&pose(Mat4::IDENTITY, at_bind), 1.05, &mut grown).unwrap();
         scale_about_middle(&mut plain, 1.05);
         assert_eq!(plain, grown);
+    }
+
+    #[test]
+    fn the_local_box_holds_the_placed_board_tightly() {
+        let board = Board::from_glb(&glb(&png(1, 1, &[9, 9, 9, 255]))).unwrap();
+        let rotation = Quat::from_rotation_z(0.7) * Quat::from_rotation_x(0.3);
+        let position = Vec3::new(4.0, -2.0, 1.5);
+        let mut out = vec![0.0; board.vertices.len() * VERTEX_FLOATS];
+        let count = board.place(rotation, position, 1.05, &mut out);
+        let (middle, half) = board.local_box(1.05).unwrap();
+        let mut touches = [[false; 2]; 3];
+        for v in out[..count * VERTEX_FLOATS].chunks_exact(VERTEX_FLOATS) {
+            // the placed vertex in the placement's axes, from the box's middle
+            let local = rotation.inverse() * (Vec3::new(v[0], v[1], v[2]) - position) - middle;
+            for axis in 0..3 {
+                assert!(local[axis].abs() <= half[axis] + 1e-5, "inside: {local} {half}");
+                touches[axis][0] |= (local[axis] + half[axis]).abs() < 1e-5;
+                touches[axis][1] |= (local[axis] - half[axis]).abs() < 1e-5;
+            }
+        }
+        assert_eq!(touches, [[true; 2]; 3], "each face meets a vertex");
+        // grown about the middle of its vertices, as place grows it
+        let (_, plain) = board.local_box(1.0).unwrap();
+        assert!((half - plain * 1.05).length() < 1e-5);
     }
 
     #[test]

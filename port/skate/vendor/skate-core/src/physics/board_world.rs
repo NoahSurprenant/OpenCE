@@ -113,6 +113,12 @@ pub struct BoardWorld {
     imported_floor_seams: bool,
     contacts: Vec<BoardCollision>,
     buffer: ContactBuffer,
+    /// halo-skate: the kinematic obstacles as triangles (`KinematicObstacle::
+    /// triangles_at`), which the off-board controller's queries take with
+    /// the static triangles (`set_offboard_obstacles`). The board's and the
+    /// skater's own contacts never see them: the shared solve has the
+    /// obstacles themselves.
+    offboard_obstacles: Vec<[Vector3; 3]>,
 }
 
 impl BoardWorld {
@@ -167,6 +173,7 @@ impl BoardWorld {
                 full: 0,
                 records: [[0; 64]; 50],
             },
+            offboard_obstacles: Vec::new(),
         }
     }
 
@@ -189,6 +196,16 @@ impl BoardWorld {
 
     pub fn triangles(&self) -> &[WorldTriangle] {
         &self.triangles
+    }
+
+    /// halo-skate: the obstacles' triangles the off-board controller's queries
+    /// take from now on (`offboard_obstacles`), wound to face out.
+    pub fn set_offboard_obstacles(&mut self, triangles: Vec<[Vector3; 3]>) {
+        self.offboard_obstacles = triangles;
+    }
+
+    pub fn offboard_obstacles(&self) -> &[[Vector3; 3]] {
+        &self.offboard_obstacles
     }
 
     /// Imported brush floors can meet at split edges without sharing vertices.

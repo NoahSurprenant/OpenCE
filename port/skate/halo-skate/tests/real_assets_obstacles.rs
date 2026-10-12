@@ -1,16 +1,17 @@
 //! Obstacles (`halo_skate_set_obstacles`, `obstacles.rs`) against the real
 //! Skate 3 data (`common/mod.rs`): riding into a standing person (a capsule
-//! Master Chief's size) and a vehicle (a box a Warthog's size) on the test
-//! map's open floor, at a few speeds. Slow is a bump (the board stops at it,
-//! the skater stays on), fast is a bail; nothing passes through, every frame
-//! is finite, and after the bail the engine puts the skater back on the
-//! board. Skipped unless `HALO_SKATE_TEST_ASSETS` is set; run with
-//! `--release`.
+//! Master Chief's size), a vehicle (a box a Warthog's size) and another
+//! skater on their board (as another machine's is sent) on the test map's
+//! open floor, at a few speeds. Slow is a bump (the board stops at it, the
+//! skater stays on), fast is a bail; nothing passes through, every frame is
+//! finite, and after the bail the engine puts the skater back on the board.
+//! Off the board, walking into a wall sent as an obstacle stops the skater.
+//! Skipped unless `HALO_SKATE_TEST_ASSETS` is set; run with `--release`.
 
 mod common;
 
 use common::*;
-use halo_skate::obstacles::{KIND_BIPED, KIND_VEHICLE, SHAPE_BOX, SHAPE_CAPSULE};
+use halo_skate::obstacles::{KIND_BIPED, KIND_SCENERY, KIND_SKATER, KIND_VEHICLE, SHAPE_BOX, SHAPE_CAPSULE};
 use halo_skate::*;
 
 /// The cyborg's collision pill (world units): 0.2 across, 0.7 tall.
@@ -68,16 +69,16 @@ struct Ride {
 }
 
 /// Rides along the open lane at `lane` (metres across), `pushes` pushes of
-/// `push_ticks` game ticks, then rolls on into the obstacle `make(x, y)`
-/// puts 3 m ahead of the board, the way it travels (`ahead` m further for
-/// one driving at the board at `toward` m/s), sent every tick as the game
-/// sends it, for four seconds.
+/// `push_ticks` game ticks, then rolls on into the obstacles `make(x, y)`
+/// puts 3 m ahead of the board (the first the one measured from), the way it
+/// travels (`ahead` m further for ones driving at the board at `toward`
+/// m/s), sent every tick as the game sends them, for four seconds.
 fn ride_into(
     engine: &mut Engine,
     lane: f32,
     pushes: usize,
     push_ticks: usize,
-    make: fn(f32, f32) -> HaloSkateObstacle,
+    make: &dyn Fn(f32, f32) -> Vec<HaloSkateObstacle>,
     toward: f32,
 ) -> Ride {
     assert_eq!(set(&[]), 0);
@@ -100,15 +101,20 @@ fn ride_into(
     let along = (v[0] * v[0] + v[1] * v[1]).sqrt().max(1e-6);
     let direction = [v[0] / along, v[1] / along];
     let ahead = 3.0 + 1.5 * toward.max(0.0);
-    let mut obstacle = make(at[0] + direction[0] * ahead, at[1] + direction[1] * ahead);
-    obstacle.velocity = [-direction[0] * toward / METRES, -direction[1] * toward / METRES, 0.0];
+    let mut obstacles = make(at[0] + direction[0] * ahead, at[1] + direction[1] * ahead);
+    for o in &mut obstacles {
+        o.velocity = [-direction[0] * toward / METRES, -direction[1] * toward / METRES, 0.0];
+    }
     let mut met = None;
     for _ in 0..120 {
-        assert_eq!(set(&[obstacle]), 1, "the obstacle is taken");
+        assert_eq!(set(&obstacles), obstacles.len() as i32, "the obstacles are taken");
         let s = engine.step(Pad::NEUTRAL);
-        for i in 0..3 {
-            obstacle.center[i] += obstacle.velocity[i] * GAME_TICK;
+        for o in &mut obstacles {
+            for i in 0..3 {
+                o.center[i] += o.velocity[i] * GAME_TICK;
+            }
         }
+        let obstacle = obstacles[0];
         let gap = (obstacle.center[0] * METRES - s.at()[0]) * direction[0]
             + (obstacle.center[1] * METRES - s.at()[1]) * direction[1];
         if met.is_none() && gap < 1.5 {
@@ -124,7 +130,7 @@ fn ride_into(
     let after = engine.history[(met + 30).min(engine.history.len() - 1)].ground_speed();
     let bailed = frames.iter().any(|s| s.state.starts_with("Wipeout") || s.code == 2);
     // how far past the obstacle's middle the board got before any bail
-    let end = obstacle.center.map(|v| v * METRES);
+    let end = obstacles[0].center.map(|v| v * METRES);
     let past = frames
         .iter()
         .take_while(|s| !s.state.starts_with("Wipeout"))
@@ -176,9 +182,9 @@ fn report(what: &str, ride: &Ride, kind: &str) -> f32 {
 fn riding_into_a_person_bumps_slow_and_bails_fast() {
     let Some(assets) = assets("riding into a person") else { return };
     let mut engine = Engine::start(&assets);
-    let slow = ride_into(&mut engine, TestMap::OPEN, 1, 3, person, -3.0);
+    let slow = ride_into(&mut engine, TestMap::OPEN, 1, 3, &|x, y| vec![person(x, y)], -3.0);
     let slow_closing = report("person, slow", &slow, "biped");
-    let fast = ride_into(&mut engine, TestMap::OPEN, 4, 12, person, 0.0);
+    let fast = ride_into(&mut engine, TestMap::OPEN, 4, 12, &|x, y| vec![person(x, y)], 0.0);
     let fast_closing = report("person, fast", &fast, "biped");
     assert!(slow_closing < 3.0, "slow: closing slowly: {slow_closing:.2} m/s");
     assert!(!slow.bailed, "slow ({slow_closing:.2} m/s): a bump, not a bail");
@@ -196,9 +202,9 @@ fn riding_into_a_person_bumps_slow_and_bails_fast() {
 fn riding_into_a_vehicle_bumps_slow_and_bails_fast() {
     let Some(assets) = assets("riding into a vehicle") else { return };
     let mut engine = Engine::start(&assets);
-    let slow = ride_into(&mut engine, TestMap::OPEN, 1, 3, vehicle, 0.0);
+    let slow = ride_into(&mut engine, TestMap::OPEN, 1, 3, &|x, y| vec![vehicle(x, y)], 0.0);
     let slow_closing = report("vehicle, slow", &slow, "vehicle");
-    let fast = ride_into(&mut engine, TestMap::OPEN, 4, 12, vehicle, 0.0);
+    let fast = ride_into(&mut engine, TestMap::OPEN, 4, 12, &|x, y| vec![vehicle(x, y)], 0.0);
     let fast_closing = report("vehicle, fast", &fast, "vehicle");
     assert!(slow_closing < 6.0, "slow: under the bail speed: {slow_closing:.2} m/s");
     assert!(!slow.bailed, "slow ({slow_closing:.2} m/s): a bump, not a bail");
@@ -216,9 +222,134 @@ fn riding_into_a_vehicle_bumps_slow_and_bails_fast() {
 fn a_vehicle_driving_into_a_slow_skater_knocks_them_over() {
     let Some(assets) = assets("a vehicle driving into the skater") else { return };
     let mut engine = Engine::start(&assets);
-    let hit = ride_into(&mut engine, TestMap::OPEN, 1, 3, vehicle, 5.0);
+    let hit = ride_into(&mut engine, TestMap::OPEN, 1, 3, &|x, y| vec![vehicle(x, y)], 5.0);
     let closing = report("vehicle driving at 5 m/s", &hit, "vehicle");
     assert!(closing > 8.0, "the vehicle's speed and the skater's: {closing:.2} m/s");
     assert!(hit.bailed, "a bail");
     assert_back_on_the_board(&mut engine, "vehicle driving");
+}
+
+/// Walks off the board (Y, then the left stick up) on the open floor: a
+/// second to find the way the skater walks, then on for five, with a wall (a
+/// box 0.4 m thick, 6 m wide, 1.5 m high: scenery, so no bail) `ahead` m on
+/// along that way if `wall`, sent every tick as the game sends it. Returns
+/// how far along that way the skater got from where it stood when the wall
+/// came, metres, and every frame since.
+fn walk_toward(engine: &mut Engine, wall: Option<f32>) -> (f32, Vec<Snapshot>) {
+    assert_eq!(set(&[]), 0);
+    engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+    engine.hold(Pad::NEUTRAL, 15);
+    engine.hold(Pad::buttons(Y), 4);
+    for _ in 0..90 {
+        if engine.step(Pad::NEUTRAL).off_board() {
+            break;
+        }
+    }
+    engine.hold(Pad::NEUTRAL, 30);
+    assert!(engine.history.last().unwrap().off_board(), "off the board");
+    let walk = Pad::left(0, FULL);
+    let from = engine.history.last().unwrap().at();
+    engine.hold(walk, 30);
+    let start = engine.history.last().unwrap().at();
+    let (dx, dy) = (start[0] - from[0], start[1] - from[1]);
+    let moved = (dx * dx + dy * dy).sqrt();
+    assert!(moved > 0.5, "walking: {moved} m in a second");
+    let way = [dx / moved, dy / moved];
+    let obstacle = wall.map(|ahead| HaloSkateObstacle {
+        kind: KIND_SCENERY,
+        shape: SHAPE_BOX,
+        center: [(start[0] + way[0] * ahead) / METRES, (start[1] + way[1] * ahead) / METRES, 0.75 / METRES],
+        forward: [way[0], way[1], 0.0],
+        left: [-way[1], way[0], 0.0],
+        up: [0.0, 0.0, 1.0],
+        half_extents: [0.2 / METRES, 3.0 / METRES, 0.75 / METRES],
+        velocity: [0.0; 3],
+    });
+    let first = engine.history.len();
+    for _ in 0..150 {
+        let sent = obstacle.map_or_else(|| set(&[]), |o| set(&[o]));
+        assert_eq!(sent, obstacle.is_some() as i32);
+        engine.step(walk);
+    }
+    assert_eq!(set(&[]), 0);
+    let frames = engine.since(first).to_vec();
+    assert!(frames.iter().all(Snapshot::is_finite), "every frame is finite");
+    let furthest = frames
+        .iter()
+        .map(|s| (s.at()[0] - start[0]) * way[0] + (s.at()[1] - start[1]) * way[1])
+        .fold(f32::MIN, f32::max);
+    (furthest, frames)
+}
+
+/// Walking off the board into a wall the game sends as an obstacle (the
+/// off-board controller sweeps the obstacles' triangles with the level's:
+/// `BoardWorld::set_offboard_obstacles`): the skater stops at it, where with
+/// no wall it walks on well past it.
+#[test]
+fn walking_off_the_board_stops_at_an_obstacle() {
+    let Some(assets) = assets("walking into an obstacle") else { return };
+    let mut engine = Engine::start(&assets);
+    const AHEAD: f32 = 2.5;
+    let (open, _) = walk_toward(&mut engine, None);
+    let (walled, frames) = walk_toward(&mut engine, Some(AHEAD));
+    eprintln!("walking off the board: {open:.2} m with no wall, {walled:.2} m toward a wall {AHEAD} m ahead");
+    engine.trace(engine.history.len() - frames.len(), 15);
+    assert!(open > AHEAD + 1.0, "with no wall the skater walks past where it would be: {open:.2} m");
+    // (the wall's near face is AHEAD - 0.2 m on; the skater's middle stops
+    // its body's round short of it)
+    assert!(walled < AHEAD - 0.2, "the skater walked {walled:.2} m, into the wall {AHEAD} m ahead");
+    assert!(frames.iter().all(Snapshot::off_board), "still walking: {:?}", frames.last().unwrap().state);
+}
+
+/// Another skater standing on their board at `x`, `y` (metres), as the game
+/// sends another machine's skater (skate.c's `skate_skater_obstacles`): their
+/// body a capsule from their feet to their head, 0.09 world units round, and
+/// their board where `placement` (the rider's own, `halo_skate_board_placement`)
+/// would have it there, sized by `halo_skate_board_obstacle`.
+fn skater(x: f32, y: f32, placement: [f32; 7]) -> Vec<HaloSkateObstacle> {
+    let (feet, head) = (0.25 / METRES, 1.75 / METRES);
+    let body = HaloSkateObstacle {
+        kind: KIND_SKATER,
+        shape: SHAPE_CAPSULE,
+        center: [x / METRES, y / METRES, (feet + head) / 2.0],
+        forward: [1.0, 0.0, 0.0],
+        left: [0.0, 1.0, 0.0],
+        up: [0.0, 0.0, 1.0],
+        half_extents: [0.09, 0.0, (head - feet) / 2.0 + 0.09],
+        velocity: [0.0; 3],
+    };
+    let mut at = placement;
+    at[4] = x / METRES;
+    at[5] = y / METRES;
+    let mut board = HaloSkateObstacle::default();
+    assert_eq!(unsafe { halo_skate_board_obstacle(at.as_ptr(), &mut board) }, 0, "the board as an obstacle");
+    vec![body, board]
+}
+
+/// Riding into another skater standing on their board, slowly and at full
+/// speed (a bump or a bail slow, as into a person): the hit is on a skater,
+/// the board does not pass through theirs,
+/// and fast is a bail. Their board's box is the real board's size.
+#[test]
+fn riding_into_another_skater_bumps_slow_and_bails_fast() {
+    let Some(assets) = assets("riding into another skater") else { return };
+    let mut engine = Engine::start(&assets);
+    engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+    engine.hold(Pad::NEUTRAL, 15);
+    let mut placement = [0.0f32; 7];
+    assert_eq!(unsafe { halo_skate_board_placement(placement.as_mut_ptr()) }, 0, "the rider's board placed");
+    let board = skater(0.0, 0.0, placement)[1];
+    let size = board.half_extents.map(|h| 2.0 * h * METRES);
+    eprintln!("another skater's board: {size:.3?} m");
+    let longest = size.iter().copied().fold(0.0, f32::max);
+    assert!(longest > 0.7 && longest < 1.0, "a skateboard's length: {size:?} m");
+    let slow = ride_into(&mut engine, TestMap::OPEN, 1, 3, &|x, y| skater(x, y, placement), 0.0);
+    report("skater, slow", &slow, "skater");
+    let fast = ride_into(&mut engine, TestMap::OPEN, 4, 12, &|x, y| skater(x, y, placement), 0.0);
+    let fast_closing = report("skater, fast", &fast, "skater");
+    assert!(slow.past < 0.0, "slow: not through the skater: {:.2} m past", slow.past);
+    assert!(fast_closing > 6.0, "fast: at speed: {fast_closing:.2} m/s");
+    assert!(fast.bailed, "fast ({fast_closing:.2} m/s): a bail");
+    assert!(fast.past < 0.0, "fast: not through the skater: {:.2} m past", fast.past);
+    assert_back_on_the_board(&mut engine, "skater, fast");
 }

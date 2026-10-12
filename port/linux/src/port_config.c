@@ -444,6 +444,12 @@ static const struct config_setting config_settings[] =
 		_environment_set_is_true, _platform_all,
 		"With debug.network_test_skate_watch on a host, its player steps into the\n"
 		"skater's way every five seconds, for them to ride into (port/skate/README.md)." },
+	{ "debug.network_test_skate_duel", _config_real, "0.0", "HALO_NETWORK_TEST_SKATE_DUEL", _environment_value,
+		_platform_all,
+		"This many seconds into an automated test game this machine's player gets\n"
+		"on a Skate 3 board and stands on it; with debug.network_test_skate_block on\n"
+		"a host, it is put on the board in another skater's way every five seconds,\n"
+		"facing them (port/skate/README.md); 0 never." },
 	{ "debug.telnet_console", _config_boolean, "false", "HALO_TELNET_CONSOLE", _environment_set_is_true, _platform_all,
 		"Listen on 127.0.0.1 (port telnet_console_port) for a script console that\n"
 		"runs what it is sent as the game's console does, with no password; false\n"

@@ -1430,6 +1430,37 @@ pub unsafe extern "C" fn halo_skate_board_vertices_at(placement: *const f32, out
     .unwrap_or(0)
 }
 
+/// Another machine's skater's board at `placement` (7 floats, as
+/// `halo_skate_board_placement` gives them) as an obstacle: a box of kind
+/// skater, turned as the board is and around it as drawn
+/// (`board.rs`'s `local_box`), at rest (the game sets the velocity).
+/// Returns 0, or -1 with no board or a placement that is not one.
+///
+/// # Safety
+/// `placement` holds 7 floats; `out` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_board_obstacle(placement: *const f32, out: *mut obstacles::HaloSkateObstacle) -> i32 {
+    if placement.is_null() || out.is_null() {
+        return -1;
+    }
+    let placement = unsafe { std::slice::from_raw_parts(placement, 7) };
+    let rotation = bevy_math::Quat::from_xyzw(placement[0], placement[1], placement[2], placement[3]);
+    let position = Vec3::new(placement[4], placement[5], placement[6]);
+    if !rotation.is_finite() || !position.is_finite() || (rotation.length() - 1.0).abs() > 0.01 {
+        return -1;
+    }
+    let local = with_host(|host| {
+        host.drain();
+        host.board.as_ref().and_then(|board| board.local_box(BOARD_SCALE.get()))
+    })
+    .flatten();
+    let Some((middle, half)) = local else {
+        return -1;
+    };
+    unsafe { *out = obstacles::board_obstacle(rotation.normalize(), position, middle, half) };
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

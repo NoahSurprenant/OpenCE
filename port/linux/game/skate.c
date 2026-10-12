@@ -93,7 +93,10 @@ static struct
 	struct halo_skate_frame frame;
 	/* the skeleton was described again on this board (skate_update_after_objects) */
 	boolean skeleton_described_again;
-} skate_globals = { FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, { 0.f, 0.f } };
+	/* a structure bsp loaded: its collision goes to the engine on the next
+	tick, with the scenery placed in it by then (skate_load_map) */
+	boolean map_pending;
+} skate_globals ={ FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, { 0.f, 0.f } };
 
 /* the board grown about its middle: Master Chief (about 2.1 m) is larger
 than the skater it was made for (about 1.8 m) */
@@ -235,26 +238,158 @@ static boolean skate_map_loaded(void)
 		skate_globals.loaded_structure_bsp_index == global_structure_bsp_index;
 }
 
-/* sends the BSP's collision to be built in the background; the engine copies
-the triangles, so this never waits for the build */
+/* the BSP of a node of an object's collision model, the permutation the
+object shows; NULL for none */
+static struct collision_bsp *skate_node_bsp(struct collision_model_instance const *instance, short node_index)
+{
+	struct collision_node const *node = TAG_BLOCK_GET_ELEMENT(&instance->model->nodes, node_index,
+		struct collision_node);
+	short permutation;
+
+	if (node->region_index < 0 || node->region_index >= MAXIMUM_REGIONS_PER_OBJECT || node->bsps.count <= 0)
+		return NULL;
+	permutation = instance->region_permutation_indices[node->region_index];
+	permutation = PIN(permutation, 0, (short)(node->bsps.count - 1));
+	return TAG_BLOCK_GET_ELEMENT(&node->bsps, permutation, struct collision_bsp);
+}
+
+/* ---------- static scenery, part of the level
+
+Scenery does not move, so the level's collision goes to the engine with the
+scenery placed in it then: its collision models' triangles, as each node of
+them is placed, join the structure BSP's (skate_load_map). The board and the
+skater meet a rock's slopes and a crate's top as they are, at any size, the
+skater walking off the board stops at them, and their edges are grind rails
+(the rail finder takes them with the level's). Those pieces are then no
+obstacles (skate_send_obstacles). Scenery made later (by a script) is an
+obstacle each tick, as a box; a piece destroyed or moved later stays where it
+was to the engine until the next structure BSP. */
+
+#define SKATE_MAXIMUM_BAKED_SCENERY 1024
+
+/* the scenery sent with the level's collision, sorted */
+static long skate_baked_scenery[SKATE_MAXIMUM_BAKED_SCENERY];
+static int skate_baked_scenery_count;
+
+static int skate_compare_object_indices(void const *a, void const *b)
+{
+	long x = *(long const *)a, y = *(long const *)b;
+
+	return x < y ? -1 : x > y;
+}
+
+static boolean skate_scenery_baked(long object_index)
+{
+	return skate_baked_scenery_count > 0 && bsearch(&object_index, skate_baked_scenery,
+		(size_t)skate_baked_scenery_count, sizeof(long), skate_compare_object_indices) != NULL;
+}
+
+/* triangles (count of them) with the static scenery's added, each node's BSP
+as skate_collision_triangles makes it, placed by the node; the scenery taken
+is noted (skate_baked_scenery). The array grown, or NULL (and triangles
+freed) out of memory */
+static float *skate_add_scenery(float *triangles, long *count, long *pieces, long *added)
+{
+	struct object_iterator iterator;
+	struct object_datum *scenery;
+
+	*pieces = 0;
+	*added = 0;
+	skate_baked_scenery_count = 0;
+	object_iterator_new(&iterator, _object_mask_scenery, 0);
+	while ((scenery = (struct object_datum *)object_iterator_next(&iterator)) != NULL &&
+		skate_baked_scenery_count < SKATE_MAXIMUM_BAKED_SCENERY)
+	{
+		struct collision_model_instance instance;
+		long object_index = iterator.index;
+		long before = *count;
+		short node_index;
+
+		if (scenery->object.parent_object_index != NONE ||
+			!collision_model_instance_new(&instance, object_index) || !instance.matrices)
+		{
+			continue;
+		}
+		for (node_index = 0; node_index < instance.node_count; node_index++)
+		{
+			struct collision_bsp *bsp = skate_node_bsp(&instance, node_index);
+			real_matrix4x3 const *matrix = &instance.matrices[node_index];
+			float *node_triangles;
+			float *grown;
+			long node_count;
+			long index;
+
+			if (!bsp || !(node_triangles = skate_collision_triangles(bsp, &node_count)))
+				continue;
+			grown = node_count ? (float *)realloc(triangles, (size_t)(*count + node_count) * 9 * sizeof(float)) :
+				triangles;
+			if (!grown)
+			{
+				free(node_triangles);
+				free(triangles);
+				return NULL;
+			}
+			triangles = grown;
+			for (index = 0; index < node_count * 3; index++)
+			{
+				real_point3d point, placed;
+
+				point.x = node_triangles[index * 3];
+				point.y = node_triangles[index * 3 + 1];
+				point.z = node_triangles[index * 3 + 2];
+				matrix4x3_transform_point(matrix, &point, &placed);
+				triangles[*count * 9 + index * 3] = placed.x;
+				triangles[*count * 9 + index * 3 + 1] = placed.y;
+				triangles[*count * 9 + index * 3 + 2] = placed.z;
+			}
+			*count += node_count;
+			free(node_triangles);
+		}
+		if (*count > before)
+		{
+			skate_baked_scenery[skate_baked_scenery_count++] = object_index;
+			(*pieces)++;
+			*added += *count - before;
+		}
+	}
+	qsort(skate_baked_scenery, (size_t)skate_baked_scenery_count, sizeof(long), skate_compare_object_indices);
+	return triangles;
+}
+
+/* sends the BSP's collision, with the static scenery in it, to be built in
+the background; the engine copies the triangles, so this never waits for the
+build */
 static boolean skate_load_map(void)
 {
 	struct collision_bsp *bsp = global_collision_bsp_get();
 	long count;
+	long pieces = 0;
+	long added = 0;
 	float *triangles;
 	boolean sent = FALSE;
 
+	skate_globals.map_pending = FALSE;
+	skate_baked_scenery_count = 0;
 	if (!bsp)
 		return FALSE;
 	triangles = skate_collision_triangles(bsp, &count);
+	if (triangles)
+		triangles = skate_add_scenery(triangles, &count, &pieces, &added);
 	if (!triangles)
+	{
+		skate_baked_scenery_count = 0;
 		return FALSE;
+	}
+	platform_log("skate: the level's collision: %ld triangles, %ld of them %ld pieces of scenery", count, added,
+		pieces);
 	if (halo_skate_load(skate_assets(), triangles, (int)count) == 0)
 	{
 		skate_globals.loaded_scenario_index = global_scenario_index;
 		skate_globals.loaded_structure_bsp_index = global_structure_bsp_index;
 		sent = TRUE;
 	}
+	else
+		skate_baked_scenery_count = 0;
 	free(triangles);
 	return sent;
 }
@@ -291,14 +426,18 @@ void skate_structure_bsp_changed(void)
 	tag has the old one's index) */
 	skate_globals.loaded_scenario_index = NONE;
 	skate_globals.loaded_structure_bsp_index = NONE;
+	skate_globals.map_pending = FALSE;
+	skate_baked_scenery_count = 0;
 	/* nobody skates in the main menu; a failed preload is retried on J */
 	if (!skate_globals.preloaded || !scenario || scenario->type == _scenario_type_main_menu ||
 		halo_skate_state() == -1)
 	{
 		return;
 	}
-	if (skate_load_map())
-		skate_globals.activate_when_ready = waiting;
+	/* (sent on the next tick, skate_update_before_objects: a new map's
+	scenery is placed after its first bsp loads) */
+	skate_globals.map_pending = TRUE;
+	skate_globals.activate_when_ready = waiting;
 }
 
 /* a model's geometry and part, as models.c and powerup_render_bounds.c each
@@ -812,21 +951,41 @@ static void skate_engine_failed(void)
 	skate_globals.skeleton_definition_index = NONE;
 }
 
-static void skate_start(long unit_index)
+/* the ground under from (from itself when none is near) */
+static real_point3d skate_ground_under(long unit_index, real_point3d const *from)
 {
-	struct object_datum *object = object_get(unit_index);
 	struct collision_result collision;
-	real_point3d ground = object->object.position;
+	real_point3d ground = *from;
 	real_vector3d down;
 
 	down.i = 0.f;
 	down.j = 0.f;
 	down.k = -SKATE_GROUND_PROBE;
-	if (collision_test_vector(_collision_test_environment_flags, &object->object.position, &down,
-		unit_index, &collision))
+	if (collision_test_vector(_collision_test_environment_flags, from, &down, unit_index,
+		&collision))
 	{
 		ground = collision.point;
 	}
+	return ground;
+}
+
+/* the skater put on the board again at spot (on the ground under it), facing
+yaw: the network test's duel (debug.network_test_skate_duel) */
+static void skate_put(long unit_index, real_point3d const *spot, real yaw)
+{
+	real_point3d ground = skate_ground_under(unit_index, spot);
+
+	if (halo_skate_activate(&ground.x, yaw, &skate_globals.frame) != 0)
+		return;
+	skate_board_forget();
+	skate_apply_frame(unit_index, TRUE);
+}
+
+static void skate_start(long unit_index)
+{
+	struct object_datum *object = object_get(unit_index);
+	real_point3d ground = skate_ground_under(unit_index, &object->object.position);
+
 	skate_globals.height = object->object.position.z - ground.z;
 	skate_describe_skeleton(unit_index);
 	if (halo_skate_activate(&ground.x, (real)atan2(object->object.forward.j, object->object.forward.i),
@@ -856,12 +1015,44 @@ SKATE_TEST_OFF_SECONDS on, and on again five seconds later. */
 
 double config_real(const char *name);
 
+/* debug.network_test_skate_duel: that many seconds into a game this
+machine's player gets on a board and stands on it, Y stepping back on after
+a fall; with debug.network_test_skate_block on a host it is put on the board
+in another machine's skater's way every five seconds, facing them
+(skate_update_before_objects), for them to ride into, skater into skater.
+TRUE while it has the pad */
+static boolean skate_test_duel_pad(struct halo_skate_pad *pad, boolean *toggle)
+{
+	static real start = -1.f;
+	long tick;
+
+	if (start < 0.f)
+		start = (real)config_real("debug.network_test_skate_duel");
+	if (!(start > 0.f) || !game_in_progress())
+		return FALSE;
+	tick = game_time_get() - (long)(start * TICKS_PER_SECOND);
+	if (tick == 0 && !skate_globals.skating && !skate_globals.activate_when_ready)
+	{
+		platform_log("skate test: on the board, to stand in the skater's way");
+		*toggle = TRUE;
+	}
+	if (tick >= 0 && skate_globals.skating)
+	{
+		memset(pad, 0, sizeof(*pad));
+		if (skate_globals.frame.off_board && tick % 30 < 4)
+			pad->buttons = 0x8000;
+	}
+	return TRUE;
+}
+
 static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
 {
 	static real start = -1.f;
 	long tick;
 	long cycle;
 
+	if (skate_test_duel_pad(pad, toggle))
+		return;
 	if (start < 0.f)
 		start = (real)config_real("debug.network_test_skate");
 	if (!(start > 0.f) || !game_in_progress())
@@ -924,6 +1115,11 @@ underside. Vehicles are taken up to the engine's most (50 m) */
 past any run): another machine's unit jumps where the host says after a
 respawn, a teleporter or a correction, and its velocity briefly says so */
 #define SKATE_MAXIMUM_BIPED_OBSTACLE_SPEED (10.f / 3.048f)
+/* another machine's skater: their body's round (world units, 27 cm: a
+skater's shoulders, slimmer than Halo's pill), and their velocity taken up to
+20 m/s, past any push or carve */
+#define SKATE_SKATER_RADIUS 0.09f
+#define SKATE_MAXIMUM_SKATER_OBSTACLE_SPEED (20.f / 3.048f)
 
 /* the box around a collision BSP's vertices in its node's space: FALSE for
 none */
@@ -1058,21 +1254,13 @@ static void skate_box_obstacles(long object_index, real_point3d const *skater, s
 		return;
 	for (node_index = 0; node_index < instance.node_count; node_index++)
 	{
-		struct collision_node const *node = TAG_BLOCK_GET_ELEMENT(&instance.model->nodes, node_index,
-			struct collision_node);
 		real_matrix4x3 const *matrix = &instance.matrices[node_index];
-		struct collision_bsp *bsp;
+		struct collision_bsp *bsp = skate_node_bsp(&instance, node_index);
 		struct halo_skate_obstacle obstacle;
 		real_point3d minimum, maximum, middle, center;
 		real largest;
-		short permutation;
 
-		if (node->region_index < 0 || node->region_index >= MAXIMUM_REGIONS_PER_OBJECT || node->bsps.count <= 0)
-			continue;
-		permutation = instance.region_permutation_indices[node->region_index];
-		permutation = PIN(permutation, 0, (short)(node->bsps.count - 1));
-		bsp = TAG_BLOCK_GET_ELEMENT(&node->bsps, permutation, struct collision_bsp);
-		if (!skate_bsp_bounds(bsp, &minimum, &maximum))
+		if (!bsp || !skate_bsp_bounds(bsp, &minimum, &maximum))
 			continue;
 		memset(&obstacle, 0, sizeof(obstacle));
 		obstacle.kind = kind;
@@ -1104,6 +1292,120 @@ static void skate_box_obstacles(long object_index, real_point3d const *skater, s
 	}
 }
 
+/* the velocity of an obstacle taken up to maximum (world units a second) */
+static void skate_obstacle_speed_limit(struct halo_skate_obstacle *obstacle, real maximum)
+{
+	real speed = (real)sqrt(obstacle->velocity[0] * obstacle->velocity[0] +
+		obstacle->velocity[1] * obstacle->velocity[1] + obstacle->velocity[2] * obstacle->velocity[2]);
+	int index;
+
+	if (speed > maximum)
+	{
+		for (index = 0; index < 3; index++)
+			obstacle->velocity[index] *= maximum / speed;
+	}
+}
+
+/* the nodes of another skater's body (the cyborg's, as rig.rs expects them):
+NONE for a model without them */
+static void skate_skater_nodes(long definition_index, short nodes[3])
+{
+	static char const *const names[3] = { "bip01 head", "bip01 l foot", "bip01 r foot" };
+	static long cached_definition_index = NONE;
+	static short cached[3] = { NONE, NONE, NONE };
+	struct object_definition *definition;
+	short which;
+
+	if (definition_index != cached_definition_index)
+	{
+		cached_definition_index = definition_index;
+		definition = object_definition_get(definition_index);
+		for (which = 0; which < 3; which++)
+		{
+			struct model *model = definition->object.model.index != NONE ?
+				model_definition_get(definition->object.model.index) : NULL;
+			short index;
+
+			cached[which] = NONE;
+			for (index = 0; model && index < model->nodes.count && cached[which] == NONE; index++)
+			{
+				if (skate_text_has(TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node)->name,
+					names[which], TRUE))
+				{
+					cached[which] = index;
+				}
+			}
+		}
+	}
+	memcpy(nodes, cached, sizeof(cached));
+}
+
+/* another machine's skater (skate_network.c poses them from their state): their
+body as a capsule from between their feet to their head, as posed, and their
+board as a box where their state has it, both moving at their unit's
+velocity. FALSE when their biped's nodes are not the cyborg's (their pill is
+taken instead) */
+static boolean skate_skater_obstacles(long object_index, real_point3d const *skater, struct skate_obstacles *kept)
+{
+	struct object_datum *object = object_get(object_index);
+	long player_index = ((struct unit_datum *)object)->unit.player_index;
+	real_matrix4x3 const *node_matrices = (real_matrix4x3 const *)object_header_block_get(object_index,
+		&object->object.node_matrices);
+	int node_count = object->object.node_matrices.size / (int)sizeof(real_matrix4x3);
+	struct halo_skate_obstacle obstacle;
+	real_point3d feet, head;
+	real_vector3d along;
+	real length;
+	short nodes[3];
+	real placement[7];
+	long board_unit_index;
+
+	skate_skater_nodes(object->definition_index, nodes);
+	if (nodes[0] == NONE || nodes[1] == NONE || nodes[2] == NONE ||
+		MAX(nodes[0], MAX(nodes[1], nodes[2])) >= node_count)
+	{
+		return FALSE;
+	}
+	head = node_matrices[nodes[0]].position;
+	feet.x = (node_matrices[nodes[1]].position.x + node_matrices[nodes[2]].position.x) / 2.f;
+	feet.y = (node_matrices[nodes[1]].position.y + node_matrices[nodes[2]].position.y) / 2.f;
+	feet.z = (node_matrices[nodes[1]].position.z + node_matrices[nodes[2]].position.z) / 2.f;
+	along.i = head.x - feet.x;
+	along.j = head.y - feet.y;
+	along.k = head.z - feet.z;
+	length = (real)sqrt(along.i * along.i + along.j * along.j + along.k * along.k);
+	if (!(length > 0.01f && length < 2.f))
+		return FALSE;
+	memset(&obstacle, 0, sizeof(obstacle));
+	obstacle.kind = HALO_SKATE_OBSTACLE_SKATER;
+	obstacle.shape = HALO_SKATE_OBSTACLE_CAPSULE;
+	obstacle.center[0] = (head.x + feet.x) / 2.f;
+	obstacle.center[1] = (head.y + feet.y) / 2.f;
+	obstacle.center[2] = (head.z + feet.z) / 2.f;
+	obstacle.forward[0] = 1.f;
+	obstacle.left[1] = 1.f;
+	obstacle.up[0] = along.i / length;
+	obstacle.up[1] = along.j / length;
+	obstacle.up[2] = along.k / length;
+	obstacle.half_extents[0] = SKATE_SKATER_RADIUS;
+	obstacle.half_extents[2] = length / 2.f + SKATE_SKATER_RADIUS;
+	skate_obstacle_velocity(object, &obstacle);
+	skate_obstacle_speed_limit(&obstacle, SKATE_MAXIMUM_SKATER_OBSTACLE_SPEED);
+	skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - obstacle.half_extents[2]);
+	/* (the board drawn last tick: halo_skate_board_obstacle sizes it) */
+	if (player_index != NONE &&
+		skate_network_board((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), 1.f, &board_unit_index, placement) &&
+		board_unit_index == object_index && halo_skate_board_obstacle(placement, &obstacle) == 0)
+	{
+		real largest = MAX(obstacle.half_extents[0], MAX(obstacle.half_extents[1], obstacle.half_extents[2]));
+
+		skate_obstacle_velocity(object, &obstacle);
+		skate_obstacle_speed_limit(&obstacle, SKATE_MAXIMUM_SKATER_OBSTACLE_SPEED);
+		skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - largest);
+	}
+	return TRUE;
+}
+
 /* the obstacles around the skater's biped unit_index, to the engine */
 static void skate_send_obstacles(long unit_index)
 {
@@ -1131,27 +1433,35 @@ static void skate_send_obstacles(long unit_index)
 			continue;
 		if (object->object.type == _object_type_biped)
 		{
-			if (!(object->object.damage_flags & FLAG(_object_dead_bit)))
+			/* (another machine's skater as their body and board, else as
+			Halo's pill) */
+			if (!(object->object.damage_flags & FLAG(_object_dead_bit)) &&
+				!(skate_network_unit_skating(object_index) && skate_skater_obstacles(object_index, &skater, &kept)))
+			{
 				skate_biped_obstacle(object_index, &skater, &kept);
+			}
 		}
-		else
+		/* (static scenery is part of the level: skate_add_scenery) */
+		else if (!(object->object.type == _object_type_scenery && skate_scenery_baked(object_index)))
 			skate_box_obstacles(object_index, &skater, &kept);
 	}
 	halo_skate_set_obstacles(kept.obstacles, kept.count);
-	/* (the network test, debug.network_test_skate, tells what is near once a
-	second; the engine tells of each hit: "halo-skate: hit a biped at ...") */
-	if (game_time_get() % TICKS_PER_SECOND == 0 && config_real("debug.network_test_skate") > 0.)
+	/* (the network tests, debug.network_test_skate and _duel, tell what is
+	near once a second; the engine tells of each hit: "halo-skate: hit a biped
+	at ...") */
+	if (game_time_get() % TICKS_PER_SECOND == 0 &&
+		(config_real("debug.network_test_skate") > 0. || config_real("debug.network_test_skate_duel") > 0.))
 	{
-		int kinds[3] = { 0, 0, 0 };
+		static char const *const names[4] = { "biped", "vehicle", "scenery", "skater" };
+		int kinds[4] = { 0, 0, 0, 0 };
 
 		for (index = 0; index < kept.count; index++)
 			kinds[kept.obstacles[index].kind]++;
 		if (kept.count)
 		{
-			platform_log("skate test: %d obstacles near (%d bipeds, %d vehicle boxes, %d scenery boxes), "
-				"the nearest a %s %.2f world units away", kept.count, kinds[0], kinds[1], kinds[2],
-				kept.obstacles[0].kind == HALO_SKATE_OBSTACLE_BIPED ? "biped" :
-				kept.obstacles[0].kind == HALO_SKATE_OBSTACLE_VEHICLE ? "vehicle" : "scenery", kept.distances[0]);
+			platform_log("skate test: %d obstacles near (%d bipeds, %d of skaters, %d vehicle boxes, %d scenery "
+				"boxes), the nearest a %s %.2f world units away", kept.count, kinds[0], kinds[3], kinds[1], kinds[2],
+				names[kept.obstacles[0].kind], kept.distances[0]);
 		}
 		else
 			platform_log("skate test: no obstacles near");
@@ -1175,6 +1485,9 @@ void skate_update_before_objects(void)
 	skate_test_pad(&pad, &toggle);
 	/* (other machines' skaters carried on: skate_network.c) */
 	skate_network_update_before_objects();
+	/* the structure bsp loaded since the last tick, with its scenery placed */
+	if (skate_globals.map_pending && !skate_load_map())
+		skate_globals.activate_when_ready = FALSE;
 
 	if (skate_globals.skating && (unit_index != skate_globals.unit_index ||
 		!skate_unit_can_skate(unit_index) || !skate_map_loaded()))
@@ -1221,8 +1534,16 @@ void skate_update_before_objects(void)
 	}
 	if (!skate_globals.skating)
 		return;
+	/* (the network test's duel: on the board in another skater's way) */
+	{
+		real_point3d spot;
+		real yaw;
+
+		if (skate_network_block_spot(skate_globals.unit_index, TRUE, &spot, &yaw))
+			skate_put(skate_globals.unit_index, &spot, yaw);
+	}
 	skate_send_obstacles(skate_globals.unit_index);
-	stepped = halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skate_globals.frame);
+	stepped =halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skate_globals.frame);
 	if (stepped == 2)
 	{
 		/* a step failed (a bail the engine could not follow): the engine put

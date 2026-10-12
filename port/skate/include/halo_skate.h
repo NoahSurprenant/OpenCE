@@ -118,13 +118,15 @@ other bipeds as capsules, vehicles and scenery as boxes (obstacles.rs) */
 #define HALO_SKATE_OBSTACLE_BIPED 0
 #define HALO_SKATE_OBSTACLE_VEHICLE 1
 #define HALO_SKATE_OBSTACLE_SCENERY 2
+#define HALO_SKATE_OBSTACLE_SKATER 3
 #define HALO_SKATE_OBSTACLE_BOX 0
 #define HALO_SKATE_OBSTACLE_CAPSULE 1
 #define HALO_SKATE_MAXIMUM_OBSTACLES 32
 
 struct halo_skate_obstacle
 {
-	int kind; /* HALO_SKATE_OBSTACLE_BIPED, _VEHICLE or _SCENERY */
+	int kind; /* HALO_SKATE_OBSTACLE_BIPED, _VEHICLE, _SCENERY or _SKATER (another
+		skater's body or board) */
 	int shape; /* HALO_SKATE_OBSTACLE_BOX, or _CAPSULE along up */
 	float center[3]; /* its middle, world units */
 	float forward[3]; /* a box's axes, unit vectors (a capsule's is up) */
@@ -153,5 +155,11 @@ there (another machine's skater's board), as halo_skate_board_vertices writes
 them: how many, or 0 */
 int halo_skate_board_placement(float *out);
 int halo_skate_board_vertices_at(const float *placement, float *out, int capacity);
+/* another machine's skater's board at placement (7 floats, as above) as an
+obstacle (skate.c): a box of kind HALO_SKATE_OBSTACLE_SKATER, turned as the
+board is, around it as drawn (grown halo_skate_set_board_scale times), its
+velocity 0 for the game to set. 0, or -1 with no board or a placement that is
+not one */
+int halo_skate_board_obstacle(const float *placement, struct halo_skate_obstacle *out);
 
 #endif

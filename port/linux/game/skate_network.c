@@ -963,30 +963,70 @@ where the watcher was, a little above the ground to fall onto it) */
 		*pitch = (real)atan2(-0.3f, SKATE_NETWORK_WATCH_NEAR);
 	}
 	/* debug.network_test_skate_block: now and then the watcher steps into the
-	skater's way, ahead of them the way they go, for the skater to ride into
-	(skate.c's obstacles: on the skater's machine the watcher is another
-	machine's biped, where the host says) */
-	if (found && skate_network_globals.block && game_connection() != _game_connection_network_client &&
-		(skate_network_globals.blocked_time == NONE ||
-		game_time_get() - skate_network_globals.blocked_time >= SKATE_NETWORK_BLOCK_TICKS))
+	skater's way (skate_network_block_spot) */
+	if (found)
 	{
-		struct object_datum *skater = object_get(nearest_index);
-		real_vector3d const *velocity = &skater->object.translational_velocity;
-		real speed = (real)sqrt(velocity->i * velocity->i + velocity->j * velocity->j);
+		real_point3d position;
 
-		if (speed * TICKS_PER_SECOND > SKATE_NETWORK_BLOCK_SPEED)
-		{
-			real_point3d position;
-
-			position.x = skater->object.position.x + velocity->i / speed * SKATE_NETWORK_BLOCK_AHEAD;
-			position.y = skater->object.position.y + velocity->j / speed * SKATE_NETWORK_BLOCK_AHEAD;
-			position.z = skater->object.position.z + 0.3f;
+		if (skate_network_block_spot(unit_index, FALSE, &position, NULL))
 			object_set_position(unit_index, &position, &object->object.forward, &object->object.up);
-			skate_network_globals.blocked_time = game_time_get();
-			platform_log("skate network: the watcher steps into the skater's way at (%.2f %.2f %.2f), "
-				"the skater going %.1f m/s", position.x, position.y, position.z,
-				speed * TICKS_PER_SECOND * 3.048f);
-		}
 	}
 	return found && *yaw >= 0.f && *yaw < 2.f * _pi;
+}
+
+boolean skate_network_block_spot(long unit_index, boolean on_board, real_point3d *spot, real *yaw)
+{
+	struct object_datum *object = unit_index != NONE ? object_try_and_get(unit_index) : NULL;
+	struct object_datum *skater = NULL;
+	real nearest = 0.f;
+	real_vector3d const *velocity;
+	real speed;
+	short index;
+
+	if (!skate_network_globals.block || !object || game_connection() == _game_connection_network_client ||
+		(skate_network_globals.blocked_time != NONE &&
+		game_time_get() - skate_network_globals.blocked_time < SKATE_NETWORK_BLOCK_TICKS))
+	{
+		return FALSE;
+	}
+	for (index = 0; index < SKATE_NETWORK_PLAYERS; index++)
+	{
+		long skater_index = skate_network_player_skating(index) ? skate_network_player_unit(index) : NONE;
+		real_point3d const *at;
+		real dx, dy, dz, distance;
+
+		if (skater_index == NONE || skater_index == unit_index)
+			continue;
+		at = &object_get(skater_index)->object.position;
+		dx = at->x - object->object.position.x;
+		dy = at->y - object->object.position.y;
+		dz = at->z - object->object.position.z;
+		distance = dx * dx + dy * dy + dz * dz;
+		if (!skater || distance < nearest)
+		{
+			skater = object_get(skater_index);
+			nearest = distance;
+		}
+	}
+	if (!skater)
+		return FALSE;
+	velocity = &skater->object.translational_velocity;
+	speed = (real)sqrt(velocity->i * velocity->i + velocity->j * velocity->j);
+	if (!(speed * TICKS_PER_SECOND > SKATE_NETWORK_BLOCK_SPEED))
+		return FALSE;
+	spot->x = skater->object.position.x + velocity->i / speed * SKATE_NETWORK_BLOCK_AHEAD;
+	spot->y = skater->object.position.y + velocity->j / speed * SKATE_NETWORK_BLOCK_AHEAD;
+	spot->z = skater->object.position.z + 0.3f;
+	/* (facing the skater, who comes along their velocity) */
+	if (yaw)
+	{
+		*yaw = (real)atan2(-velocity->j, -velocity->i);
+		if (*yaw < 0.f)
+			*yaw += 2.f * _pi;
+	}
+	skate_network_globals.blocked_time = game_time_get();
+	platform_log("skate network: the watcher steps into the skater's way%s at (%.2f %.2f %.2f), "
+		"the skater going %.1f m/s", on_board ? " on a board" : "", spot->x, spot->y, spot->z,
+		speed * TICKS_PER_SECOND * 3.048f);
+	return TRUE;
 }

@@ -27,6 +27,9 @@ pub(super) fn append(
     physics.obstacle_age += dt;
     if physics.obstacle_age > STALE {
         physics.obstacles.clear();
+        if !physics.world.offboard_obstacles().is_empty() {
+            physics.world.set_offboard_obstacles(Vec::new());
+        }
     }
     let age = physics.obstacle_age;
     let material = physics.settings.floor_material;
