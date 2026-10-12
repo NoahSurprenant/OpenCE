@@ -832,7 +832,7 @@ static struct
 	boolean burst;
 	boolean grenade;
 } const skate_shoot_seconds[] = { { 20, FALSE, FALSE, TRUE }, { 38, FALSE, TRUE, TRUE }, { 64, TRUE, TRUE, FALSE },
-	{ 80, TRUE, TRUE, FALSE }, { 88, TRUE, TRUE, FALSE }, { 96, FALSE, TRUE, TRUE } };
+	{ 96, FALSE, TRUE, TRUE } };
 /* and a grenade alone at its own skater (any push on them till it goes off
 is its bounce's), from that many seconds in to that many, on a second when
 they skate, alive, their shield full, and no grenade is about, till that
@@ -840,7 +840,7 @@ many have gone off hurting them without killing them (one that kills them is
 tried again once they skate again) */
 #define SKATE_OWN_GRENADES 1
 #define SKATE_OWN_GRENADES_FROM 70
-#define SKATE_OWN_GRENADES_UNTIL 120
+#define SKATE_OWN_GRENADES_UNTIL 125
 /* world units from the skater's middle the round starts and the grenade is
 thrown from */
 #define SKATE_SHOOT_DISTANCE 1.5f
