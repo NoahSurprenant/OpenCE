@@ -466,24 +466,32 @@ def test_skate_multiplayer(tmp_path):
                 "join": {"HALO_NET_ADDRESS": "127.0.0.211", "HALO_NET_BROADCAST": "127.0.0.210",
                          "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15"}}
     games = {}
-    for name, settings in machines.items():
-        folder = tmp_path / name
-        (folder / "data").mkdir(parents=True)
-        (folder / "saves").mkdir()
-        (folder / "data" / "maps").symlink_to(maps)
-        env = dict(os.environ, **common, **settings, HALO_DATA_ROOT=str(folder / "data"),
-                   HALO_SAVE_ROOT=str(folder / "saves"))
-        games[name] = subprocess.Popen([game], cwd=folder, env=env, stdout=open(folder / "run.log", "w"),
-                                       stderr=subprocess.STDOUT)
-        if name == "host":
-            time.sleep(4)
-    # (each exits after its seconds, debug.exit_after; one that has not by then is stopped)
-    deadline = time.monotonic() + seconds + 30
-    for process in games.values():
-        try:
-            process.wait(timeout=max(1.0, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            process.kill()
+    # (each should exit after its seconds, debug.exit_after, but with the null
+    # renderer neither does, so both are stopped at a deadline - and stopped
+    # whatever happens, so that no game outlives the test, on a CI runner
+    # least of all)
+    try:
+        for name, settings in machines.items():
+            folder = tmp_path / name
+            (folder / "data").mkdir(parents=True)
+            (folder / "saves").mkdir()
+            (folder / "data" / "maps").symlink_to(maps)
+            env = dict(os.environ, **common, **settings, HALO_DATA_ROOT=str(folder / "data"),
+                       HALO_SAVE_ROOT=str(folder / "saves"))
+            with open(folder / "run.log", "w") as log:
+                games[name] = subprocess.Popen([game], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+            if name == "host":
+                time.sleep(4)
+        deadline = time.monotonic() + seconds + 30
+        for process in games.values():
+            try:
+                process.wait(timeout=max(1.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        for process in games.values():
+            if process.poll() is None:
+                process.kill()
             process.wait()
     host = (tmp_path / "host" / "run.log").read_text(errors="replace")
     join = (tmp_path / "join" / "run.log").read_text(errors="replace")

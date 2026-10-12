@@ -658,6 +658,19 @@ HALO_SKATE_TEST_HALO_MAPS=/path/to/halo/maps \
     python -m pytest -q tools/test_linux_port.py -k skate_multiplayer
 ```
 
+The games run headless, with the null renderer (`HALO_NULL_RENDERER`, which
+the test sets); on a machine without a display or sound, add
+`SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy`. Neither game exits by itself
+under the null renderer, so the test stops both at a deadline, and whatever
+happens.
+
+CI runs it on every push, in the workflow's `skate-multiplayer` job, on the
+owner's runner (`opence-k8s`, which has the data; see `skate-assets` in
+`.github/workflows/build.yml`): it builds the game as `tools/ci_build.py linux
+debug` does (`--skate --lto=off --pgo=off --portable`; the compile cache and
+the engine's cargo build are kept from run to run), runs the test headless,
+and fails if it skips. Like `skate-assets`, the release does not wait for it.
+
 `tools/harness/tests/test_skate_state.py` checks the state itself, without
 any data, on every build: poses of a random skeleton sent and rebuilt within
 0.003 world units and a third of a degree, offsets too far to send left out,
