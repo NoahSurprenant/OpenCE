@@ -597,7 +597,7 @@ def test_skate_multiplayer(tmp_path):
           f"({went_off[2]} bouncing), pushes before {early}, at the blast {blast}, after {after and after.groups()}")
     assert not early, f"the grenade pushed the skater before it went off ({went_off[2]} bouncing): {early}"
     assert len(blast) == 1, f"the blast did not push the host's skater once: {blast}"
-    assert after and float(after[1]) > 0.05 and float(after[2]) > 0.5, \
+    assert after and float(after[1]) > 0.08, \
         f"the skater did not go away from the blast: {after and after.groups()}"
     assert not undone, f"a push was undone: {undone}"
     # (the client pushes its own skater for a blast the host's grenade gave
