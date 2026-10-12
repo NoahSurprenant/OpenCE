@@ -34,6 +34,10 @@ know, and its players see Halo's own biped.
 #include "objects/object_definitions.h"
 #include "objects/objects.h"
 #include "physics/collisions.h"
+#include "game/game_globals.h"
+#include "items/weapon_definitions.h"
+#include "scenario/scenario.h"
+#include "scenario/scenario_definitions.h"
 #include "units/units.h"
 #include "network_distributed.h"
 
@@ -45,6 +49,7 @@ know, and its players see Halo's own biped.
 /* the platform layer's (port_config.c, the port's log) */
 const char *config_string(const char *name);
 int config_boolean(const char *name);
+double config_real(const char *name);
 void platform_log(const char *format, ...);
 /* network_distributed.c's: the host's takes of skaters' positions */
 void network_distributed_skate_predictions(long *taken, long *refused, long *refused_on_foot);
@@ -806,12 +811,271 @@ static void skate_network_board_note(struct skate_network_player *player, long u
 	player->board_unit_index = unit_index;
 }
 
+
+/* ---------- debug.network_test_skate_shoot
+A host's watcher shoots skaters with real projectiles, as Halo's own
+weapons fire them, at the seconds skate_shoot_seconds gives (a grenade kills
+a skater, and a watcher near, as it would anyone, so not often): a burst of three rounds of its weapon from a
+little way off, then a grenade thrown at their chest, each aimed at the
+skater's posed body. The skater is another machine's (where the host has
+them, posed from their state) or, once the host skates too
+(debug.network_test_skate_duel), the host's own at the seconds given so. The log
+tells what each did: the burst's damage (shield and body before and after),
+whether the grenade bounced off the skater (its velocity turned back near
+them), and where the skater was when it went off and a second later. */
+/* when it shoots (seconds into the game), whether at its own skater, and
+whether a grenade too */
+static struct
+{
+	short seconds;
+	boolean own;
+	boolean grenade;
+} const skate_shoot_seconds[] = { { 20, FALSE, TRUE }, { 38, FALSE, TRUE }, { 72, TRUE, TRUE }, { 80, TRUE, FALSE },
+	{ 88, TRUE, FALSE }, { 96, FALSE, TRUE } };
+/* world units from the skater's middle the round starts and the grenade is
+thrown from */
+#define SKATE_SHOOT_DISTANCE 1.5f
+#define SKATE_THROW_DISTANCE 0.8f
+
+static struct
+{
+	long target_index;
+	boolean local;
+	long bullet_time;
+	real shield;
+	real body;
+	long grenade_index;
+	real_vector3d grenade_direction;
+	boolean bounced;
+	long detonated_time;
+	real_point3d detonated_at;
+	long shots;
+} skate_shoot = { NONE, FALSE, NONE, 0.f, 0.f, NONE, { 0.f, 0.f, 0.f }, FALSE, NONE, { 0.f, 0.f, 0.f }, 0 };
+
+/* a projectile of definition_index aimed at target_index's middle (raised
+by height world units) from distance world units off, along direction (from
+it to the target) */
+static long skate_shoot_projectile(long definition_index, long owner_index, long target_index,
+	real_vector3d const *direction, real distance, real height)
+{
+	struct object_datum *target = object_get(target_index);
+	struct object_placement_data data;
+
+	object_placement_data_new(&data, definition_index, owner_index);
+	data.position.x = target->object.bounding_sphere_center.x - direction->i * distance;
+	data.position.y = target->object.bounding_sphere_center.y - direction->j * distance;
+	data.position.z = target->object.bounding_sphere_center.z - direction->k * distance + height;
+	data.forward = *direction;
+	return object_new(&data);
+}
+
+static void skate_network_test_shoot(void)
+{
+	static int enabled = -1;
+	long watcher_index = player_control_get_unit_index(0);
+	struct object_datum *watcher = watcher_index != NONE ? object_try_and_get(watcher_index) : NULL;
+	boolean grenade;
+	long now = game_time_get();
+
+	if (enabled < 0)
+		enabled = config_boolean("debug.network_test_skate_shoot");
+	if (!enabled || !watcher || game_connection() == _game_connection_network_client || !game_in_progress())
+		return;
+	/* (what the last shots did) */
+	if (skate_shoot.target_index != NONE && object_try_and_get(skate_shoot.target_index))
+	{
+		struct object_datum *target = object_get(skate_shoot.target_index);
+
+		if (skate_shoot.bullet_time != NONE && now - skate_shoot.bullet_time == TICKS_PER_SECOND / 2)
+		{
+			platform_log("skate test: a burst at a skater (%s): shield %.2f to %.2f, body %.2f to %.2f",
+				skate_shoot.local ? "this machine's" : "another machine's", skate_shoot.shield,
+				target->object.shield_vitality, skate_shoot.body, target->object.body_vitality);
+		}
+		if (skate_shoot.grenade_index != NONE)
+		{
+			struct object_datum *grenade = object_try_and_get(skate_shoot.grenade_index);
+
+			if (grenade && grenade->object.type == _object_type_projectile)
+			{
+				real_vector3d const *v = &grenade->object.translational_velocity;
+				real near = (real)sqrt(distance_squared3d(&grenade->object.position,
+					&target->object.bounding_sphere_center));
+
+				/* (turned more than 60 degrees from its throw near them) */
+				if (!skate_shoot.bounced && near < 1.f && v->i * skate_shoot.grenade_direction.i +
+					v->j * skate_shoot.grenade_direction.j + v->k * skate_shoot.grenade_direction.k <
+					0.5f * magnitude3d(v))
+				{
+					skate_shoot.bounced = TRUE;
+					platform_log("skate test: the grenade bounced off the skater (%s), %.2f world units from them",
+						skate_shoot.local ? "this machine's" : "another machine's", near);
+				}
+			}
+			else
+			{
+				skate_shoot.grenade_index = NONE;
+				skate_shoot.detonated_time = now;
+				skate_shoot.detonated_at = target->object.position;
+				if (!skate_shoot.bounced)
+					platform_log("skate test: the grenade went off without bouncing off the skater");
+			}
+		}
+		if (skate_shoot.detonated_time != NONE && now - skate_shoot.detonated_time == TICKS_PER_SECOND / 3)
+		{
+			platform_log("skate test: after the grenade the skater (%s) was %.2f world units on, going %.1f m/s, "
+				"shield %.2f, body %.2f", skate_shoot.local ? "this machine's" : "another machine's",
+				(real)sqrt(distance_squared3d(&skate_shoot.detonated_at, &target->object.position)),
+				magnitude3d(&target->object.translational_velocity) * TICKS_PER_SECOND * 3.048f,
+				target->object.shield_vitality, target->object.body_vitality);
+			skate_shoot.detonated_time = NONE;
+		}
+	}
+	{
+		short which;
+
+		for (which = 0; which < (short)NUMBEROF(skate_shoot_seconds); which++)
+		{
+			if (now == skate_shoot_seconds[which].seconds * TICKS_PER_SECOND)
+				break;
+		}
+		if (which == (short)NUMBEROF(skate_shoot_seconds))
+			return;
+		skate_shoot.shots = skate_shoot_seconds[which].own;
+		grenade = skate_shoot_seconds[which].grenade;
+	}
+	/* (a target: the host's own skater every other time it skates, else the
+	nearest skater of another machine) */
+	{
+		long target_index = NONE;
+		boolean local = FALSE;
+		real nearest = 0.f;
+		short index;
+
+		if (skate_unit_is_skating(watcher_index) && skate_shoot.shots)
+		{
+			target_index = watcher_index;
+			local = TRUE;
+		}
+		for (index = 0; target_index == NONE && index < SKATE_NETWORK_PLAYERS; index++)
+		{
+			long skater_index = skate_network_player_skating(index) ? skate_network_player_unit(index) : NONE;
+			real distance;
+
+			if (skater_index == NONE || skater_index == watcher_index)
+				continue;
+			distance = distance_squared3d(&object_get(skater_index)->object.position, &watcher->object.position);
+			if (target_index == NONE || distance < nearest)
+			{
+				target_index = skater_index;
+				nearest = distance;
+			}
+		}
+		if (target_index == NONE)
+			return;
+		{
+			struct object_datum *target = object_get(target_index);
+			struct unit_datum *unit = (struct unit_datum *)watcher;
+			long weapon_index = unit->unit.current_weapon_index != NONE ?
+				unit->unit.weapon_object_indices[unit->unit.current_weapon_index] : NONE;
+			long bullet_definition = NONE;
+			long grenade_definition = NONE;
+			short shot;
+			real_vector3d direction;
+
+			if (weapon_index != NONE)
+			{
+				struct weapon_definition *weapon = weapon_definition_get(object_get(weapon_index)->definition_index);
+
+				if (weapon->weapon.triggers.count > 0)
+					bullet_definition = TAG_BLOCK_GET_ELEMENT(&weapon->weapon.triggers, 0,
+						struct weapon_trigger_definition)->projectile.index;
+			}
+			if (global_game_globals && global_game_globals->grenades.count > 0)
+				grenade_definition = TAG_BLOCK_GET_ELEMENT(&global_game_globals->grenades, 0,
+					struct game_globals_grenade)->projectile.index;
+			/* (level, from the way the target faces: at their front) */
+			direction.i = -target->object.forward.i;
+			direction.j = -target->object.forward.j;
+			direction.k = 0.f;
+			if (normalize3d(&direction) == 0.f)
+			{
+				direction.i = 1.f;
+				direction.j = 0.f;
+			}
+			skate_shoot.target_index = target_index;
+			skate_shoot.local = local;
+			skate_shoot.shield = target->object.shield_vitality;
+			skate_shoot.body = target->object.body_vitality;
+			skate_shoot.bullet_time = NONE;
+			/* (a burst of three: at the chest, and a little above and below) */
+			for (shot = -1; bullet_definition != NONE && shot <= 1; shot++)
+			{
+				if (skate_shoot_projectile(bullet_definition, local ? NONE : watcher_index, target_index, &direction,
+					SKATE_SHOOT_DISTANCE, shot * 0.12f) != NONE)
+				{
+					skate_shoot.bullet_time = now;
+				}
+			}
+			skate_shoot.bounced = FALSE;
+			skate_shoot.grenade_direction = direction;
+			skate_shoot.grenade_index = grenade && grenade_definition != NONE ?
+				skate_shoot_projectile(grenade_definition, local ? NONE : watcher_index, target_index, &direction,
+					SKATE_THROW_DISTANCE, 0.f) : NONE;
+			platform_log("skate test: shooting a skater (%s) %.2f world units away, a burst%s and a grenade%s",
+				local ? "this machine's" : "another machine's",
+				(real)sqrt(distance_squared3d(&target->object.position, &watcher->object.position)),
+				skate_shoot.bullet_time != NONE ? "" : " (none)", skate_shoot.grenade_index != NONE ? "" : " (none)");
+		}
+	}
+}
+
+
+/* debug.network_test_skate_teleport: that many seconds into a game a host
+skating itself (debug.network_test_skate_duel) puts its skater on the first
+teleporter's entrance, where Halo's own teleporter
+(game_engine_update_teleporter) takes them to its exit that tick, turned by
+the exit's facing less the entrance's, and the skate engine's skater follows
+(skate.c's skate_follow_teleport); the other machines see them there as the
+host has them */
+static void skate_network_test_teleport(void)
+{
+	static real start = -1.f;
+	struct scenario *scenario = global_scenario_get();
+	long unit_index = player_control_get_unit_index(0);
+	short index;
+
+	if (start < 0.f)
+		start = (real)config_real("debug.network_test_skate_teleport");
+	if (!(start > 0.f) || !game_in_progress() || game_connection() == _game_connection_network_client || !scenario ||
+		game_time_get() != (long)(start * TICKS_PER_SECOND) || unit_index == NONE || !skate_unit_is_skating(unit_index))
+	{
+		return;
+	}
+	for (index = 0; index < scenario->netgame_flags.count; index++)
+	{
+		struct scenario_netgame_flag *flag = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_flags, index,
+			struct scenario_netgame_flag);
+		struct object_datum *object = object_get(unit_index);
+
+		if (flag->type != _netgame_flag_teleporter_source)
+			continue;
+		platform_log("skate test: this machine's skater put on a teleporter's entrance %.2f world units away, at "
+			"(%.2f %.2f %.2f)", (real)sqrt(distance_squared3d(&object->object.position, &flag->position)),
+			flag->position.x, flag->position.y, flag->position.z);
+		object_set_position(unit_index, &flag->position, &object->object.forward, NULL);
+		return;
+	}
+}
+
 void skate_network_update_after_objects(void)
 {
 	boolean log = skate_network_globals.log && game_time_get() % TICKS_PER_SECOND == 0 &&
 		game_time_get() != skate_network_globals.logged_time;
 	short index;
 
+	skate_network_test_shoot();
+	skate_network_test_teleport();
 	if (log)
 		skate_network_globals.logged_time = game_time_get();
 	for (index = 0; index < SKATE_NETWORK_PLAYERS; index++)

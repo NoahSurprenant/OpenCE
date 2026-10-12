@@ -167,6 +167,23 @@ impl Session {
         self.input = ControllerInput::default();
         Ok(self.pose())
     }
+    /// halo-skate: a teleporter: the skater put on the board at `spawn` facing
+    /// `heading`, as `activate` does, and then moving at `velocity` (metres a
+    /// second, the board's and the body's alike), so that they leave the
+    /// exit as fast as they came in.
+    pub fn teleport(&mut self, spawn: [f32; 3], heading: f32, velocity: [f32; 3]) -> Result<Pose, String> {
+        self.activate(spawn, heading)?;
+        let v = skate_core::math::Vector3::new(velocity[0], velocity[1], velocity[2]);
+        for body in self.physics.board.bodies_mut() {
+            body.rates.linear_velocity = v;
+        }
+        for body in self.skater.skeleton.bodies_mut() {
+            body.rates.linear_velocity = v;
+        }
+        self.skater.animated_skeleton.motion.velocity_world = [v.x, v.y, v.z, 0.];
+        self.skater.player_input.processed.vectors_544_560_592_608[3] = [v.x, v.y, v.z, 0.].map(f32::to_bits);
+        Ok(self.pose())
+    }
     pub fn collect(&mut self, frame: InputFrame, dt: f32) {
         self.input.collect(frame.samples);
         self.markers.collect_time(f64::from(dt));

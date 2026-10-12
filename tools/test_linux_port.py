@@ -468,7 +468,8 @@ def test_skate_multiplayer(tmp_path):
     machines = {"host": {"HALO_NET_ADDRESS": "127.0.0.210", "HALO_NET_BROADCAST": "127.0.0.211",
                          "HALO_NETWORK_TEST": "host:bloodgulch", "HALO_NETWORK_TEST_START": "12",
                          "HALO_NETWORK_TEST_SKATE_WATCH": "1", "HALO_NETWORK_TEST_SKATE_BLOCK": "1",
-                         "HALO_NETWORK_TEST_SKATE_DUEL": "56"},
+                         "HALO_NETWORK_TEST_SKATE_DUEL": "56",
+                         "HALO_NETWORK_TEST_SKATE_SHOOT": "1", "HALO_NETWORK_TEST_SKATE_TELEPORT": "66"},
                 "join": {"HALO_NET_ADDRESS": "127.0.0.211", "HALO_NET_BROADCAST": "127.0.0.210",
                          "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15",
                          "HALO_NETWORK_TEST_SKATE_SCENERY": "30"}}
@@ -561,3 +562,29 @@ def test_skate_multiplayer(tmp_path):
     pieces = int(scenery[-1][2])
     assert again[:2] == [pieces - 1, pieces], f"rebuilt with {again} pieces, not {pieces - 1} then {pieces}"
     assert len(rebuilt) >= 2, f"the rebuilds were not swapped in:\n{join[-4000:]}"
+    # the host's watcher shoots skaters with real projectiles
+    # (debug.network_test_skate_shoot), the client's where the host has them,
+    # and its own once it skates: a burst hits the posed body and damages it,
+    # a grenade thrown at their chest bounces off them, and its blast does not
+    # move them (a push Halo gives the host's own skater is undone and
+    # logged: skate.c)
+    bullets = re.findall(r"skate test: a burst at a skater \((this|another) machine's\): shield ([\d.-]+) to "
+                         r"([\d.-]+), body ([\d.-]+) to ([\d.-]+)", host)
+    damaged = {who for who, s0, s1, b0, b1 in bullets if float(s1) < float(s0) or float(b1) < float(b0)}
+    bounced = re.findall(r"skate test: the grenade bounced off the skater \((this|another) machine's\)", host)
+    pushes = re.findall(r"skate: a push of ([\d.]+) m/s on the skater undone", host)
+    print(f"bullets {bullets}; damaged {damaged}; grenades bounced off {bounced}; pushes undone {pushes}")
+    assert damaged == {"this", "another"}, f"a bullet did not damage a skater on each machine: {bullets}"
+    assert bounced, f"no grenade bounced off a skater:\n{host[-4000:]}"
+    after = re.findall(r"skate test: after the grenade the skater \(this machine's\)", host)
+    assert after, f"no grenade went off at the host's own skater:\n{host[-4000:]}"
+    # and the host puts its own skater on a teleporter's entrance
+    # (debug.network_test_skate_teleport): Halo's teleporter takes them to
+    # its exit, turned, and the skate engine's skater follows, keeping its
+    # speed
+    teleports = re.findall(r"skate: teleported ([\d.]+) world units to \(([\d.-]+) ([\d.-]+) [\d.-]+\), turned "
+                           r"(-?\d+) degrees, at ([\d.]+) m/s", host)
+    print(f"teleports {teleports}")
+    assert "skate test: this machine's skater put on a teleporter's entrance" in host, host[-4000:]
+    exits = [t for t in teleports if abs(float(t[1]) - 82.83) < 1.5 and abs(float(t[2]) + 114.53) < 1.5]
+    assert exits, f"the skater did not follow the teleporter to its exit: {teleports}"
