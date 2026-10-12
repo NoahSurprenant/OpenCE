@@ -601,14 +601,17 @@ def test_skate_multiplayer(tmp_path):
         f"the skater did not go away from the blast: {after and after.groups()}"
     assert not undone, f"a push was undone: {undone}"
     # (the client pushes its own skater for a blast the host's grenade gave
-    # them, replaying the host's damage, once: each push a little after a
-    # grenade went off at its skater on the host, none twice)
-    blasts = [int(t) for t in re.findall(r"skate test: the grenade went off at tick (\d+) \([a-z]+ bouncing off "
-                                         r"them\), [\d.]+ world units from the skater \(another machine's\)", host)]
-    replayed = [p for p in pushes_join if any(0 <= p[1] - t <= 20 for t in blasts)]
-    print(f"grenades at the client's skater went off at {blasts}; the client's pushes for them {replayed}")
-    assert replayed, f"the client's skater was not pushed by a blast: {pushes_join}, grenades at {blasts}"
-    assert all(b[1] - a[1] > 20 for a, b in zip(replayed, replayed[1:])), f"a blast pushed twice: {replayed}"
+    # them, replaying the host's damage, once: a push a little after each
+    # grenade that went off at its skater on the host and hurt them without
+    # killing them (a killed skater's body flies as anyone's), none twice)
+    blasts = re.findall(r"skate test: the grenade went off at tick (\d+) \([a-z]+ bouncing off them\), [\d.]+ world "
+                        r"units from the skater \(another machine's\): shield ([\d.-]+) to ([\d.-]+), body ([\d.-]+) "
+                        r"to ([\d.-]+)", host)
+    hurt = [int(t) for t, s0, s1, b0, b1 in blasts if (float(s1) < float(s0) or float(b1) < float(b0)) and
+            float(b1) > 0]
+    replayed = [p for p in pushes_join if any(0 <= p[1] - t <= 20 for t in hurt)]
+    print(f"grenades at the client's skater {blasts}, hurting them at {hurt}; the client's pushes {pushes_join}")
+    assert len(replayed) == len(hurt), f"the client's skater was not pushed once by each blast: {replayed}, {hurt}"
     # and the host puts its own skater on a teleporter's entrance
     # (debug.network_test_skate_teleport): Halo's teleporter takes them to
     # its exit, turned, and the skate engine's skater follows, keeping its

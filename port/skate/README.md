@@ -437,9 +437,15 @@ node was sent before) strikes it; standing off the board on a lift rising
 from the floor to 1.1 m, the skater rides up and stands on its top; and the
 level sent again with a wall across the lane (`halo_skate_reload`, as
 scenery made mid-level is) stops the board there, the state ready all the
-while, and sent again without it, the board rides past. It needs the
+while, and sent again without it, the board rides past.
 A teleporter (`halo_skate_teleport`) taking the skater riding at 8.1 m/s puts
-them at its exit turned a quarter, riding on that way at 7.7 m/s. converted data (and the maps for the Warthog), and takes some 24 seconds
+them at its exit turned a quarter, riding on that way at 7.7 m/s. A blast's
+push (`halo_skate_apply_impulse`) of 3 m/s from in front, Halo's way (back
+and a little up), slows the board riding at 8.1 m/s to 5.7 m/s, 1.3 m less
+far in half a second than with none, and they ride on; one of 9 m/s is a
+bail, and they are put back on the board; standing off the board, one of
+3 m/s pushes them a third of a metre. It needs the converted data (and the
+maps for the Warthog), and takes some 25 seconds
 (`--test real_assets_obstacles`).
 
 In CI they run in the `skate-assets` job of `.github/workflows/build.yml`
@@ -815,11 +821,29 @@ round hits the posed body and damages it, head and all, on the skater's own
 machine and on the others (the host's projectiles hit its copy of another
 machine's skater where it poses them, and the damage is the host's as for
 anyone); a grenade thrown at a skater bounces off their body as off a
-standing player's, and its blast damages them. Neither moves them: Halo's
-push (`biped_accelerate`, a blast's or a vehicle's) goes into the biped's
-velocity, which the skate engine's replaces the next tick, as it places the
-biped (`skate_apply_frame`, which logs a push it undoes: `skate: a push of
-4.3 m/s on the skater undone`). Weapons lying about and grenades are no
+standing player's, without moving them, and its blast damages them and
+pushes them as it pushes a player on foot. Halo's push of damage
+(`object_damage_aftermath`'s, the blast's or a round's) on this machine's
+living skater goes to the skate engine instead of the biped
+(`skate_unit_pushed`, halved as `biped_accelerate` halves a living biped's),
+which adds it to the skater's velocity before the next step
+(`halo_skate_apply_impulse`, `Session::apply_impulse`): riding, to the
+board's and the riding body's, and past the obstacle bail speed
+(`skate_obstacle_bail_speed`, 6 m/s) it is a bail, through the same wipeout
+requests as running into a person; walking off the board, to the off-board
+controller's movement, which slows them back to a stand; bailing, to the
+ragdoll; in the air off the board (BipedAir's trajectory, set at the jump)
+the body alone takes it. The log tells each (`skate: a push of 4.3 m/s on
+the skater applied at tick 2206 (on the board), along (0.13 -0.71 0.69)`);
+a frag grenade's blast pushes 4.3 m/s, slowing a skater riding at it by
+about that, no bail. A killed skater's body flies as anyone's. Each machine
+pushes its own skater, once: the host for its own, a client replaying the
+host's damage to its skater (its knockback, `network_damage.c`); the
+others' skaters are posed from their state and take no push. Any other push
+Halo gives the biped (a vehicle's: the skater's machine has the vehicle as
+an obstacle and bumps or bails off it) is undone the next tick, as the skate
+engine places the biped (`skate_apply_frame`, which logs it: `skate: a push
+of 1.2 m/s on the skater undone`). Weapons lying about and grenades are no
 obstacles to the skater, as they are none to a player on foot.
 
 A teleporter takes a skater: Halo's teleporter (`game_engine.c`'s
@@ -890,7 +914,9 @@ burst of three rounds of its weapon from 1.5 world units off, and a grenade
 thrown at their chest, at another machine's skater and, once the host skates
 (the duel), at its own; the log tells the damage (`skate test: a burst at a
 skater (another machine's): shield 1.00 to 0.57, ...`), whether the grenade
-bounced off them, and the skater after its blast. A grenade kills a skater,
+bounced off them, the damage its blast did, and the skater a third of a
+second after it: how much further from the blast than their course had them,
+and how much faster away from it. A grenade kills a skater,
 and the watcher near, as it would anyone, so the shots are few.
 `debug.network_test_skate_teleport` (`HALO_NETWORK_TEST_SKATE_TELEPORT`) puts a
 host's own skater on a teleporter's entrance that many seconds in, for Halo's
@@ -910,8 +936,12 @@ into); that each loaded Blood Gulch with its scenery; and that the client,
 deleting a piece of it 30 seconds in and making it again, built the level
 again with one piece fewer, then as before, each swapped in. The host also
 shoots: a burst must damage a skater on each machine, a grenade must bounce
-off one, and one must go off at the host's own; and it puts its own skater on
-Blood Gulch's teleporter, which must take them to its exit. It needs a build with `--skate`, the converted data and the
+off one, and one thrown alone at the host's own skater must not push them
+before it goes off, bounce or not, and push them once as it does, away from
+the blast past their course; the client must push its own skater once for
+each blast that hurt them without killing them, and no push may be undone;
+and it puts its own skater on Blood Gulch's teleporter, which must take them
+to its exit. It needs a build with `--skate`, the converted data and the
 maps, and skips without them:
 
 ```text
