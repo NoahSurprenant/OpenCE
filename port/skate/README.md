@@ -936,9 +936,10 @@ into); that each loaded Blood Gulch with its scenery; and that the client,
 deleting a piece of it 30 seconds in and making it again, built the level
 again with one piece fewer, then as before, each swapped in. The host also
 shoots: a burst must damage a skater on each machine, a grenade must bounce
-off one, and one thrown alone at the host's own skater must not push them
-before it goes off, bounce or not, and push them once as it does, further from
-the blast than their course a third of a second on; the client must push its own skater once for
+off one, and two thrown alone at the host's own skater must not push them
+before they go off, bounce or not, and each that goes off hurting them (one
+must) push them once as it does, further from the blast than their course a
+third of a second on; the client must push its own skater once for
 each blast that hurt them without killing them, and no push may be undone;
 and it puts its own skater on Blood Gulch's teleporter, which must take them
 to its exit. It needs a build with `--skate`, the converted data and the

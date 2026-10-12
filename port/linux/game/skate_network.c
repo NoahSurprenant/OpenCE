@@ -824,8 +824,7 @@ tells what each did: the burst's damage (shield and body before and after),
 whether the grenade bounced off the skater (its velocity turned back near
 them), and where the skater was when it went off and a second later. */
 /* when it shoots (seconds into the game), whether at its own skater, and
-whether a burst and a grenade (the grenade at its own skater alone: any push
-on them till it goes off is its bounce's) */
+whether a burst and a grenade */
 static struct
 {
 	short seconds;
@@ -833,7 +832,15 @@ static struct
 	boolean burst;
 	boolean grenade;
 } const skate_shoot_seconds[] = { { 20, FALSE, FALSE, TRUE }, { 38, FALSE, TRUE, TRUE }, { 64, TRUE, TRUE, FALSE },
-	{ 72, TRUE, FALSE, TRUE }, { 80, TRUE, TRUE, FALSE }, { 88, TRUE, TRUE, FALSE }, { 96, FALSE, TRUE, TRUE } };
+	{ 80, TRUE, TRUE, FALSE }, { 88, TRUE, TRUE, FALSE }, { 96, FALSE, TRUE, TRUE } };
+/* and a grenade alone at its own skater (any push on them till it goes off
+is its bounce's), from that many seconds in to that many, on a second when
+they skate, alive, their shield full, and no grenade is about, till that
+many have gone off hurting them without killing them (one that kills them is
+tried again once they skate again) */
+#define SKATE_OWN_GRENADES 1
+#define SKATE_OWN_GRENADES_FROM 70
+#define SKATE_OWN_GRENADES_UNTIL 120
 /* world units from the skater's middle the round starts and the grenade is
 thrown from */
 #define SKATE_SHOOT_DISTANCE 1.5f
@@ -852,6 +859,8 @@ static struct
 	long detonated_time;
 	real_point3d detonated_at;
 	long shots;
+	/* (grenades alone at its own skater that went off hurting them) */
+	short own_grenades;
 	/* (where the grenade was last, the skater's shield and body then, and their
 	velocity as it went off) */
 	real_point3d grenade_at;
@@ -930,6 +939,12 @@ static void skate_network_test_shoot(void)
 				skate_shoot.detonated_time = now;
 				skate_shoot.detonated_at = target->object.position;
 				skate_shoot.detonated_velocity = target->object.translational_velocity;
+				if (skate_shoot.local && target->object.body_vitality > 0.f &&
+					(target->object.shield_vitality < skate_shoot.grenade_shield ||
+					target->object.body_vitality < skate_shoot.grenade_body))
+				{
+					skate_shoot.own_grenades++;
+				}
 				platform_log("skate test: the grenade went off at tick %ld (%s), %.2f world units from the skater (%s): "
 					"shield %.2f to %.2f, body %.2f to %.2f",
 					now, skate_shoot.bounced ? "after bouncing off them" : "without bouncing off them",
@@ -976,11 +991,24 @@ static void skate_network_test_shoot(void)
 			if (now == skate_shoot_seconds[which].seconds * TICKS_PER_SECOND)
 				break;
 		}
-		if (which == (short)NUMBEROF(skate_shoot_seconds))
+		if (which < (short)NUMBEROF(skate_shoot_seconds))
+		{
+			skate_shoot.shots = skate_shoot_seconds[which].own;
+			grenade = skate_shoot_seconds[which].grenade;
+			burst = skate_shoot_seconds[which].burst;
+		}
+		else if (skate_shoot.own_grenades < SKATE_OWN_GRENADES && now >= SKATE_OWN_GRENADES_FROM * TICKS_PER_SECOND &&
+			now <= SKATE_OWN_GRENADES_UNTIL * TICKS_PER_SECOND &&
+			now % TICKS_PER_SECOND == 0 && skate_shoot.grenade_index == NONE && skate_shoot.detonated_time == NONE &&
+			skate_unit_is_skating(watcher_index) && !TEST_FLAG(watcher->object.damage_flags, _object_dead_bit) &&
+			watcher->object.shield_vitality >= 1.f)
+		{
+			skate_shoot.shots = TRUE;
+			grenade = TRUE;
+			burst = FALSE;
+		}
+		else
 			return;
-		skate_shoot.shots = skate_shoot_seconds[which].own;
-		grenade = skate_shoot_seconds[which].grenade;
-		burst = skate_shoot_seconds[which].burst;
 	}
 	/* (a target: the host's own skater every other time it skates, else the
 	nearest skater of another machine) */

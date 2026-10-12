@@ -581,34 +581,48 @@ def test_skate_multiplayer(tmp_path):
           f"client {pushes_join}; undone {undone}")
     assert damaged == {"this", "another"}, f"a bullet did not damage a skater on each machine: {bullets}"
     assert bounced, f"no grenade bounced off a skater:\n{host[-4000:]}"
-    # (the grenade at the host's own skater, thrown alone: no push till it
-    # goes off, bounce or not; one as it goes off, and they go away from it)
-    thrown = re.search(r"skate test: shooting a skater \(this machine's\) [\d.]+ world units away, a burst \(none\) "
-                       r"and a grenade at tick (\d+)", host)
-    went_off = re.search(r"skate test: the grenade went off at tick (\d+) \((after|without) bouncing off them\), "
-                         r"[\d.]+ world units from the skater \(this machine's\)", host)
-    assert thrown and went_off, f"no grenade went off at the host's own skater:\n{host[-4000:]}"
-    thrown_at, went_off_at = int(thrown[1]), int(went_off[1])
-    early = [p for p in pushes if thrown_at <= p[1] < went_off_at]
-    blast = [p for p in pushes if went_off_at <= p[1] <= went_off_at + 2]
-    after = re.search(r"skate test: after the grenade the skater \(this machine's\) .*; ([\d.-]+) world units further "
-                      r"from the blast than their course, ([\d.-]+) m/s faster away from it", host)
-    print(f"the grenade at the host's skater: thrown at tick {thrown_at}, went off at {went_off_at} "
-          f"({went_off[2]} bouncing), pushes before {early}, at the blast {blast}, after {after and after.groups()}")
-    assert not early, f"the grenade pushed the skater before it went off ({went_off[2]} bouncing): {early}"
-    assert len(blast) == 1, f"the blast did not push the host's skater once: {blast}"
-    assert after and float(after[1]) > 0.08, \
-        f"the skater did not go away from the blast: {after and after.groups()}"
+    # (the grenades at the host's own skater, thrown alone: no push till they
+    # go off, bounce or not; one as each goes off on its fuse hurting them,
+    # and they go away from it)
+    events = re.findall(r"skate test: (?:shooting a skater \(this machine's\) [\d.]+ world units away, a burst \(none\) "
+                        r"and a grenade at tick (\d+)|the grenade went off at tick (\d+) \((after|without) bouncing off "
+                        r"them\), [\d.]+ world units from the skater \(this machine's\): shield ([\d.-]+) to ([\d.-]+), "
+                        r"body ([\d.-]+) to ([\d.-]+)|after the grenade the skater \(this machine's\) .*?; ([\d.-]+) "
+                        r"world units further)", host)
+    throws = []
+    for thrown, off, bounce, s0, s1, b0, b1, further in events:
+        if thrown:
+            throws.append({"thrown": int(thrown)})
+        elif off and throws:
+            throws[-1].update(off=int(off), bounce=bounce, hurt=(float(s1) < float(s0) or float(b1) < float(b0)) and
+                              float(b1) > 0)
+        elif further and throws:
+            throws[-1]["further"] = float(further)
+    for throw in throws:
+        throw["early"] = [p for p in pushes if throw["thrown"] <= p[1] < throw.get("off", throw["thrown"] + 90)]
+        throw["blast"] = [p for p in pushes if "off" in throw and throw["off"] <= p[1] <= throw["off"] + 2]
+    # (a grenade that went off on its fuse, a second and a half on, hurting
+    # the skater without killing them)
+    blown = [t for t in throws if "off" in t and 40 <= t["off"] - t["thrown"] <= 60 and t["hurt"]]
+    print(f"grenades at the host's own skater: {throws}")
+    assert throws, f"no grenade was thrown at the host's own skater:\n{host[-4000:]}"
+    assert not any(t["early"] for t in throws), f"a grenade pushed the skater before it went off: {throws}"
+    assert blown, f"no grenade went off at the host's own skater, hurting them: {throws}"
+    for t in blown:
+        assert len(t["blast"]) == 1, f"the blast did not push the host's skater once: {t}"
+        assert t.get("further", 0) > 0.08, f"the skater did not go away from the blast: {t}"
     assert not undone, f"a push was undone: {undone}"
     # (the client pushes its own skater for a blast the host's grenade gave
     # them, replaying the host's damage, once: a push a little after each
-    # grenade that went off at its skater on the host and hurt them without
-    # killing them (a killed skater's body flies as anyone's), none twice)
+    # grenade that went off on its fuse at its skater on the host and hurt
+    # them without killing them (a killed skater's body flies as anyone's))
+    shots = [int(t) for t in re.findall(r"skate test: shooting a skater \(another machine's\) [\d.]+ world units away, "
+                                        r"a burst(?: \(none\))? and a grenade at tick (\d+)", host)]
     blasts = re.findall(r"skate test: the grenade went off at tick (\d+) \([a-z]+ bouncing off them\), [\d.]+ world "
                         r"units from the skater \(another machine's\): shield ([\d.-]+) to ([\d.-]+), body ([\d.-]+) "
                         r"to ([\d.-]+)", host)
     hurt = [int(t) for t, s0, s1, b0, b1 in blasts if (float(s1) < float(s0) or float(b1) < float(b0)) and
-            float(b1) > 0]
+            float(b1) > 0 and any(40 <= int(t) - shot <= 60 for shot in shots)]
     replayed = [p for p in pushes_join if any(0 <= p[1] - t <= 20 for t in hurt)]
     print(f"grenades at the client's skater {blasts}, hurting them at {hurt}; the client's pushes {pushes_join}")
     assert len(replayed) == len(hurt), f"the client's skater was not pushed once by each blast: {replayed}, {hurt}"
