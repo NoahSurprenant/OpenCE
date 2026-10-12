@@ -1825,6 +1825,41 @@ static void distributed_host_send_skate(
 	}
 }
 
+/* port: (a client) its skater's hits for the host to decide, and (the host)
+its verdicts on skaters' hits to every client (skate_authority.c) */
+static void distributed_client_send_skate_reports(
+	void)
+{
+	byte entries[4 * SKATE_REPORT_SIZE];
+	short count = skate_authority_reports(entries, 4);
+	short index;
+
+	distributed_packer_begin(&distributed_packer, HOST_SENDER, _distributed_message_skate_report, NULL, 0);
+	for (index = 0; index < count; index++)
+		distributed_packer_add(&distributed_packer, entries + index * SKATE_REPORT_SIZE, SKATE_REPORT_SIZE);
+	distributed_packer_flush(&distributed_packer);
+}
+
+static void distributed_host_send_skate_verdicts(
+	void)
+{
+	long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+	short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
+	byte entries[16 * SKATE_VERDICT_SIZE];
+	short count = skate_authority_verdicts(entries, 16);
+	short machine_number;
+	short index;
+
+	for (machine_number = 0; count && machine_number < machine_count; machine_number++)
+	{
+		distributed_packer_begin(&distributed_packer, (short)machine_indices[machine_number],
+			_distributed_message_skate_verdict, NULL, 0);
+		for (index = 0; index < count; index++)
+			distributed_packer_add(&distributed_packer, entries + index * SKATE_VERDICT_SIZE, SKATE_VERDICT_SIZE);
+		distributed_packer_flush(&distributed_packer);
+	}
+}
+
 /* (the host) a client's own players: the latest of each, taken at the next
 tick */
 static void distributed_handle_predictions(
@@ -3548,6 +3583,7 @@ void network_distributed_tick(
 		}
 		distributed_host_send_players();
 		distributed_host_send_skate();
+		distributed_host_send_skate_verdicts();
 		network_actors_host_tick();
 		network_coop_host_tick();
 		distributed_send_pickups();
@@ -3561,6 +3597,7 @@ void network_distributed_tick(
 		distributed_client_send_inputs();
 		distributed_client_send_predictions();
 		distributed_client_send_skate();
+		distributed_client_send_skate_reports();
 		network_objects_client_tick();
 		network_damage_client_tick();
 		network_coop_client_tick();
@@ -3607,6 +3644,8 @@ static boolean distributed_message_stale(
 	case _distributed_message_votekick_status:
 	case _distributed_message_skate_up:
 	case _distributed_message_skate_down:
+	case _distributed_message_skate_report:
+	case _distributed_message_skate_verdict:
 		break;
 	default:
 		return FALSE;
@@ -4171,6 +4210,8 @@ void network_distributed_handle_message(
 	case _distributed_message_votekick_status: entry_size = network_votekick_status_entry_size(); break;
 	case _distributed_message_skate_up:
 	case _distributed_message_skate_down: entry_size = SKATE_STATE_HEADER_SIZE; break;
+	case _distributed_message_skate_report: entry_size = SKATE_REPORT_SIZE; break;
+	case _distributed_message_skate_verdict: entry_size = SKATE_VERDICT_SIZE; break;
 	case _distributed_message_player_inputs: entry_size = sizeof(struct distributed_player_input); break;
 	case _distributed_message_relayed_actions: entry_size = DISTRIBUTED_RELAYED_ACTION_MINIMUM_SIZE; break;
 	case _distributed_message_game_state:
@@ -4216,6 +4257,7 @@ void network_distributed_handle_message(
 	case _distributed_message_coop_skip_vote:
 	case _distributed_message_votekick:
 	case _distributed_message_skate_up:
+	case _distributed_message_skate_report:
 		if (machine_index == NONE || game_connection() != _game_connection_network_server)
 			return;
 		break;
@@ -4279,6 +4321,12 @@ void network_distributed_handle_message(
 	case _distributed_message_skate_up:
 	case _distributed_message_skate_down:
 		skate_network_handle_entries(machine_index, (byte const *)entries, (byte const *)message + size, header.count);
+		break;
+	case _distributed_message_skate_report:
+		skate_authority_handle_reports(machine_index, (byte const *)entries, (byte const *)message + size, header.count);
+		break;
+	case _distributed_message_skate_verdict:
+		skate_authority_handle_verdicts((byte const *)entries, (byte const *)message + size, header.count);
 		break;
 	case _distributed_message_coop_device_groups:
 		network_coop_handle_device_groups(entries, header.count);

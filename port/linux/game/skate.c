@@ -2577,4 +2577,26 @@ boolean skate_local_player_skating(short local_player_index, real *yaw)
 	return FALSE;
 }
 
+/* (nobody skates here; it hosts skaters, though, and decides their hits:
+skate_authority.c) */
+long skate_local_skater_unit(void)
+{
+	return NONE;
+}
+
+boolean skate_local_skater_riding(void)
+{
+	return FALSE;
+}
+
+boolean skate_force_bail(long unit_index, real closing)
+{
+	return FALSE;
+}
+
+real skate_obstacle_bail_speed(void)
+{
+	return 6.f / 3.048f;
+}
+
 #endif

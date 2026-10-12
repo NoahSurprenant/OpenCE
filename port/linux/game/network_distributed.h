@@ -125,6 +125,13 @@ enum
 	unchanged */
 	_distributed_message_skate_up = 90,
 	_distributed_message_skate_down = 91,
+	/* Skate 3 mode (skate_authority.c): a client's report of its skater's hit
+	on another player, their vehicle or another skater, to the host; and the
+	host's verdict on it (who bails, the push on a player on foot) to every
+	client, each unreliably and a few ticks over. A build without them
+	drops both as kinds it does not know */
+	_distributed_message_skate_report = 92,
+	_distributed_message_skate_verdict = 93,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };

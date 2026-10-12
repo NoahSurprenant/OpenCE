@@ -543,6 +543,31 @@ def test_skate_multiplayer(tmp_path):
     assert any(skater_parts), f"the client never had the host's skater as an obstacle:\n{join[-4000:]}"
     assert join_hits, f"the client's skater never hit the host's:\n{join[-4000:]}"
     assert host_hits, f"the host's skater was never hit by the client's:\n{host[-4000:]}"
+    # every one of those hits is the host's to decide (skate_authority.c):
+    # each verdict once, the same on both machines (who bails, the push on
+    # the watcher on foot), each bail applied on the skater's own machine and
+    # seen on the other, and the watcher pushed on both
+    decided = dict((int(n), text) for n, text in re.findall(r"skate verdict (\d+) decided: (.*)", host))
+    heard = dict((int(n), text) for n, text in re.findall(r"skate verdict (\d+) heard: (.*)", join))
+    bails = {n: (text.count("bails"), heard.get(n, "").count("bails")) for n, text in decided.items()}
+    print(f"verdicts decided {decided}; heard {heard}; bails on the host and the client {bails}")
+    assert any("on foot" in text for text in decided.values()), f"no hit on the watcher on foot decided: {decided}"
+    assert any("player 0's skater" in text for text in decided.values()), f"no skater on skater decided: {decided}"
+    missing = [n for n in decided if n not in heard and n != max(decided)]
+    assert not missing, f"the client never heard verdicts {missing}: {decided}, {heard}"
+    assert all(heard[n] == decided.get(n) for n in heard), f"the machines' verdicts differ: {decided}, {heard}"
+    assert all(h == c for n, (h, c) in bails.items() if n in heard), f"bails differ: {bails}"
+    for n, text in decided.items():
+        for player, own in (("1", join), ("0", host)):
+            if f"player {player}'s skater bails" in text and n in heard:
+                assert f"skate verdict {n}: this machine's skater bails" in own, f"verdict {n} not applied: {text}"
+    seen = len(re.findall(r"skate network: player \d+ bails on another machine", host + join))
+    assert sum(h for h, _ in bails.values()) == 0 or seen, f"no bail decided was seen on the other machine: {bails}"
+    went = {m: [(int(n), float(d)) for n, d in re.findall(r"skate verdict (\d+): the person pushed went ([\d.-]+) "
+                                                         r"world units", log)] for m, log in (("host", host), ("join", join))}
+    print(f"bails seen on the other machine {seen}; pushes measured {went}")
+    both = [n for n, d in went["host"] if d > 0.1 and any(m == n and e > 0.1 for m, e in went["join"])]
+    assert both, f"the watcher was not seen pushed on both machines: {went}"
     # Blood Gulch's scenery goes to the engine with the level's collision
     # (skate.c's skate_add_scenery), as solid as the level and its edges rails
     scenery = re.findall(r"skate: the level's collision: (\d+) triangles, (\d+) of them (\d+) pieces of scenery",

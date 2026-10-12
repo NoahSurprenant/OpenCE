@@ -370,8 +370,10 @@ static void skate_verdict_text(struct skate_verdict const *verdict, char *text, 
 	char second[64];
 	char first_player[16];
 	char second_player[16];
+	/* (the speed the person gets: half of Halo's acceleration, as biped_accelerate
+	gives a living biped) */
 	real push = (real)sqrt(verdict->push.i * verdict->push.i + verdict->push.j * verdict->push.j +
-		verdict->push.k * verdict->push.k) * TICKS_PER_SECOND * 3.048f;
+		verdict->push.k * verdict->push.k) * TICKS_PER_SECOND * 3.048f * 0.5f;
 
 	snprintf(first_player, sizeof(first_player), "player %d", verdict->player_indices[0]);
 	if (verdict->player_indices[1] == SKATE_AUTHORITY_NO_PLAYER)
@@ -865,6 +867,9 @@ void skate_authority_engine_hit(long skater_index, long target_index, real closi
 	long now = game_time_get();
 	short index;
 
+	/* (a contact closing at nothing, or parting) */
+	if (!(closing > 0.f))
+		closing = 0.f;
 	/* (nobody decides now: a bail held is the engine's own after all) */
 	if (!skate_authority_holds())
 	{
