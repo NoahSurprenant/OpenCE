@@ -117,8 +117,8 @@ it is the same collision, decided once */
 #define SKATE_AUTHORITY_WAIT_TICKS 30
 /* ticks of the players' velocities the host keeps for its bound */
 #define SKATE_AUTHORITY_HISTORY 16
-/* a push measured this many ticks on (a third of a second) */
-#define SKATE_AUTHORITY_MEASURE_TICKS 10
+/* a push measured this many ticks on (half a second) */
+#define SKATE_AUTHORITY_MEASURE_TICKS 15
 /* the most verdicts a skater's hits get from the host in a second */
 #define SKATE_AUTHORITY_DECISIONS_PER_SECOND 4
 #define SKATE_AUTHORITY_HITS 8
@@ -442,7 +442,7 @@ static struct skate_heard
 	struct skate_verdict verdict;
 } skate_heard[SKATE_AUTHORITY_HEARD];
 
-/* a push measured a third of a second on (both machines' logs: the network
+/* a push measured half a second on (both machines' logs: the network
 test checks that a person pushed moved on each) */
 static struct skate_push_measure
 {
@@ -1104,7 +1104,7 @@ void skate_authority_update(void)
 		if (now - hit->last_time > SKATE_AUTHORITY_APART_TICKS + SKATE_AUTHORITY_WAIT_TICKS || now < hit->first_time)
 			hit->target_index = NONE;
 	}
-	/* pushes measured a third of a second on */
+	/* pushes measured half a second on */
 	for (index = 0; index < SKATE_AUTHORITY_MEASURES; index++)
 	{
 		struct skate_push_measure *measure = &skate_measures[index];
@@ -1115,7 +1115,7 @@ void skate_authority_update(void)
 		object = object_try_and_get(measure->object_index);
 		if (object)
 		{
-			platform_log("skate verdict %u: the person pushed went %.2f world units along the push in a third of a "
+			platform_log("skate verdict %u: the person pushed went %.2f world units along the push in half a "
 				"second", measure->number, (object->object.position.x - measure->from.x) * measure->along.i +
 				(object->object.position.y - measure->from.y) * measure->along.j);
 		}

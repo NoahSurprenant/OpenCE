@@ -871,7 +871,7 @@ the host, and every machine applies that verdict:
 Every machine logs each verdict in the same words (`skate verdict 7
 decided: player 0's skater bails; player 1's skater bails; at 8.2 m/s` on the
 host, `... heard: ...` on a client), what it did with it (`skate verdict 7:
-this machine's skater bails`), and a third of a second after a push how far
+this machine's skater bails`), and half a second after a push how far
 the person went along it.
 
 What it costs and allows:

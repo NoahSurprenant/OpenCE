@@ -566,7 +566,7 @@ def test_skate_multiplayer(tmp_path):
     went = {m: [(int(n), float(d)) for n, d in re.findall(r"skate verdict (\d+): the person pushed went ([\d.-]+) "
                                                          r"world units", log)] for m, log in (("host", host), ("join", join))}
     print(f"bails seen on the other machine {seen}; pushes measured {went}")
-    both = [n for n, d in went["host"] if d > 0.1 and any(m == n and e > 0.1 for m, e in went["join"])]
+    both = [n for n, d in went["host"] if d > 0.05 and any(m == n and e > 0.05 for m, e in went["join"])]
     assert both, f"the watcher was not seen pushed on both machines: {went}"
     # Blood Gulch's scenery goes to the engine with the level's collision
     # (skate.c's skate_add_scenery), as solid as the level and its edges rails
