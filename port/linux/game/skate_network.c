@@ -33,6 +33,7 @@ know, and its players see Halo's own biped.
 #include "models/model_definitions.h"
 #include "objects/object_definitions.h"
 #include "objects/objects.h"
+#include "physics/collisions.h"
 #include "units/units.h"
 #include "network_distributed.h"
 
@@ -87,6 +88,9 @@ pushed speed, so the carve does not take them round it) */
 #define SKATE_NETWORK_BLOCK_TICKS (5 * TICKS_PER_SECOND)
 #define SKATE_NETWORK_BLOCK_SPEED 0.5f
 #define SKATE_NETWORK_BLOCK_AHEAD 1.5f
+/* a spot the watcher is put at has ground this near under it (world units)
+and nothing of the level's between it and the skater */
+#define SKATE_NETWORK_SPOT_GROUND 1.0f
 /* the skeletons rebuilt from their model, by definition */
 #define SKATE_NETWORK_SKELETONS 4
 
@@ -912,6 +916,27 @@ boolean skate_network_board(short player_index, real fraction, long *unit_index,
 	return TRUE;
 }
 
+/* whether the network test may put its watcher at spot near the skater
+skater_index: nothing of the level's between them (not into a rock, a wall
+or a hill) and ground under it (not off a cliff), so that the watcher is
+never put where it falls out of the level and dies, missing its turns */
+static boolean skate_network_open_spot(long skater_index, real_point3d const *spot)
+{
+	struct collision_result collision;
+	real_point3d from = object_get(skater_index)->object.position;
+	real_vector3d along, down;
+
+	from.z += 0.3f;
+	along.i = spot->x - from.x;
+	along.j = spot->y - from.y;
+	along.k = spot->z - from.z;
+	down.i = 0.f;
+	down.j = 0.f;
+	down.k = -SKATE_NETWORK_SPOT_GROUND;
+	return !collision_test_vector(_collision_test_environment_flags, &from, &along, skater_index, &collision) &&
+		collision_test_vector(_collision_test_environment_flags, spot, &down, skater_index, &collision);
+}
+
 boolean skate_local_player_watching(short local_player_index, real *yaw, real *pitch)
 {
 	long unit_index = player_control_get_unit_index(local_player_index);
@@ -959,8 +984,11 @@ where the watcher was, a little above the ground to fall onto it) */
 		position.x = at->x - (real)cos(*yaw) * SKATE_NETWORK_WATCH_NEAR;
 		position.y = at->y - (real)sin(*yaw) * SKATE_NETWORK_WATCH_NEAR;
 		position.z = at->z + 0.3f;
-		object_set_position(unit_index, &position, &object->object.forward, &object->object.up);
-		*pitch = (real)atan2(-0.3f, SKATE_NETWORK_WATCH_NEAR);
+		if (skate_network_open_spot(nearest_index, &position))
+		{
+			object_set_position(unit_index, &position, &object->object.forward, &object->object.up);
+			*pitch = (real)atan2(-0.3f, SKATE_NETWORK_WATCH_NEAR);
+		}
 	}
 	/* debug.network_test_skate_block: now and then the watcher steps into the
 	skater's way (skate_network_block_spot) */
@@ -978,6 +1006,7 @@ boolean skate_network_block_spot(long unit_index, boolean on_board, real_point3d
 {
 	struct object_datum *object = unit_index != NONE ? object_try_and_get(unit_index) : NULL;
 	struct object_datum *skater = NULL;
+	long nearest_index = NONE;
 	real nearest = 0.f;
 	real_vector3d const *velocity;
 	real speed;
@@ -1005,6 +1034,7 @@ boolean skate_network_block_spot(long unit_index, boolean on_board, real_point3d
 		if (!skater || distance < nearest)
 		{
 			skater = object_get(skater_index);
+			nearest_index = skater_index;
 			nearest = distance;
 		}
 	}
@@ -1017,6 +1047,9 @@ boolean skate_network_block_spot(long unit_index, boolean on_board, real_point3d
 	spot->x = skater->object.position.x + velocity->i / speed * SKATE_NETWORK_BLOCK_AHEAD;
 	spot->y = skater->object.position.y + velocity->j / speed * SKATE_NETWORK_BLOCK_AHEAD;
 	spot->z = skater->object.position.z + 0.3f;
+	/* (not into the level or off it: tried again next tick) */
+	if (!skate_network_open_spot(nearest_index, spot))
+		return FALSE;
 	/* (facing the skater, who comes along their velocity) */
 	if (yaw)
 	{

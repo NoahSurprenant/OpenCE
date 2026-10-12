@@ -11,7 +11,8 @@ pub use sound::SoundObservation;
 pub use skate_core::{
     math::{Basis3, Vector3},
     physics::kinematic_obstacle::{
-        KinematicObstacle, MAXIMUM_OBSTACLES, ObstacleKind, ObstacleShape,
+        KinematicObstacle, MAXIMUM_MESH_TRIANGLES, MAXIMUM_OBSTACLES, ObstacleKind, ObstacleMesh,
+        ObstacleShape,
     },
 };
 
@@ -109,7 +110,7 @@ impl Session {
         self.physics.obstacles.extend(
             obstacles
                 .iter()
-                .filter_map(|o| o.validated())
+                .filter_map(|o| o.clone().validated())
                 .take(MAXIMUM_OBSTACLES),
         );
         self.physics.obstacle_age = 0.0;
@@ -127,6 +128,11 @@ impl Session {
     /// closing speed (metres a second), if any.
     pub fn obstacle_contacts(&self) -> (usize, Option<(ObstacleKind, f32)>) {
         (self.physics.obstacle_contacts, self.physics.obstacle_hit)
+    }
+    /// halo-skate: the skater's physical state, by name (`PhysicsGround`,
+    /// `GrindFiftyFifty`, `BipedAir`, ...), as `Pose::state` has it.
+    pub fn state_name(&self) -> String {
+        format!("{:?}", self.skater.player_state.current())
     }
     pub fn period(&self) -> f32 {
         self.physics.period().as_secs_f32()

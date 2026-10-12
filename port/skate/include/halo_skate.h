@@ -46,6 +46,11 @@ int halo_skate_preloading(void);
 /* builds a map's collision (triangles of 9 floats) in the background, after
 any preload; a map sent before the last was built replaces it. 0, or -1 */
 int halo_skate_load(const char *assets, const float *triangles, int count);
+/* builds the loaded level's collision again (scenery made or gone) aside while
+the skater rides the old, and swaps it in between steps, never on a rail or in
+the air; the state stays ready (2). As halo_skate_load with no map loaded from
+assets yet. 0, or -1 */
+int halo_skate_reload(const char *assets, const float *triangles, int count);
 /* the map's collision: 0 none, 1 loading, 2 ready, -1 failed (halo_skate_error) */
 int halo_skate_state(void);
 const char *halo_skate_error(void);
@@ -114,21 +119,25 @@ Chief is larger than the skater it was made for); returns the scale kept */
 float halo_skate_set_board_scale(float scale);
 
 /* the game's moving objects the board and the skater collide with, as a wall:
-other bipeds as capsules, vehicles and scenery as boxes (obstacles.rs) */
+other bipeds as capsules, vehicles, devices and scenery made later as their
+own collision, triangles the game places each tick (obstacles.rs) */
 #define HALO_SKATE_OBSTACLE_BIPED 0
 #define HALO_SKATE_OBSTACLE_VEHICLE 1
 #define HALO_SKATE_OBSTACLE_SCENERY 2
 #define HALO_SKATE_OBSTACLE_SKATER 3
 #define HALO_SKATE_OBSTACLE_BOX 0
 #define HALO_SKATE_OBSTACLE_CAPSULE 1
+#define HALO_SKATE_OBSTACLE_MESH 2
 #define HALO_SKATE_MAXIMUM_OBSTACLES 32
+/* the most triangles a call's meshes take between them */
+#define HALO_SKATE_MAXIMUM_OBSTACLE_TRIANGLES 4096
 
 struct halo_skate_obstacle
 {
 	int kind; /* HALO_SKATE_OBSTACLE_BIPED, _VEHICLE, _SCENERY or _SKATER (another
 		skater's body or board) */
-	int shape; /* HALO_SKATE_OBSTACLE_BOX, or _CAPSULE along up */
-	float center[3]; /* its middle, world units */
+	int shape; /* HALO_SKATE_OBSTACLE_BOX, _CAPSULE along up, or _MESH */
+	float center[3]; /* its middle, world units (a mesh's: what it turns about) */
 	float forward[3]; /* a box's axes, unit vectors (a capsule's is up) */
 	float left[3];
 	float up[3];
@@ -136,13 +145,22 @@ struct halo_skate_obstacle
 	0, and half its height with its caps, world units */
 	float half_extents[3];
 	float velocity[3]; /* world units a second */
+	float angular_velocity[3]; /* radians a second about center, world axes */
+	/* a mesh's triangles among those given with it (halo_skate_set_obstacles):
+	the first and how many, each wound counterclockwise seen from outside */
+	int first_triangle;
+	int triangle_count;
 };
 
 /* the obstacles the board and the skater collide with from the next step,
 where they are now (nearest first): they carry on at their velocities until
-the next call. Unknown or invalid ones are left out, and no more than
-HALO_SKATE_MAXIMUM_OBSTACLES are taken; how many were, or -1 */
-int halo_skate_set_obstacles(const struct halo_skate_obstacle *obstacles, int count);
+the next call. A mesh's triangles are among triangles (triangle_count of 9
+floats, world units, placed where the object is now; NULL with none). Unknown
+or invalid ones are left out, and no more than HALO_SKATE_MAXIMUM_OBSTACLES
+are taken, nor more than HALO_SKATE_MAXIMUM_OBSTACLE_TRIANGLES triangles; how
+many were, or -1 */
+int halo_skate_set_obstacles(const struct halo_skate_obstacle *obstacles, int count, const float *triangles,
+	int triangle_count);
 /* how fast (world units a second, along the contact) running into a person or
 a vehicle knocks the skater over: a bail (6 m/s at first); slower is a bump.
 Returns the speed kept */

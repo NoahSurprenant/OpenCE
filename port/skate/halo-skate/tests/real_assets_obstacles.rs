@@ -11,7 +11,7 @@
 mod common;
 
 use common::*;
-use halo_skate::obstacles::{KIND_BIPED, KIND_SCENERY, KIND_SKATER, KIND_VEHICLE, SHAPE_BOX, SHAPE_CAPSULE};
+use halo_skate::obstacles::{KIND_BIPED, KIND_SCENERY, KIND_SKATER, KIND_VEHICLE, SHAPE_BOX, SHAPE_CAPSULE, SHAPE_MESH};
 use halo_skate::*;
 
 /// The cyborg's collision pill (world units): 0.2 across, 0.7 tall.
@@ -32,6 +32,7 @@ fn person(x: f32, y: f32) -> HaloSkateObstacle {
         up: [0.0, 0.0, 1.0],
         half_extents: [PERSON_RADIUS, 0.0, PERSON_HEIGHT / 2.0],
         velocity: [0.0; 3],
+        ..Default::default()
     }
 }
 
@@ -47,11 +48,19 @@ fn vehicle(x: f32, y: f32) -> HaloSkateObstacle {
         up: [0.0, 0.0, 1.0],
         half_extents: VEHICLE_HALF,
         velocity: [0.0; 3],
+        ..Default::default()
     }
 }
 
 fn set(obstacles: &[HaloSkateObstacle]) -> i32 {
-    unsafe { halo_skate_set_obstacles(obstacles.as_ptr(), obstacles.len() as i32) }
+    set_with(obstacles, &[])
+}
+
+/// Sends `obstacles`, a mesh's triangles among `triangles` (9 floats each).
+fn set_with(obstacles: &[HaloSkateObstacle], triangles: &[f32]) -> i32 {
+    unsafe {
+        halo_skate_set_obstacles(obstacles.as_ptr(), obstacles.len() as i32, triangles.as_ptr(), (triangles.len() / 9) as i32)
+    }
 }
 
 /// What a ride into an obstacle came to.
@@ -81,6 +90,19 @@ fn ride_into(
     make: &dyn Fn(f32, f32) -> Vec<HaloSkateObstacle>,
     toward: f32,
 ) -> Ride {
+    ride_into_meshes(engine, lane, pushes, push_ticks, &|x, y| (make(x, y), Vec::new()), toward)
+}
+
+/// As `ride_into`, with meshes: `make` gives the obstacles and the triangles
+/// (world units) their meshes are among, carried on with them.
+fn ride_into_meshes(
+    engine: &mut Engine,
+    lane: f32,
+    pushes: usize,
+    push_ticks: usize,
+    make: &dyn Fn(f32, f32) -> (Vec<HaloSkateObstacle>, Vec<f32>),
+    toward: f32,
+) -> Ride {
     assert_eq!(set(&[]), 0);
     engine.activate([0.0, lane, 0.0], 0.0);
     take_log();
@@ -101,18 +123,22 @@ fn ride_into(
     let along = (v[0] * v[0] + v[1] * v[1]).sqrt().max(1e-6);
     let direction = [v[0] / along, v[1] / along];
     let ahead = 3.0 + 1.5 * toward.max(0.0);
-    let mut obstacles = make(at[0] + direction[0] * ahead, at[1] + direction[1] * ahead);
+    let (mut obstacles, mut triangles) = make(at[0] + direction[0] * ahead, at[1] + direction[1] * ahead);
+    let velocity = [-direction[0] * toward / METRES, -direction[1] * toward / METRES, 0.0];
     for o in &mut obstacles {
-        o.velocity = [-direction[0] * toward / METRES, -direction[1] * toward / METRES, 0.0];
+        o.velocity = velocity;
     }
     let mut met = None;
     for _ in 0..120 {
-        assert_eq!(set(&obstacles), obstacles.len() as i32, "the obstacles are taken");
+        assert_eq!(set_with(&obstacles, &triangles), obstacles.len() as i32, "the obstacles are taken");
         let s = engine.step(Pad::NEUTRAL);
         for o in &mut obstacles {
             for i in 0..3 {
                 o.center[i] += o.velocity[i] * GAME_TICK;
             }
+        }
+        for (k, p) in triangles.iter_mut().enumerate() {
+            *p += velocity[k % 3] * GAME_TICK;
         }
         let obstacle = obstacles[0];
         let gap = (obstacle.center[0] * METRES - s.at()[0]) * direction[0]
@@ -264,6 +290,7 @@ fn walk_toward(engine: &mut Engine, wall: Option<f32>) -> (f32, Vec<Snapshot>) {
         up: [0.0, 0.0, 1.0],
         half_extents: [0.2 / METRES, 3.0 / METRES, 0.75 / METRES],
         velocity: [0.0; 3],
+        ..Default::default()
     });
     let first = engine.history.len();
     for _ in 0..150 {
@@ -317,6 +344,7 @@ fn skater(x: f32, y: f32, placement: [f32; 7]) -> Vec<HaloSkateObstacle> {
         up: [0.0, 0.0, 1.0],
         half_extents: [0.09, 0.0, (head - feet) / 2.0 + 0.09],
         velocity: [0.0; 3],
+        ..Default::default()
     };
     let mut at = placement;
     at[4] = x / METRES;
@@ -352,4 +380,300 @@ fn riding_into_another_skater_bumps_slow_and_bails_fast() {
     assert!(fast.bailed, "fast ({fast_closing:.2} m/s): a bail");
     assert!(fast.past < 0.0, "fast: not through the skater: {:.2} m past", fast.past);
     assert_back_on_the_board(&mut engine, "skater, fast");
+}
+
+/// Triangles in world units, nine floats each, as the game sends a mesh.
+#[derive(Clone, Default)]
+struct Mesh(Vec<f32>);
+
+impl Mesh {
+    /// A triangle of points in metres.
+    fn tri(&mut self, a: [f32; 3], b: [f32; 3], c: [f32; 3]) {
+        for p in [a, b, c] {
+            self.0.extend(metres(p));
+        }
+    }
+    /// A quad a b c d in metres, counterclockwise seen from its front.
+    fn quad(&mut self, a: [f32; 3], b: [f32; 3], c: [f32; 3], d: [f32; 3]) {
+        self.tri(a, b, c);
+        self.tri(a, c, d);
+    }
+    /// A closed box from `min` to `max` (metres), facing out.
+    fn cuboid(min: [f32; 3], max: [f32; 3]) -> Mesh {
+        let mut m = Mesh::default();
+        let [x0, y0, z0] = min;
+        let [x1, y1, z1] = max;
+        m.quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]); // +Z
+        m.quad([x0, y1, z0], [x1, y1, z0], [x1, y0, z0], [x0, y0, z0]); // -Z
+        m.quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]); // -Y
+        m.quad([x1, y1, z0], [x0, y1, z0], [x0, y1, z1], [x1, y1, z1]); // +Y
+        m.quad([x0, y1, z0], [x0, y0, z0], [x0, y0, z1], [x0, y1, z1]); // -X
+        m.quad([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]); // +X
+        m
+    }
+    /// Turned `yaw` about Z, then moved `by` (metres).
+    fn placed(&self, yaw: f32, by: [f32; 3]) -> Mesh {
+        let (s, c) = yaw.sin_cos();
+        Mesh(
+            self.0
+                .chunks_exact(3)
+                .flat_map(|p| [c * p[0] - s * p[1] + by[0] / METRES, s * p[0] + c * p[1] + by[1] / METRES, p[2] + by[2] / METRES])
+                .collect(),
+        )
+    }
+    /// The middle of its bounds and its half sizes, world units.
+    fn bounds(&self) -> ([f32; 3], [f32; 3]) {
+        let mut lo = [f32::MAX; 3];
+        let mut hi = [f32::MIN; 3];
+        for p in self.0.chunks_exact(3) {
+            for i in 0..3 {
+                lo[i] = lo[i].min(p[i]);
+                hi[i] = hi[i].max(p[i]);
+            }
+        }
+        (std::array::from_fn(|i| (lo[i] + hi[i]) / 2.0), std::array::from_fn(|i| (hi[i] - lo[i]) / 2.0))
+    }
+    /// As a mesh obstacle of `kind`, its triangles the first sent.
+    fn obstacle(&self, kind: i32) -> HaloSkateObstacle {
+        HaloSkateObstacle {
+            kind,
+            shape: SHAPE_MESH,
+            center: self.bounds().0,
+            first_triangle: 0,
+            triangle_count: (self.0.len() / 9) as i32,
+            ..Default::default()
+        }
+    }
+}
+
+/// Riding into a real Warthog's side, its hull read from Blood Gulch
+/// (`common/halo_map.rs`) and sent as the game sends a vehicle now: its own
+/// collision as triangles, not a box. Across the lane on the floor, after one
+/// push it stops the board at its real side and the skater stays on; at full
+/// speed it is a bail, not through it.
+#[test]
+fn riding_into_a_warthog_stops_at_its_real_side() {
+    let Some(assets) = assets("riding into a Warthog") else { return };
+    let Some(map) = common::halo_map::halo_maps("riding into a Warthog", "bloodgulch") else { return };
+    let (name, hull) = common::halo_map::read_collision_model(&map, "warthog").expect("the Warthog's collision");
+    let hull = Mesh(hull);
+    let (middle, half) = hull.bounds();
+    eprintln!("{name}: {} triangles, {:.2?} m long, wide and high", hull.0.len() / 9, half.map(|h| 2.0 * h * METRES));
+    assert!(hull.0.len() / 9 >= 12, "a hull, not a box");
+    // (its length across the lane: turned a quarter, its bottom on the floor)
+    let at = move |x: f32, y: f32| {
+        let m = hull.placed(std::f32::consts::FRAC_PI_2, [0.0; 3]);
+        let (c, h) = m.bounds();
+        m.placed(0.0, [x - c[0] * METRES, y - c[1] * METRES, (h[2] - c[2]) * METRES])
+    };
+    let make = move |x: f32, y: f32| {
+        let m = at(x, y);
+        (vec![m.obstacle(KIND_VEHICLE)], m.0)
+    };
+    let side = half[1] * METRES;
+    let _ = middle;
+    let mut engine = Engine::start(&assets);
+    let slow = ride_into_meshes(&mut engine, TestMap::OPEN, 1, 3, &make, 0.0);
+    let slow_closing = report("Warthog, slow", &slow, "vehicle");
+    let fast = ride_into_meshes(&mut engine, TestMap::OPEN, 4, 12, &make, 0.0);
+    let fast_closing = report("Warthog, fast", &fast, "vehicle");
+    assert!(!slow.bailed, "slow ({slow_closing:.2} m/s): a bump, not a bail");
+    assert!(slow.past < -side + 0.2, "slow: the board stopped at its side, {side:.2} m from its middle: {:.2} m past", slow.past);
+    assert!(slow.after < 1.0, "slow: stopped: {:.2} m/s", slow.after);
+    assert!(fast_closing > 6.0, "fast: at speed: {fast_closing:.2} m/s");
+    assert!(fast.bailed, "fast ({fast_closing:.2} m/s): a bail");
+    assert!(fast.past < 0.0, "fast: not through the Warthog: {:.2} m past its middle", fast.past);
+    assert_back_on_the_board(&mut engine, "Warthog, fast");
+}
+
+/// A vehicle shaped as a wedge: a right triangle 3 m a leg, 1 m high, its
+/// long side along the lane 1.3 m to one side of the board's path (past
+/// the skater's arms). Sent as
+/// its triangles the board rides past it untouched; sent as the box around
+/// it (in its own axes, as each node was sent before), the box's corner
+/// sticks out across the path and the board hits it.
+#[test]
+fn riding_past_a_wedge_misses_it_where_its_box_would_not() {
+    let Some(assets) = assets("riding past a wedge") else { return };
+    let leg = 3.0f32;
+    let mut wedge = Mesh::default();
+    // (in its own axes: the right angle at the origin, legs along +X and +Y)
+    let (o, a, b) = ([0.0, 0.0], [leg, 0.0], [0.0, leg]);
+    let p = |q: [f32; 2], z: f32| [q[0], q[1], z];
+    wedge.tri(p(o, 1.0), p(a, 1.0), p(b, 1.0));
+    wedge.tri(p(o, 0.0), p(b, 0.0), p(a, 0.0));
+    wedge.quad(p(o, 0.0), p(a, 0.0), p(a, 1.0), p(o, 1.0));
+    wedge.quad(p(a, 0.0), p(b, 0.0), p(b, 1.0), p(a, 1.0));
+    wedge.quad(p(b, 0.0), p(o, 0.0), p(o, 1.0), p(b, 1.0));
+    // (turned so that its long side, from a to b, runs along +X with the
+    // right angle to its +Y side, away from the path: its long side then
+    // lies leg/sqrt(2) below the right angle, moved to sit 1.3 m to the +Y
+    // side of the path)
+    let yaw = 1.25 * std::f32::consts::PI;
+    let gap = 1.3;
+    let reach = leg / 2.0f32.sqrt();
+    // (its middle 4 m further on than ride_into puts obstacles, so that it
+    // is all ahead of the board when it comes)
+    const ON: f32 = 4.0;
+    let place = move |x: f32, y: f32| wedge.placed(yaw, [x + ON, y + gap + reach, 0.0]);
+    let make_mesh = move |x: f32, y: f32| {
+        let m = place(x, y);
+        let mut o = m.obstacle(KIND_VEHICLE);
+        // (its middle on the path, for how far past it the board got)
+        o.center = metres([x + ON, y, 0.5]);
+        (vec![o], m.0)
+    };
+    let make_box = move |x: f32, y: f32| {
+        // the box around it in its own axes: 3 m square, turned with it
+        let (s, c) = yaw.sin_cos();
+        let local_middle = [leg / 2.0, leg / 2.0];
+        let middle = [
+            x + ON + c * local_middle[0] - s * local_middle[1],
+            y + gap + reach + s * local_middle[0] + c * local_middle[1],
+        ];
+        vec![HaloSkateObstacle {
+            kind: KIND_VEHICLE,
+            shape: SHAPE_BOX,
+            center: metres([middle[0], middle[1], 0.5]),
+            forward: [c, s, 0.0],
+            left: [-s, c, 0.0],
+            up: [0.0, 0.0, 1.0],
+            half_extents: metres([leg / 2.0, leg / 2.0, 0.5]),
+            ..Default::default()
+        }]
+    };
+    let mut engine = Engine::start(&assets);
+    let mesh = ride_into_meshes(&mut engine, TestMap::OPEN, 1, 3, &make_mesh, 0.0);
+    let boxed = ride_into(&mut engine, TestMap::OPEN, 1, 3, &make_box, 0.0);
+    eprintln!(
+        "past a wedge: as its triangles {:.2} m past its middle at {:.2} m/s ({} hit); as its box {:.2} m past ({} hit)",
+        mesh.past,
+        mesh.after,
+        if hit_at(&mesh.log, "vehicle").is_some() { "a" } else { "no" },
+        boxed.past,
+        if hit_at(&boxed.log, "vehicle").is_some() { "a" } else { "no" }
+    );
+    // (as its triangles at most a brush of the skater's arm on its long side)
+    let brushed = hit_at(&mesh.log, "vehicle").unwrap_or(0.0);
+    assert!(brushed < 0.5, "its triangles leave the path clear: {:?}", mesh.log);
+    assert!(!mesh.bailed && mesh.past > 4.0 && mesh.after > 4.0, "the board rode on past it at speed: {:.2} m", mesh.past);
+    let struck = hit_at(&boxed.log, "vehicle").expect("the box's corner is in the path");
+    assert!(struck > 2.0, "the box's corner struck: {struck:.2} m/s");
+    assert!(boxed.past < 3.0 || boxed.after < 3.0, "and stopped or turned the board: {:.2} m past", boxed.past);
+}
+
+/// Off the board, standing still on a lift: a platform 3 m square (its own
+/// collision, as a device's) rising from under the floor at 0.5 m/s to 1.1 m
+/// up, sent every tick with its velocity. The off-board controller's ground
+/// probes see it (`ground_query/world.rs`), so the skater rises with it and
+/// stands on it once it stops.
+#[test]
+fn standing_on_a_rising_lift_rides_up_with_it() {
+    let Some(assets) = assets("standing on a lift") else { return };
+    let mut engine = Engine::start(&assets);
+    assert_eq!(set(&[]), 0);
+    engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+    engine.hold(Pad::NEUTRAL, 15);
+    engine.hold(Pad::buttons(Y), 4);
+    for _ in 0..90 {
+        if engine.step(Pad::NEUTRAL).off_board() {
+            break;
+        }
+    }
+    engine.hold(Pad::NEUTRAL, 45);
+    let stood = engine.history.last().unwrap().clone();
+    assert!(stood.off_board(), "off the board: {}", stood.state);
+    let feet = stood.at();
+    eprintln!("standing at ({:.2}, {:.2}, {:.2}) m", feet[0], feet[1], feet[2]);
+    const SPEED: f32 = 0.5;
+    const TOP: f32 = 1.1;
+    let mut top = -0.1f32;
+    let first = engine.history.len();
+    for tick in 0..(30.0 * ((TOP - top) / SPEED + 1.5)) as usize {
+        let rising = top < TOP;
+        let lift = Mesh::cuboid([feet[0] - 1.5, feet[1] - 1.5, top - 0.3], [feet[0] + 1.5, feet[1] + 1.5, top]);
+        let mut o = lift.obstacle(KIND_SCENERY);
+        o.velocity = [0.0, 0.0, if rising { SPEED / METRES } else { 0.0 }];
+        assert_eq!(set_with(&[o], &lift.0), 1);
+        let s = engine.step(Pad::NEUTRAL);
+        if tick % 15 == 0 {
+            eprintln!("    lift top {top:.2} m: the skater at {:.2} m, {}", s.at()[2], s.state);
+        }
+        if rising {
+            top = (top + SPEED * GAME_TICK).min(TOP);
+        }
+    }
+    assert_eq!(set(&[]), 0);
+    let frames = engine.since(first).to_vec();
+    assert!(frames.iter().all(Snapshot::is_finite), "every frame is finite");
+    let last = frames.last().unwrap();
+    eprintln!("on the lift: the skater at {:.2} m, the lift's top at {TOP} m, {}", last.at()[2], last.state);
+    assert!((last.at()[2] - TOP).abs() < 0.25, "standing on the lift's top: {:.2} m", last.at()[2]);
+    let horizontal = ((last.at()[0] - feet[0]).powi(2) + (last.at()[1] - feet[1]).powi(2)).sqrt();
+    assert!(horizontal < 1.0, "still on it: {horizontal:.2} m from where it stood");
+    assert!(last.off_board(), "still walking: {}", last.state);
+    engine.hold(Pad::NEUTRAL, 30);
+}
+
+/// Scenery made and then gone mid-level: the level's collision built again
+/// (`halo_skate_reload`, as skate.c's `skate_watch_scenery` sends it) with a
+/// wall 1 m high across the open lane 25 m on, while the skater rides; the
+/// state stays ready and no step fails meanwhile. Ridden into, it stops the
+/// board (or bails it), not through; built again without it, the skater
+/// rides past where it was.
+#[test]
+fn scenery_made_and_gone_is_built_into_the_level_and_out() {
+    let Some(assets) = assets("scenery made and gone") else { return };
+    let mut engine = Engine::start(&assets);
+    let level = TestMap::triangles();
+    let mut walled = level.clone();
+    walled.extend(Mesh::cuboid([25.0, TestMap::OPEN - 5.0, -0.1], [26.0, TestMap::OPEN + 5.0, 1.0]).0);
+    let reload = |triangles: &[f32]| {
+        let root = std::ffi::CString::new(assets.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(unsafe { halo_skate_reload(root.as_ptr(), triangles.as_ptr(), (triangles.len() / 9) as i32) }, 0);
+    };
+    // (rides along the open lane at full speed for `ticks`, the level sent
+    // again with `triangles` once rolling; the furthest it got, and whether
+    // it bailed)
+    let ride = |engine: &mut Engine, triangles: &[f32], ticks: usize| -> (f32, bool, Vec<String>) {
+        assert_eq!(set(&[]), 0);
+        engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+        take_log();
+        push(engine, 12);
+        reload(triangles);
+        let mut rebuilt = None;
+        for tick in 0..ticks {
+            if tick < 3 * 12 {
+                engine.step(if tick % 24 < 12 { Pad::buttons(A) } else { Pad::NEUTRAL });
+            } else {
+                engine.step(Pad::NEUTRAL);
+            }
+            assert_eq!(halo_skate_state(), 2, "ready throughout the rebuild");
+            if rebuilt.is_none() && take_log().iter().any(|l| l.contains("map rebuilt,")) {
+                rebuilt = Some(tick);
+            }
+        }
+        let frames = engine.history.clone();
+        assert!(frames.iter().all(Snapshot::is_finite), "every frame is finite");
+        assert!(frames.iter().all(|s| s.code != -1), "no step failed");
+        let furthest = frames
+            .iter()
+            .take_while(|s| !s.state.starts_with("Wipeout"))
+            .map(|s| s.at()[0])
+            .fold(f32::MIN, f32::max);
+        let bailed = frames.iter().any(|s| s.state.starts_with("Wipeout") || s.code == 2);
+        let rebuilt = rebuilt.expect("the level was built again");
+        (furthest, bailed, vec![format!("rebuilt {rebuilt} game ticks after it was sent")])
+    };
+    let (walled_furthest, walled_bailed, walled_log) = ride(&mut engine, &walled, 150);
+    assert_back_on_the_board(&mut engine, "into the wall");
+    let (open_furthest, _, open_log) = ride(&mut engine, &level, 150);
+    eprintln!(
+        "with the wall: {walled_furthest:.2} m on ({}; {walled_log:?}); without it again: {open_furthest:.2} m on ({open_log:?})",
+        if walled_bailed { "a bail" } else { "no bail" }
+    );
+    assert!(walled_furthest < 25.0, "not through the wall made: {walled_furthest:.2} m");
+    assert!(walled_furthest > 20.0, "the skater got to it: {walled_furthest:.2} m");
+    assert!(open_furthest > 27.0, "past where the wall was, once it is gone: {open_furthest:.2} m");
+    engine.hold(Pad::NEUTRAL, 30);
 }

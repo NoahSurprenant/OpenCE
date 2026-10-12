@@ -104,3 +104,48 @@ pub(super) fn query_pools(
     }
     Ok(output)
 }
+
+/// halo-skate: each line's hit on the kinematic obstacles' triangles
+/// (`BoardWorld::offboard_obstacles`), where nearer than its hit so far: the
+/// plain surface (packed 0) the test terrains' triangles are.
+pub(super) fn query_obstacles(
+    triangles: &[[Vector3; 3]],
+    packet: &GroundQueryPacket,
+    output: &mut [Option<LineHit>; 7],
+) {
+    if triangles.is_empty() {
+        return;
+    }
+    for (line, out) in packet.lines.iter().zip(output.iter_mut()) {
+        let delta = sub(line.end, line.start);
+        let threshold = f32::from_bits(0x37800000);
+        if !line.radius.is_finite()
+            || line.radius < 0.
+            || !(delta.x.abs() > threshold || delta.y.abs() > threshold || delta.z.abs() > threshold)
+        {
+            continue;
+        }
+        let mut nearest = out.as_ref().map_or(f32::MAX, |hit| hit.fraction);
+        for &vertices in triangles {
+            let mut hit = TriangleLineHit {
+                position: Vector3::ZERO,
+                normal: Vector3::ZERO,
+                fraction: 0.,
+                volume_parameter: [0.; 3],
+            };
+            if !triangle_segment(&mut hit, line.start, delta, vertices, line.radius, 0.) {
+                continue;
+            }
+            let fraction = hit.fraction.clamp(0., 1.);
+            if fraction < nearest {
+                nearest = fraction;
+                *out = Some(LineHit {
+                    position: hit.position,
+                    face_normal: transform::face(vertices),
+                    fraction,
+                    packed_surface: 0,
+                });
+            }
+        }
+    }
+}

@@ -627,9 +627,10 @@ game: a host and a client with a third of their datagrams damaged must play
 on, their logs noting what they refused.
 
 `debug.network_test_skate`, `debug.network_test_skate_watch`,
-`debug.network_test_skate_block` and `debug.network_test_skate_duel` script a
-Skate 3 skater and a machine watching them, and stepping into their way, on
-foot or on a board of its own (`port/skate/README.md`,
+`debug.network_test_skate_block`, `debug.network_test_skate_duel` and
+`debug.network_test_skate_scenery` script a Skate 3 skater and a machine
+watching them, and stepping into their way, on foot or on a board of its own,
+and a piece of scenery deleted and made again (`port/skate/README.md`,
 "Testing multiplayer").
 
 The host logs to `debug.txt` when a player on another machine presses the

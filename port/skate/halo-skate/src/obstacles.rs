@@ -1,12 +1,14 @@
 //! The game's moving objects the board and the skater collide with: other
-//! bipeds as capsules, vehicles and scenery as boxes
+//! bipeds as capsules, vehicles, devices and scenery made later as their own
+//! collision (meshes of triangles the game placed)
 //! (`halo_skate_set_obstacles`; the engine's side is skate-core's
 //! `kinematic_obstacle.rs`). Converted here from Halo's space (Z up, world
 //! units) to Skate's (Y up, metres) as everything else is (`to_skate`).
 
 use crate::{METRES, to_skate};
 use bevy_math::{Quat, Vec3};
-use skate_host::bridge::{Basis3, KinematicObstacle, ObstacleKind, ObstacleShape, Vector3};
+use skate_host::bridge::{Basis3, KinematicObstacle, ObstacleKind, ObstacleMesh, ObstacleShape, Vector3};
+use std::sync::Arc;
 
 /// `halo_skate_obstacle` (include/halo_skate.h).
 #[repr(C)]
@@ -28,6 +30,11 @@ pub struct HaloSkateObstacle {
     pub half_extents: [f32; 3],
     /// world units a second
     pub velocity: [f32; 3],
+    /// radians a second about `center`, world axes
+    pub angular_velocity: [f32; 3],
+    /// a mesh's triangles among those sent with it: the first, and how many
+    pub first_triangle: i32,
+    pub triangle_count: i32,
 }
 
 pub const KIND_BIPED: i32 = 0;
@@ -36,6 +43,7 @@ pub const KIND_SCENERY: i32 = 2;
 pub const KIND_SKATER: i32 = 3;
 pub const SHAPE_BOX: i32 = 0;
 pub const SHAPE_CAPSULE: i32 = 1;
+pub const SHAPE_MESH: i32 = 2;
 
 fn direction(v: [f32; 3]) -> Vector3 {
     let v = to_skate(Vec3::from_array(v)) / METRES;
@@ -48,8 +56,10 @@ fn point(p: [f32; 3]) -> Vector3 {
 
 impl HaloSkateObstacle {
     /// The obstacle in the engine's space, or None for a kind or shape this
-    /// does not know. (The engine checks the numbers: `Session::set_obstacles`.)
-    pub fn to_engine(&self) -> Option<KinematicObstacle> {
+    /// does not know, or a mesh whose triangles are not among `triangles`
+    /// (9 floats each, world units) or are none. (The engine checks the
+    /// numbers: `Session::set_obstacles`.)
+    pub fn to_engine(&self, triangles: &[f32]) -> Option<KinematicObstacle> {
         let kind = match self.kind {
             KIND_BIPED => ObstacleKind::Biped,
             KIND_VEHICLE => ObstacleKind::Vehicle,
@@ -80,13 +90,29 @@ impl HaloSkateObstacle {
                     half_extents: Vector3::new(x, y, z),
                 }
             }
+            SHAPE_MESH => {
+                let first = usize::try_from(self.first_triangle).ok()?;
+                let count = usize::try_from(self.triangle_count).ok()?;
+                let floats = triangles.get(first.checked_mul(9)?..first.checked_add(count)?.checked_mul(9)?)?;
+                let placed: Vec<[Vector3; 3]> = floats
+                    .chunks_exact(9)
+                    .map(|t| [point([t[0], t[1], t[2]]), point([t[3], t[4], t[5]]), point([t[6], t[7], t[8]])])
+                    .collect();
+                ObstacleShape::Mesh {
+                    center,
+                    mesh: Arc::new(ObstacleMesh::new(&placed)?),
+                }
+            }
             _ => return None,
         };
         let v = to_skate(Vec3::from_array(self.velocity));
+        // (an angular velocity is a direction's: turned, not scaled)
+        let w = direction(self.angular_velocity);
         Some(KinematicObstacle {
             kind,
             shape,
             linear_velocity: Vector3::new(v.x, v.y, v.z),
+            angular_velocity: w,
         })
     }
 }
@@ -105,6 +131,7 @@ pub fn board_obstacle(rotation: Quat, position: Vec3, middle: Vec3, half: Vec3) 
         // (no side flat: a board seen edge on still has its thickness)
         half_extents: half.max(Vec3::splat(MINIMUM_HALF_EXTENT)).to_array(),
         velocity: [0.0; 3],
+        ..Default::default()
     }
 }
 
@@ -237,7 +264,7 @@ mod tests {
             velocity: [1.0, 0.0, 0.0],
             ..Default::default()
         };
-        let e = o.to_engine().unwrap();
+        let e = o.to_engine(&[]).unwrap();
         assert_eq!(e.kind, ObstacleKind::Biped);
         let ObstacleShape::Capsule { center, axis, half_length, radius } = e.shape else {
             panic!("a capsule")
@@ -262,8 +289,9 @@ mod tests {
             up: [0.0, 0.0, 1.0],
             half_extents: [0.8, 0.4, 0.3],
             velocity: [0.0, 3.0, 0.0],
+            ..Default::default()
         };
-        let e = o.to_engine().unwrap();
+        let e = o.to_engine(&[]).unwrap();
         let ObstacleShape::Box { basis, half_extents, .. } = e.shape else {
             panic!("a box")
         };
@@ -287,13 +315,13 @@ mod tests {
             half_extents: [0.3, 0.3, 0.3],
             ..Default::default()
         };
-        assert!(good.to_engine().and_then(|o| o.validated()).is_some());
-        assert!(HaloSkateObstacle { kind: 7, ..good }.to_engine().is_none());
-        assert!(HaloSkateObstacle { shape: 2, ..good }.to_engine().is_none());
+        assert!(good.to_engine(&[]).and_then(|o| o.validated()).is_some());
+        assert!(HaloSkateObstacle { kind: 7, ..good }.to_engine(&[]).is_none());
+        assert!(HaloSkateObstacle { shape: 3, ..good }.to_engine(&[]).is_none());
         let nan = HaloSkateObstacle { center: [f32::NAN, 0.0, 0.0], ..good };
-        assert!(nan.to_engine().and_then(|o| o.validated()).is_none());
+        assert!(nan.to_engine(&[]).and_then(|o| o.validated()).is_none());
         let flat = HaloSkateObstacle { half_extents: [0.3, 0.0, 0.3], ..good };
-        assert!(flat.to_engine().and_then(|o| o.validated()).is_none());
+        assert!(flat.to_engine(&[]).and_then(|o| o.validated()).is_none());
     }
     #[test]
     fn another_skaters_board_is_a_box_turned_as_the_board_is() {
@@ -312,8 +340,58 @@ mod tests {
         assert!((Vec3::from_array(o.forward) - Vec3::Y).length() < 1e-6, "its length along +Y now");
         assert!(Vec3::from_array(o.up).dot(Vec3::Z) < 0.9, "tipped");
         assert_eq!(o.half_extents, [0.135, 0.035, 0.005], "never flat");
-        let e = o.to_engine().and_then(|e| e.validated()).expect("the engine takes it");
+        let e = o.to_engine(&[]).and_then(|e| e.validated()).expect("the engine takes it");
         assert_eq!(e.kind, ObstacleKind::Skater);
+    }
+
+    #[test]
+    fn a_mesh_is_its_triangles_in_metres_y_up_facing_out() {
+        // a unit cube's six faces (world units, Z up) about (1, 2, 0.5),
+        // wound counterclockwise seen from outside, after one stray triangle
+        let c = Vec3::new(1.0, 2.0, 0.5);
+        let mut floats = vec![9.0; 9];
+        for axis in 0..3 {
+            for sign in [-1.0f32, 1.0] {
+                let n = Vec3::from_array(std::array::from_fn(|i| if i == axis { sign } else { 0.0 }));
+                let u = Vec3::from_array(std::array::from_fn(|i| if i == (axis + 1) % 3 { 0.5 } else { 0.0 }));
+                let v = n.cross(u);
+                let corner = |a: f32, b: f32| c + n * 0.5 + u * a + v * b;
+                for t in [
+                    [corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0)],
+                    [corner(-1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)],
+                ] {
+                    assert!((t[1] - t[0]).cross(t[2] - t[0]).dot(n) > 0.0, "wound to face out");
+                    floats.extend(t.iter().flat_map(|p| p.to_array()));
+                }
+            }
+        }
+        let o = HaloSkateObstacle {
+            kind: KIND_VEHICLE,
+            shape: SHAPE_MESH,
+            center: c.to_array(),
+            velocity: [0.0, 1.0, 0.0],
+            angular_velocity: [0.0, 0.0, 2.0],
+            first_triangle: 1,
+            triangle_count: 12,
+            ..Default::default()
+        };
+        let e = o.to_engine(&floats).and_then(|e| e.validated()).expect("the engine takes it");
+        let ObstacleShape::Mesh { center, mesh } = &e.shape else {
+            panic!("a mesh")
+        };
+        close(*center, [METRES, 0.5 * METRES, -2.0 * METRES]);
+        close(e.linear_velocity, [0.0, 0.0, -METRES]);
+        close(e.angular_velocity, [0.0, 2.0, 0.0]);
+        assert_eq!(mesh.triangles().len(), 12);
+        for t in mesh.triangles() {
+            let [a, b, d] = t.vertices.map(|p| Vec3::new(p.x, p.y, p.z));
+            let outward = (a + b + d) / 3.0 - Vec3::new(center.x, center.y, center.z);
+            assert!((b - a).cross(d - a).dot(outward) > 0.0, "still facing out in the engine's space");
+        }
+        // (triangles not among those sent, or none, are no mesh)
+        assert!(HaloSkateObstacle { first_triangle: 2, ..o }.to_engine(&floats).is_none());
+        assert!(HaloSkateObstacle { first_triangle: -1, ..o }.to_engine(&floats).is_none());
+        assert!(HaloSkateObstacle { triangle_count: 0, ..o }.to_engine(&floats).is_none());
     }
 
     #[test]
