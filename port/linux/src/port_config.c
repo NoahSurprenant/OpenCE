@@ -432,6 +432,14 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"The weapon network_test_pickup stands the player on: the first whose tag\n"
 		"name has this in it (\"sniper\", say); empty any." },
+	{ "debug.network_test_skate", _config_real, "0.0", "HALO_NETWORK_TEST_SKATE", _environment_value, _platform_all,
+		"This many seconds into an automated test game this machine's player gets\n"
+		"on a Skate 3 board and rides a scripted pad (pushes, carves, ollies), off\n"
+		"40 seconds on and on again 5 later (a build with Skate 3 mode); 0 never." },
+	{ "debug.network_test_skate_watch", _config_boolean, "false", "HALO_NETWORK_TEST_SKATE_WATCH",
+		_environment_set_is_true, _platform_all,
+		"In an automated test game this machine's player turns to watch another\n"
+		"machine's Skate 3 skater (port/skate/README.md)." },
 	{ "debug.telnet_console", _config_boolean, "false", "HALO_TELNET_CONSOLE", _environment_set_is_true, _platform_all,
 		"Listen on 127.0.0.1 (port telnet_console_port) for a script console that\n"
 		"runs what it is sent as the game's console does, with no password; false\n"

@@ -13,6 +13,7 @@ objects (render.c). */
 
 #include "cseries.h"
 #include "math/real_math.h"
+#include "game/game.h"
 #include "game/players.h"
 #include "items/weapon_definitions.h"
 #include "items/weapons.h"
@@ -147,6 +148,9 @@ static struct
 	/* the ambient light, then each distant light's direction and color */
 	float lights[5][4];
 } skate_board;
+
+/* ... and at each other machine's skater (skate_network.c) */
+static float skate_remote_lights[SKATE_NETWORK_PLAYERS][5][4];
 
 static const char *skate_assets(void)
 {
@@ -593,7 +597,7 @@ static boolean skate_board_take(struct halo_skate_board_info const *info)
 
 /* the lights of the skater's place in the level (lights_prepare_for_object_static),
 as the shader of halo_skate_platform_board_draw takes them */
-static void skate_board_light(long unit_index)
+static void skate_board_light(long unit_index, float lights[5][4])
 {
 	struct render_lighting lighting;
 	short light_index;
@@ -601,32 +605,32 @@ static void skate_board_light(long unit_index)
 
 	memset(&lighting, 0, sizeof(lighting));
 	lights_prepare_for_object_static(unit_index, &lighting);
-	memset(skate_board.lights, 0, sizeof(skate_board.lights));
-	skate_board.lights[0][0] = lighting.ambient_color.red;
-	skate_board.lights[0][1] = lighting.ambient_color.green;
-	skate_board.lights[0][2] = lighting.ambient_color.blue;
+	memset(lights, 0, 5 * sizeof(lights[0]));
+	lights[0][0] = lighting.ambient_color.red;
+	lights[0][1] = lighting.ambient_color.green;
+	lights[0][2] = lighting.ambient_color.blue;
 	total = lighting.ambient_color.red + lighting.ambient_color.green + lighting.ambient_color.blue;
 	for (light_index = 0; light_index < lighting.distant_light_count && light_index < MAXIMUM_RENDERED_DISTANT_LIGHTS;
 		light_index++)
 	{
 		struct render_distant_light const *light = &lighting.distant_lights[light_index];
 
-		skate_board.lights[1 + 2 * light_index][0] = light->direction.i;
-		skate_board.lights[1 + 2 * light_index][1] = light->direction.j;
-		skate_board.lights[1 + 2 * light_index][2] = light->direction.k;
-		skate_board.lights[2 + 2 * light_index][0] = light->color.red;
-		skate_board.lights[2 + 2 * light_index][1] = light->color.green;
-		skate_board.lights[2 + 2 * light_index][2] = light->color.blue;
+		lights[1 + 2 * light_index][0] = light->direction.i;
+		lights[1 + 2 * light_index][1] = light->direction.j;
+		lights[1 + 2 * light_index][2] = light->direction.k;
+		lights[2 + 2 * light_index][0] = light->color.red;
+		lights[2 + 2 * light_index][1] = light->color.green;
+		lights[2 + 2 * light_index][2] = light->color.blue;
 		total += light->color.red + light->color.green + light->color.blue;
 	}
 	/* (no light found, or none that is a number: grey, lit from above,
 	rather than black) */
 	if (!(total > 0.f))
 	{
-		memset(skate_board.lights, 0, sizeof(skate_board.lights));
-		skate_board.lights[0][0] = skate_board.lights[0][1] = skate_board.lights[0][2] = 0.4f;
-		skate_board.lights[1][2] = -1.f;
-		skate_board.lights[2][0] = skate_board.lights[2][1] = skate_board.lights[2][2] = 0.6f;
+		memset(lights, 0, 5 * sizeof(lights[0]));
+		lights[0][0] = lights[0][1] = lights[0][2] = 0.4f;
+		lights[1][2] = -1.f;
+		lights[2][0] = lights[2][1] = lights[2][2] = 0.6f;
 	}
 }
 
@@ -677,7 +681,20 @@ static void skate_board_capture(long unit_index)
 		if (!(dx * dx + dy * dy + dz * dz <= SKATE_BOARD_SNAP_DISTANCE * SKATE_BOARD_SNAP_DISTANCE))
 			skate_board.has_previous = FALSE;
 	}
-	skate_board_light(unit_index);
+	skate_board_light(unit_index, skate_board.lights);
+}
+
+/* the board's mesh taken (another's when the engine loaded another), for
+another machine's skater too; FALSE with none */
+static boolean skate_board_ready(void)
+{
+	struct halo_skate_board_info info;
+
+	if (halo_skate_board_info(&info) != 0)
+		return FALSE;
+	if (info.generation != skate_board.generation && !skate_board_take(&info))
+		return FALSE;
+	return skate_board.vertex_count > 0;
 }
 
 /* the board's textures, the first time a board is drawn */
@@ -710,13 +727,38 @@ void skate_render_board(void)
 	real fraction;
 	long index;
 
+	short player_index;
+
+	/* other machines' skaters' boards, placed whole where their states have
+	them, between their last two ticks (skate_network.c) */
+	fraction = render_interpolation_fraction();
+	for (player_index = 0; player_index < SKATE_NETWORK_PLAYERS; player_index++)
+	{
+		real placement[7];
+		long unit_index;
+
+		if (!skate_network_board(player_index, fraction, &unit_index, placement) || !skate_board.vertex_count ||
+			!skate_board.drawn)
+		{
+			continue;
+		}
+		if (skate_board.uploaded_generation != skate_board.generation)
+			skate_board_upload_textures();
+		if (halo_skate_board_vertices_at(placement, skate_board.drawn, skate_board.vertex_count) !=
+			skate_board.vertex_count)
+		{
+			continue;
+		}
+		halo_skate_platform_board_draw(skate_board.drawn, skate_board.vertex_count, skate_board.indices,
+			skate_board.index_count, skate_board.surfaces, skate_board.surface_count,
+			&skate_remote_lights[player_index][0][0]);
+	}
 	if (!skate_globals.skating || !skate_board.has_latest || !skate_board.vertex_count)
 		return;
 	if (skate_board.uploaded_generation != skate_board.generation)
 		skate_board_upload_textures();
 	latest = skate_board.vertices[skate_board.latest];
 	drawn = latest;
-	fraction = render_interpolation_fraction();
 	if (skate_board.has_previous && fraction < 1.f)
 	{
 		previous = skate_board.vertices[skate_board.latest ^ 1];
@@ -790,6 +832,57 @@ static void skate_start(long unit_index)
 	console_printf(FALSE, "skate: on");
 }
 
+/* ---------- the network test's skater
+debug.network_test_skate: that many seconds into a game this machine's
+player gets on a board and rides a scripted pad (port/linux/NETCODE.md,
+"Testing"): pushes, a slow carve and an ollie every four seconds; off the
+board SKATE_TEST_OFF_SECONDS on, and on again five seconds later. */
+#define SKATE_TEST_CYCLE_TICKS 120
+#define SKATE_TEST_OFF_SECONDS 40
+#define SKATE_TEST_BACK_SECONDS 45
+#define SKATE_TEST_CARVE 8000.f
+
+double config_real(const char *name);
+
+static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
+{
+	static real start = -1.f;
+	long tick;
+	long cycle;
+
+	if (start < 0.f)
+		start = (real)config_real("debug.network_test_skate");
+	if (!(start > 0.f) || !game_in_progress())
+		return;
+	tick = game_time_get() - (long)(start * TICKS_PER_SECOND);
+	if (tick < 0)
+		return;
+	if ((tick == 0 || tick == SKATE_TEST_BACK_SECONDS * TICKS_PER_SECOND) &&
+		!skate_globals.skating && !skate_globals.activate_when_ready)
+	{
+		platform_log("skate test: on the board");
+		*toggle = TRUE;
+	}
+	if (tick == SKATE_TEST_OFF_SECONDS * TICKS_PER_SECOND && skate_globals.skating)
+	{
+		platform_log("skate test: off the board");
+		*toggle = TRUE;
+	}
+	if (!skate_globals.skating)
+		return;
+	/* (pushes, A held half a second and let go as long, then the right
+	stick pulled down and flicked up: real_assets.rs's push and ollie) */
+	cycle = tick % SKATE_TEST_CYCLE_TICKS;
+	memset(pad, 0, sizeof(*pad));
+	if (cycle < 90 && cycle % 30 < 15)
+		pad->buttons = 0x1000;
+	pad->left[0] = (short)(SKATE_TEST_CARVE * sin(tick * 2.f * _pi / (2 * SKATE_TEST_CYCLE_TICKS)));
+	if (cycle >= 90 && cycle < 98)
+		pad->right[1] = -32767;
+	else if (cycle >= 98 && cycle < 100)
+		pad->right[1] = 32767;
+}
+
 void skate_update_before_objects(void)
 {
 	long unit_index = player_control_get_unit_index(0);
@@ -804,6 +897,9 @@ void skate_update_before_objects(void)
 		((pad.buttons & SKATE_THUMB_CLICKS) == SKATE_THUMB_CLICKS &&
 		(skate_globals.previous_buttons & SKATE_THUMB_CLICKS) != SKATE_THUMB_CLICKS);
 	skate_globals.previous_buttons = pad.buttons;
+	skate_test_pad(&pad, &toggle);
+	/* (other machines' skaters carried on: skate_network.c) */
+	skate_network_update_before_objects();
 
 	if (skate_globals.skating && (unit_index != skate_globals.unit_index ||
 		!skate_unit_can_skate(unit_index) || !skate_map_loaded()))
@@ -866,7 +962,11 @@ void skate_update_before_objects(void)
 		skate_engine_failed();
 }
 
+#endif
+
 /* ---------- the skater's weapon, holstered
+(Also another machine's skater's, posed from their state: skate_network.c,
+in a build without the mode too.)
 
 The weapon hangs from the biped's hand node, placed during objects_update by
 Halo's own animation, before the skater's pose replaces the biped's nodes.
@@ -1014,7 +1114,7 @@ static void skate_shrink_object(long object_index)
 }
 
 /* the unit's weapon holstered on its posed nodes (skate_update_after_objects) */
-static void skate_holster_weapon(long unit_index, real_matrix4x3 const *node_matrices, int node_count)
+void skate_holster_weapon(long unit_index, real_matrix4x3 const *node_matrices, int node_count)
 {
 	struct unit_datum *unit = unit_get(unit_index);
 	long weapon_index = unit_inventory_get_weapon(unit_index, unit->unit.current_weapon_index);
@@ -1087,6 +1187,8 @@ static void skate_holster_weapon(long unit_index, real_matrix4x3 const *node_mat
 	weapon->object.up = hold_up;
 }
 
+#ifdef HALO_SKATE
+
 void skate_update_after_objects(void)
 {
 	real_matrix4x3 matrices[SKATE_MAXIMUM_NODES];
@@ -1095,10 +1197,26 @@ void skate_update_after_objects(void)
 	int node_count;
 	int written;
 
+	short player_index;
+
 	skate_sound_update(skate_globals.skating && skate_unit_can_skate(skate_globals.unit_index), skate_globals.unit_index,
 		skate_globals.frame.position);
+	/* other machines' skaters posed, and their boards lit (skate_network.c) */
+	skate_network_update_after_objects();
+	if (skate_board_ready())
+	{
+		for (player_index = 0; player_index < SKATE_NETWORK_PLAYERS; player_index++)
+		{
+			real placement[7];
+			long unit_index;
+
+			if (skate_network_board(player_index, 1.f, &unit_index, placement))
+				skate_board_light(unit_index, skate_remote_lights[player_index]);
+		}
+	}
 	if (!skate_globals.skating || !skate_unit_can_skate(skate_globals.unit_index))
 	{
+		skate_network_note_local(local_player_get_player_index(0), NONE, FALSE, NULL);
 		skate_board_forget();
 		return;
 	}
@@ -1126,11 +1244,20 @@ void skate_update_after_objects(void)
 		memcpy(node_matrices, matrices, sizeof(real_matrix4x3) * node_count);
 	/* on a board the weapon is never in hand, posed or not */
 	skate_holster_weapon(skate_globals.unit_index, node_matrices, node_count);
+	/* and the others told, in a network game (skate_network.c) */
+	{
+		float placement[7];
+
+		skate_network_note_local(local_player_get_player_index(0), skate_globals.unit_index,
+			(boolean)(skate_globals.frame.off_board != 0),
+			halo_skate_board_placement(placement) == 0 ? placement : NULL);
+	}
 }
 
 boolean skate_unit_is_skating(long unit_index)
 {
-	return skate_globals.skating && unit_index != NONE && unit_index == skate_globals.unit_index;
+	return (skate_globals.skating && unit_index != NONE && unit_index == skate_globals.unit_index) ||
+		skate_network_unit_skating(unit_index);
 }
 
 boolean skate_local_player_skating(short local_player_index, real *yaw)
@@ -1249,12 +1376,15 @@ void skate_structure_bsp_changed(void)
 {
 }
 
+/* (another machine's skater is still posed, without the board) */
 void skate_update_before_objects(void)
 {
+	skate_network_update_before_objects();
 }
 
 void skate_update_after_objects(void)
 {
+	skate_network_update_after_objects();
 }
 
 void skate_render_board(void)
@@ -1263,7 +1393,7 @@ void skate_render_board(void)
 
 boolean skate_unit_is_skating(long unit_index)
 {
-	return FALSE;
+	return skate_network_unit_skating(unit_index);
 }
 
 boolean skate_local_player_skating(short local_player_index, real *yaw)

@@ -643,12 +643,20 @@ static void handle_one_player_input(
 	keeps behind the board (skate.c) */
 	{
 		real skate_yaw;
+		real skate_pitch;
 
 		if (skate_local_player_skating(local_player_index, &skate_yaw))
 		{
 			csmemset(&input, 0, sizeof(input));
 			player->desired_angles.yaw = skate_yaw;
 			player->desired_angles.pitch = SKATE_CAMERA_PITCH;
+		}
+		/* (the network test's watcher looks at another machine's skater) */
+		else if (skate_local_player_watching(local_player_index, &skate_yaw, &skate_pitch))
+		{
+			csmemset(&input, 0, sizeof(input));
+			player->desired_angles.yaw = skate_yaw;
+			player->desired_angles.pitch = skate_pitch;
 		}
 	}
 

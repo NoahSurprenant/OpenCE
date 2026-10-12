@@ -73,6 +73,7 @@ machine (their datum identifiers need not be).
 #include "network_coop.h"
 #include "network_distributed.h"
 #include "network_voice.h"
+#include "skate.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -261,6 +262,11 @@ much further a tick than that it may be (world units a tick) */
 had it on the ground it may be (world units: steps climbed in the ticks a
 prediction is late, where the host and the client have the ground) */
 #define PREDICTED_RISE_TOLERANCE 1.0f
+/* port: on a Skate 3 board (skate_network.c) a player goes as fast as a
+board takes them, across and up (40 m/s, world units a tick), and as high
+as one launches (15 m/s up: some 11 m) */
+#define PREDICTED_SKATE_SPEED (40.0f / 3.048f / TICKS_PER_SECOND)
+#define PREDICTED_SKATE_RISE_SPEED (15.0f / 3.048f / TICKS_PER_SECOND)
 
 /* how far players are from a client's own (world units) before the host
 sends them to it (their units and their input) every second tick, every
@@ -529,7 +535,14 @@ static struct distributed_host_speed
 	real top_height;
 	/* the last tick it had the unit on the ground (or where it started) */
 	long ground_time;
+	/* port: the player skated (skate_network.c): bounds of a board's */
+	boolean skating;
 } distributed_host_speeds[MAXIMUM_TRACKED_PLAYERS];
+/* port: the host's takes of skating players' predictions, and how many the
+bounds of a player on foot would have refused (the network test's log) */
+static long distributed_skate_taken;
+static long distributed_skate_refused;
+static long distributed_skate_refused_on_foot;
 /* a client: where each of its own players' units was at its last ticks,
 and how long the host takes to have them (ticks) */
 static struct distributed_own_position
@@ -1640,6 +1653,11 @@ static void distributed_correct_own_unit(
 	short local_player_index = player->local_player_index;
 	real_point3d position = state->position;
 
+	/* port: a skater is where the skate engine has them (skate.c puts the
+	biped there each tick): moved, they would be put back at once */
+	if (skate_unit_is_skating(unit_index))
+		return;
+
 	/* (co-op: the host has its player in a BSP this machine hasn't loaded
 	yet, the switch still on its way. Moved there, it would fall with no
 	floor under it, so it stays on the floor it has until the BSP loads.) */
@@ -1732,6 +1750,66 @@ static void distributed_client_send_predictions(
 	distributed_packer_flush(&distributed_packer);
 }
 
+/* port: (a client) its own skaters' states, to the host (skate_network.c) */
+static void distributed_client_send_skate(
+	void)
+{
+	short player_index;
+
+	distributed_packer_begin(&distributed_packer, HOST_SENDER, _distributed_message_skate_up, NULL, 0);
+	for (player_index = 0; player_index < MAXIMUM_TRACKED_PLAYERS; player_index++)
+	{
+		byte entry[SKATE_STATE_MAXIMUM_SIZE];
+		short size;
+
+		if (distributed_player_is_local(player_index) && (size = skate_network_entry(player_index, entry, NULL)) > 0)
+			distributed_packer_add(&distributed_packer, entry, (word)size);
+	}
+	distributed_packer_flush(&distributed_packer);
+}
+
+/* port: (the host) every player's skate state to each client but their own:
+a skater as often as their unit goes to it (network_objects_send_period),
+getting off every tick (skate_network.c) */
+static void distributed_host_send_skate(
+	void)
+{
+	long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+	short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
+	short machine_number;
+
+	for (machine_number = 0; machine_number < machine_count; machine_number++)
+	{
+		long machine_index = machine_indices[machine_number];
+		short player_index;
+
+		distributed_packer_begin(&distributed_packer, (short)machine_index, _distributed_message_skate_down, NULL, 0);
+		for (player_index = 0; player_index < MAXIMUM_TRACKED_PLAYERS; player_index++)
+		{
+			byte entry[SKATE_STATE_MAXIMUM_SIZE];
+			boolean skating = FALSE;
+			short size;
+			long unit_index;
+
+			if (distributed_machine_has_player(machine_index, player_index) ||
+				(size = skate_network_entry(player_index, entry, &skating)) <= 0)
+			{
+				continue;
+			}
+			unit_index = distributed_living_unit(distributed_player(player_index));
+			if (skating && unit_index != NONE)
+			{
+				short period = network_objects_send_period(machine_index, &object_get(unit_index)->object.position);
+
+				if (period > 1 && (game_time_get() + player_index) % period)
+					continue;
+			}
+			distributed_packer_add(&distributed_packer, entry, (word)size);
+		}
+		distributed_packer_flush(&distributed_packer);
+	}
+}
+
 /* (the host) a client's own players: the latest of each, taken at the next
 tick */
 static void distributed_handle_predictions(
@@ -1821,9 +1899,10 @@ static void distributed_on_foot_bound(
 	real rise_speed;
 
 	/* (a unit new on foot, a new life or a ride's end: all its speed its
-	ticks', from where it is) */
-	if (noted->unit_index != unit_index)
+	ticks', from where it is; and so on and off a board, port) */
+	if (noted->unit_index != unit_index || noted->skating != skate_network_player_skating(player_index))
 	{
+		noted->skating = skate_network_player_skating(player_index);
 		noted->unit_index = unit_index;
 		noted->velocity.i = 0.0f;
 		noted->velocity.j = 0.0f;
@@ -1934,6 +2013,36 @@ static void distributed_on_foot_bound(
 	bound->airborne_ticks = noted->grounded ? 0 : now - noted->ground_time;
 	if (!(bound->rise >= 0.0f))
 		bound->rise = UNIT_WORLD_BOUND;
+	/* port: a skater (skate_network.c), whose biped's own movement is off
+	on the host (bipeds.c), so its airborne flag says nothing: as fast as a
+	board goes, as high as one launches above where it was last taken
+	(climbing ramps as it goes), never held to a fall */
+	if (noted->skating)
+	{
+		bound->speed = MIN(MAX(bound->speed, PREDICTED_SKATE_SPEED), MAXIMUM_PREDICTED_SPEED);
+		bound->rise_speed = MAX(bound->rise_speed, PREDICTED_SKATE_RISE_SPEED);
+		if (global_gravity > 0.0f)
+		{
+			bound->rise = MAX(bound->rise, bound->rise_speed * bound->rise_speed / (2.0f * global_gravity) +
+				PREDICTED_RISE_TOLERANCE);
+		}
+		bound->airborne_ticks = 0;
+		noted->grounded = TRUE;
+		noted->ground_height = object->object.position.z;
+		noted->top_height = object->object.position.z;
+		noted->ground_time = now;
+	}
+}
+
+/* port: the host's takes of skaters' predictions (skate_network.c's log) */
+void network_distributed_skate_predictions(
+	long *taken,
+	long *refused,
+	long *refused_on_foot)
+{
+	*taken = distributed_skate_taken;
+	*refused = distributed_skate_refused;
+	*refused_on_foot = distributed_skate_refused_on_foot;
 }
 
 /* (the host) how fast a client's player's unit on foot may fall at a
@@ -2001,6 +2110,59 @@ static boolean distributed_on_foot_move_valid(
 	return dx * dx + dy * dy + rise * rise <= reach * reach && -dz <= fall_reach;
 }
 
+/* port: (the host, the network test's log) whether a skater's prediction
+would be refused by the bounds of a player on foot, as it was before
+skaters had their own: further from the host's copy than
+HOST_ACCEPT_TOLERANCE, or from the anchor than running and jumping take
+them (counted, not acted on) */
+static void distributed_skate_note_on_foot(
+	short player_index,
+	long unit_index,
+	struct distributed_unit_state const *state)
+{
+	struct distributed_on_foot_bound bound;
+	struct object_datum *object = object_get(unit_index);
+	struct player_datum *player = distributed_player(player_index);
+	struct game_globals *globals = scenario_get_game_globals();
+	real dx = state->position.x - object->object.position.x;
+	real dy = state->position.y - object->object.position.y;
+	real dz = state->position.z - object->object.position.z;
+	real run_speed = 0.0f;
+	long ticks;
+
+	if (!(dx * dx + dy * dy + dz * dz <= HOST_ACCEPT_TOLERANCE * HOST_ACCEPT_TOLERANCE))
+	{
+		distributed_skate_refused_on_foot++;
+		return;
+	}
+	if (!distributed_accepted[player_index].valid || !globals || globals->player_information.count <= 0)
+		return;
+	{
+		struct game_globals_player_information *information = TAG_BLOCK_GET_ELEMENT(&globals->player_information, 0,
+			struct game_globals_player_information);
+		real forward = MAX(information->run_forward_speed, information->run_backward_speed);
+		real sideways = information->run_sideways_speed;
+		struct biped_datum *biped = (struct biped_datum *)object_try_and_get_and_verify_type(unit_index,
+			_object_mask_biped);
+		real jump_speed = biped ? biped_definition_get(biped->definition_index)->biped.jump_velocity : 0.0f;
+
+		run_speed = (real)sqrt(forward * forward + sideways * sideways) / TICKS_PER_SECOND;
+		if (player && player->speed_multiplier > 1.0f)
+			run_speed *= player->speed_multiplier;
+		csmemset(&bound, 0, sizeof(bound));
+		bound.speed = MIN(PREDICTED_ON_FOOT_SPEED_SCALE * (real)sqrt(run_speed * run_speed + jump_speed * jump_speed),
+			MAXIMUM_PREDICTED_SPEED);
+		bound.top_height = object->object.position.z;
+	}
+	ticks = MIN(distributed_predictions[player_index].time - distributed_accepted[player_index].time,
+		game_time_get() - distributed_accepted[player_index].host_time + PREDICTION_JITTER_TICKS);
+	if (ticks > 0 && !distributed_on_foot_move_valid(&bound, &distributed_accepted[player_index].position,
+		&state->position, ticks))
+	{
+		distributed_skate_refused_on_foot++;
+	}
+}
+
 /* (the host) a client's player's prediction of its unit on foot, taken
 where it says within a tolerance (distributed_apply_predictions) */
 static void distributed_take_prediction(
@@ -2014,9 +2176,21 @@ static void distributed_take_prediction(
 	real dx = state->position.x - object->object.position.x;
 	real dy = state->position.y - object->object.position.y;
 	real dz = state->position.z - object->object.position.z;
+	boolean skating = distributed_host_speeds[player_index].skating;
 
-	if (!(dx * dx + dy * dy + dz * dz <= HOST_ACCEPT_TOLERANCE * HOST_ACCEPT_TOLERANCE))
+	/* port: a skater's copy is not moved by its own physics on the host, so
+	a few datagrams lost leave it further behind than HOST_ACCEPT_TOLERANCE
+	(and the skate engine, not the client's correction, places the client's):
+	with an anchor, a skater is held to how far a board goes since instead
+	(below) */
+	if (skating)
+		distributed_skate_note_on_foot(player_index, unit_index, state);
+	if (!(dx * dx + dy * dy + dz * dz <= HOST_ACCEPT_TOLERANCE * HOST_ACCEPT_TOLERANCE) &&
+		!(skating && distributed_accepted[player_index].valid))
+	{
+		distributed_skate_refused += skating;
 		return;
+	}
 	if (distributed_accepted[player_index].valid)
 	{
 		long ticks = MIN(distributed_predictions[player_index].time - distributed_accepted[player_index].time,
@@ -2036,6 +2210,7 @@ static void distributed_take_prediction(
 		else if (ticks <= 0 || !distributed_on_foot_move_valid(bound, &distributed_accepted[player_index].position,
 			&state->position, ticks))
 		{
+			distributed_skate_refused += skating;
 			return;
 		}
 	}
@@ -2045,12 +2220,14 @@ static void distributed_take_prediction(
 	if (!(state->position.z - distributed_host_speeds[player_index].ground_height <=
 		distributed_on_foot_ceiling(player_index, bound)))
 	{
+		distributed_skate_refused += skating;
 		return;
 	}
 	/* (the client told which of its ticks the host has it at) */
 	if (distributed_apply_state(unit_index, state, &state->position, 0.0f, HOST_BLEND_DISTANCE, bound->speed,
 		distributed_on_foot_fall_speed(bound, state->position.z)))
 	{
+		distributed_skate_taken += skating;
 		distributed_predictions[player_index].taken_time = distributed_predictions[player_index].time;
 		distributed_predictions[player_index].taken_host_time = now;
 		/* (a new anchor: the first, one a second on, or after a jump) */
@@ -3237,6 +3414,10 @@ void network_distributed_new_game(
 	csmemset(distributed_predictions, 0, sizeof(distributed_predictions));
 	csmemset(distributed_accepted, 0, sizeof(distributed_accepted));
 	csmemset(distributed_host_speeds, 0, sizeof(distributed_host_speeds));
+	distributed_skate_taken = 0;
+	distributed_skate_refused = 0;
+	distributed_skate_refused_on_foot = 0;
+	skate_network_new_game();
 	csmemset(distributed_round_trips, 0, sizeof(distributed_round_trips));
 	csmemset(distributed_input_facings, 0, sizeof(distributed_input_facings));
 	csmemset(distributed_client_clocks, 0, sizeof(distributed_client_clocks));
@@ -3351,6 +3532,7 @@ void network_distributed_tick(
 			distributed_send_structure_bsp();
 		}
 		distributed_host_send_players();
+		distributed_host_send_skate();
 		network_actors_host_tick();
 		network_coop_host_tick();
 		distributed_send_pickups();
@@ -3363,6 +3545,7 @@ void network_distributed_tick(
 		distributed_note_own_positions();
 		distributed_client_send_inputs();
 		distributed_client_send_predictions();
+		distributed_client_send_skate();
 		network_objects_client_tick();
 		network_damage_client_tick();
 		network_coop_client_tick();
@@ -3407,6 +3590,8 @@ static boolean distributed_message_stale(
 	case _distributed_message_coop_screen_effect:
 	case _distributed_message_coop_device_states:
 	case _distributed_message_votekick_status:
+	case _distributed_message_skate_up:
+	case _distributed_message_skate_down:
 		break;
 	default:
 		return FALSE;
@@ -3969,6 +4154,8 @@ void network_distributed_handle_message(
 	case _distributed_message_pickups: entry_size = sizeof(struct distributed_pickup); break;
 	case _distributed_message_votekick: entry_size = network_votekick_request_entry_size(); break;
 	case _distributed_message_votekick_status: entry_size = network_votekick_status_entry_size(); break;
+	case _distributed_message_skate_up:
+	case _distributed_message_skate_down: entry_size = SKATE_STATE_HEADER_SIZE; break;
 	case _distributed_message_player_inputs: entry_size = sizeof(struct distributed_player_input); break;
 	case _distributed_message_relayed_actions: entry_size = DISTRIBUTED_RELAYED_ACTION_MINIMUM_SIZE; break;
 	case _distributed_message_game_state:
@@ -4013,6 +4200,7 @@ void network_distributed_handle_message(
 	case _distributed_message_player_inputs:
 	case _distributed_message_coop_skip_vote:
 	case _distributed_message_votekick:
+	case _distributed_message_skate_up:
 		if (machine_index == NONE || game_connection() != _game_connection_network_server)
 			return;
 		break;
@@ -4072,6 +4260,10 @@ void network_distributed_handle_message(
 		break;
 	case _distributed_message_votekick_status:
 		network_votekick_handle_status(entries);
+		break;
+	case _distributed_message_skate_up:
+	case _distributed_message_skate_down:
+		skate_network_handle_entries(machine_index, (byte const *)entries, (byte const *)message + size, header.count);
 		break;
 	case _distributed_message_coop_device_groups:
 		network_coop_handle_device_groups(entries, header.count);

@@ -7,7 +7,7 @@
 //! the board skinned by the skater's last pose, in world units, and draws it.
 
 use crate::{direction_from_skate, from_skate};
-use bevy_math::{Mat4, Vec2, Vec3, Vec4};
+use bevy_math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 use skate_host::bridge::Pose;
 use std::path::Path;
 
@@ -47,6 +47,9 @@ pub struct Board {
     pub indices: Vec<u32>,
     pub surfaces: Vec<Surface>,
     pub textures: Vec<Texture>,
+    /// The joint most of the board's weight is on (the deck), which places
+    /// the whole board for another machine (`placement`, `place`).
+    pub main_joint: usize,
 }
 
 impl Board {
@@ -69,6 +72,7 @@ impl Board {
             indices: Vec::new(),
             surfaces: Vec::new(),
             textures: Vec::new(),
+            main_joint: 0,
         };
         // (each image once, however many board materials share it)
         let mut texture_of_image: Vec<(usize, u32)> = Vec::new();
@@ -195,6 +199,15 @@ impl Board {
         if board.surfaces.is_empty() {
             return Err("no skateboard meshes (skinned, with a material named for the board)".into());
         }
+        let mut weights = vec![0.0f32; board.joints.len()];
+        for vertex in &board.vertices {
+            for (&joint, &weight) in vertex.joints.iter().zip(&vertex.weights) {
+                if let Some(total) = weights.get_mut(joint as usize) {
+                    *total += weight;
+                }
+            }
+        }
+        board.main_joint = (0..weights.len()).fold(0, |best, i| if weights[i] > weights[best] { i } else { best });
         Ok(board)
     }
 
@@ -235,6 +248,44 @@ impl Board {
         }
         scale_about_middle(&mut out[..count * VERTEX_FLOATS], scale);
         Ok(count)
+    }
+}
+
+impl Board {
+    /// Where `pose` has the board, for another machine to draw it there
+    /// (`place`): the skinning of its main joint (the deck) as a turn and a
+    /// position in world units, Z up. None without that joint in the pose.
+    pub fn placement(&self, pose: &Pose) -> Option<(Quat, Vec3)> {
+        let joint = self.joints.get(self.main_joint)?;
+        let basis = Mat4::from_cols(Vec4::X, -Vec4::Z, Vec4::Y, Vec4::W);
+        let index = pose.names.iter().position(|n| *n == joint.name)?;
+        let matrix = pose.root * *pose.bones.get(index)? * basis * joint.inverse_bind;
+        // Skate's axes to Halo's (from_skate's (x, -z, y)), either side
+        let axes = Mat3::from_cols(Vec3::X, Vec3::Z, -Vec3::Y);
+        let turn = axes * Mat3::from_mat4(matrix) * axes.transpose();
+        // (made square: a skin's matrix may carry a little scale)
+        let x = turn.x_axis.try_normalize()?;
+        let y = (turn.y_axis - x * turn.y_axis.dot(x)).try_normalize()?;
+        let rotation = Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y))).normalize();
+        let position = from_skate(matrix.w_axis.truncate());
+        (rotation.is_finite() && position.is_finite()).then_some((rotation, position))
+    }
+
+    /// Writes the board's vertices placed whole at `rotation` and `position`
+    /// (another machine's skater's `placement`): its bind pose turned and
+    /// moved there, grown `scale` times about its middle, as `skin` writes
+    /// them. Returns how many.
+    pub fn place(&self, rotation: Quat, position: Vec3, scale: f32, out: &mut [f32]) -> usize {
+        let count = self.vertices.len().min(out.len() / VERTEX_FLOATS);
+        for (vertex, out) in self.vertices.iter().zip(out.chunks_exact_mut(VERTEX_FLOATS)) {
+            let point = rotation * from_skate(vertex.position) + position;
+            let normal = (rotation * direction_from_skate(vertex.normal)).normalize_or(Vec3::Z);
+            out[0..3].copy_from_slice(&point.to_array());
+            out[3..6].copy_from_slice(&normal.to_array());
+            out[6..8].copy_from_slice(&vertex.uv.to_array());
+        }
+        scale_about_middle(&mut out[..count * VERTEX_FLOATS], scale);
+        count
     }
 }
 
@@ -572,6 +623,29 @@ mod tests {
         let turned = Vec3::new(-2.0, 1.0, 3.0) / METRES;
         close([out[0], out[1], out[2]], turned + Vec3::Y);
         close([out[3], out[4], out[5]], Vec3::Z);
+    }
+
+    #[test]
+    fn placed_whole_it_is_where_skinning_puts_it() {
+        let board = Board::from_glb(&glb(&png(1, 1, &[9, 9, 9, 255]))).unwrap();
+        let rb = Mat4::from_cols(Vec4::X, -Vec4::Z, Vec4::Y, Vec4::W);
+        let at_bind = rb * Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0)) * rb.inverse();
+        // the skater moved, turned and tipped: a board all on its main joint
+        // is one rigid body, so placing it whole is skinning it
+        let moved = Mat4::from_translation(Vec3::new(2.0, 0.5, -METRES))
+            * Mat4::from_rotation_y(0.7)
+            * Mat4::from_rotation_x(0.3);
+        for root in [Mat4::IDENTITY, moved] {
+            let pose = pose(root, at_bind);
+            let mut skinned = vec![0.0; 3 * VERTEX_FLOATS];
+            let mut placed = vec![0.0; 3 * VERTEX_FLOATS];
+            board.skin(&pose, 1.05, &mut skinned).unwrap();
+            let (rotation, position) = board.placement(&pose).unwrap();
+            assert_eq!(board.place(rotation, position, 1.05, &mut placed), 3);
+            for (a, b) in skinned.iter().zip(&placed) {
+                assert!((a - b).abs() < 1e-5, "{skinned:?} != {placed:?}");
+            }
+        }
     }
 
     #[test]
