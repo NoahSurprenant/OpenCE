@@ -867,6 +867,8 @@ tried again once they skate again) */
 thrown from */
 #define SKATE_SHOOT_DISTANCE 1.5f
 #define SKATE_THROW_DISTANCE 0.8f
+/* ticks a set time's shot waits for its skater to ride (five seconds) */
+#define SKATE_SHOOT_WAIT_TICKS (5 * TICKS_PER_SECOND)
 
 static struct
 {
@@ -913,6 +915,10 @@ static long skate_shoot_projectile(long definition_index, long owner_index, long
 static void skate_network_test_shoot(void)
 {
 	static int enabled = -1;
+	/* (the set times shot, each once: one whose skater bails or walks then is
+	shot at as soon as they ride, within SKATE_SHOOT_WAIT_TICKS) */
+	static boolean fired[8];
+	short scheduled = -1;
 	long watcher_index = player_control_get_unit_index(0);
 	struct object_datum *watcher = watcher_index != NONE ? object_try_and_get(watcher_index) : NULL;
 	boolean burst, grenade;
@@ -1015,11 +1021,17 @@ static void skate_network_test_shoot(void)
 
 		for (which = 0; which < (short)NUMBEROF(skate_shoot_seconds); which++)
 		{
-			if (now == skate_shoot_seconds[which].seconds * TICKS_PER_SECOND)
+			long since = now - skate_shoot_seconds[which].seconds * TICKS_PER_SECOND;
+
+			if (which < (short)NUMBEROF(fired) && !fired[which] && since >= 0 && since <= SKATE_SHOOT_WAIT_TICKS &&
+				since % TICKS_PER_SECOND == 0)
+			{
 				break;
+			}
 		}
 		if (which < (short)NUMBEROF(skate_shoot_seconds))
 		{
+			scheduled = which;
 			skate_shoot.shots = skate_shoot_seconds[which].own;
 			grenade = skate_shoot_seconds[which].grenade;
 			burst = skate_shoot_seconds[which].burst;
@@ -1066,6 +1078,16 @@ static void skate_network_test_shoot(void)
 		}
 		if (target_index == NONE)
 			return;
+		if (scheduled >= 0)
+		{
+			struct unit_datum *skater = (struct unit_datum *)object_get(target_index);
+			boolean riding = local ? skate_local_skater_riding() : skater->unit.player_index != NONE &&
+				skate_network_player_riding((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(skater->unit.player_index));
+
+			if (!riding && now < skate_shoot_seconds[scheduled].seconds * TICKS_PER_SECOND + SKATE_SHOOT_WAIT_TICKS)
+				return;
+			fired[scheduled] = TRUE;
+		}
 		{
 			struct object_datum *target = object_get(target_index);
 			struct unit_datum *unit = (struct unit_datum *)watcher;
