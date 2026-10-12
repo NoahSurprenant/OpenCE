@@ -382,6 +382,103 @@ jobs:
         if: always()
         run: rm -rf "$RUNNER_TEMP/skate-data" "$RUNNER_TEMP/vgmstream" "$RUNNER_TEMP/vgmstream.zip"
 
+  skate-multiplayer:
+    # Skate 3 mode in a network game, two real games (a host and a client
+    # skating) on one machine: tools/test_linux_port.py's
+    # test_skate_multiplayer (port/skate/README.md, "Testing multiplayer"),
+    # which needs the converted Skate 3 data and the Halo maps - so on the
+    # owner's runner, opence-k8s, for the reasons skate-assets gives above,
+    # and only for this repository's own code, as skate-assets. The runner
+    # serves one job at a time, so the two take turns.
+    #
+    # The game is the Linux build CI makes as debug (tools/ci_build.py:
+    # --skate --lto=off --pgo=off --portable), 32-bit, headless: the runner
+    # has no display or sound, so SDL's dummy drivers and the null renderer
+    # (HALO_NULL_RENDERER, which the test sets). Not needed by release or
+    # notify, as skate-assets.
+    if: >-
+      github.repository == 'NoahSurprenant/OpenCE' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: opence-k8s
+    timeout-minutes: 30
+    env:
+      HALO_SKATE_TEST_ASSETS: /skate-assets/skate-data/assets
+      HALO_SKATE_TEST_HALO_MAPS: /skate-assets/halo/maps
+      SDL_VIDEO_DRIVER: dummy
+      SDL_AUDIO_DRIVER: dummy
+    steps:
+      # The test passes without running when the data is not there; on this
+      # runner that would be a silent no, so check first.
+      - name: Skate 3 data and Halo maps
+        run: |
+          if [ ! -d "$HALO_SKATE_TEST_ASSETS/private" ]; then
+            echo "::error::no converted Skate 3 data at $HALO_SKATE_TEST_ASSETS (the runner's /skate-assets mount is missing or empty)"
+            exit 1
+          fi
+          if [ ! -f "$HALO_SKATE_TEST_HALO_MAPS/bloodgulch.map" ]; then
+            echo "::error::no Halo maps at $HALO_SKATE_TEST_HALO_MAPS (the runner's /skate-assets mount is missing or empty)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      # the compile cache (ninja rebuilds a fresh checkout whole; ccache
+      # makes that cheap), and the skate engine as cargo built it for the
+      # game (port/skate/target/i686-unknown-linux-gnu) with the crates it was
+      # built from; apart from skate-assets' caches, which hold the engine
+      # built for the host
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-skate-mp-${{ github.sha }}
+          restore-keys: ccache-skate-mp-
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            port/skate/target
+            ~/.cargo/registry
+          key: skate-mp-${{ hashFiles('port/skate/**/Cargo.lock', 'port/skate/**/*.rs', 'port/skate/**/Cargo.toml') }}
+          restore-keys: skate-mp-
+
+      - name: Build
+        run: python3 tools/ci_build.py linux debug
+
+      # a skip fails the job too: on this runner it would mean the data or
+      # the game did not reach the test. The test stops both games itself;
+      # the last step makes sure.
+      - name: Test
+        env:
+          HALO_TEST_GAME: ${{ github.workspace }}/build/linux/halo
+        run: |
+          set -o pipefail
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
+            tools/test_linux_port.py -k test_skate_multiplayer 2>&1 | tee "$RUNNER_TEMP/skate-mp.log"
+          if ! grep -q '1 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
+            echo "::error::test_skate_multiplayer did not run and pass"
+            exit 1
+          fi
+
+      - name: Compile cache
+        run: ccache --show-stats
+
+      # the games' logs, on failure (they hold no Skate 3 data, only the
+      # games' own lines)
+      - name: Game logs
+        if: failure()
+        run: |
+          for f in "$RUNNER_TEMP"/skate-mp/*/*/run.log; do
+            [ -f "$f" ] && { echo "== $f"; tail -n 60 "$f"; }
+          done
+          true
+
+      - name: Stop the games
+        if: always()
+        run: |
+          pkill -KILL -f "$GITHUB_WORKSPACE/build/linux/halo" || true
+          rm -rf "$RUNNER_TEMP/skate-mp" "$RUNNER_TEMP/skate-mp.log"
+
   release:
     # The six builds (and the Windows builds' PDBs) as a release, tagged
     # build-<run number> and marked latest
