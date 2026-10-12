@@ -1,7 +1,7 @@
 /*
 LONG_NOSE_CHIEF.C
 
-The long-nose Master Chief (game.long_nose_chief, off unless set, or the
+The long-nose Master Chief (game.long_nose_chief, on unless set false, or the
 console's long_nose_chief): when a map's tags load (scenario_tags_load), the
 cyborg's model (characters\cyborg\cyborg) gets a long gold nose out of its
 visor and a toothy smile under it, and its visor turns golden orange. Only
