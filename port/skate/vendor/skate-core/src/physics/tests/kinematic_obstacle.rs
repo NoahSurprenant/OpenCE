@@ -27,6 +27,7 @@ fn wall(center: Vector3, velocity: Vector3) -> KinematicObstacle {
             half_extents: Vector3::new(0.5, 1.0, 2.0),
         },
         linear_velocity: velocity,
+        angular_velocity: Vector3::ZERO,
     }
 }
 
@@ -40,6 +41,7 @@ fn person(center: Vector3) -> KinematicObstacle {
             radius: 0.3,
         },
         linear_velocity: Vector3::ZERO,
+        angular_velocity: Vector3::ZERO,
     }
 }
 
@@ -188,9 +190,10 @@ fn ride(board: &mut BoardRuntime, obstacle: &KinematicObstacle, ticks: usize) ->
             .collect();
         let mut body = obstacle.body_at(age);
         let before = (body.rates.position, body.rates.linear_velocity);
-        let volume = obstacle.volume_at(age, CollisionBody::Attached(0), MATERIAL);
+        let mut volumes = Vec::new();
+        obstacle.volumes_at(age, CollisionBody::Attached(0), MATERIAL, |_, _| true, &mut volumes);
         let mut contacts = Vec::new();
-        obstacle_contacts(&wheels, &[volume], 0.05, &mut contacts);
+        obstacle_contacts(&wheels, &volumes, 0.05, &mut contacts);
         board.advance_attached(
             &contacts,
             [0.0; 2],
@@ -235,6 +238,7 @@ fn a_board_rolling_into_a_standing_obstacle_stops_at_it_as_at_a_wall() {
     let obstacle = KinematicObstacle {
         kind: ObstacleKind::Vehicle,
         linear_velocity: Vector3::ZERO,
+        angular_velocity: Vector3::ZERO,
         shape: ObstacleShape::Box {
             center: Vector3::new(0.0, 0.5, 2.0),
             basis: IDENTITY_BASIS,
@@ -266,6 +270,7 @@ fn a_moving_obstacle_carries_a_standing_board_with_it() {
             half_extents: Vector3::new(2.0, 1.0, 0.5),
         },
         linear_velocity: Vector3::new(0.0, 0.0, 3.0),
+        angular_velocity: Vector3::ZERO,
     };
     let reported = ride(&mut b, &obstacle, 60);
     let v = deck_velocity(&b);
@@ -313,4 +318,133 @@ fn an_obstacle_as_triangles_faces_out_and_bounds_its_shape() {
     let moving = wall(Vector3::ZERO, Vector3::new(2.0, 0.0, 0.0)).validated().unwrap();
     let at = |age: f32| moving.triangles_at(age).iter().flatten().map(|p| p.x).fold(f32::MIN, f32::max);
     assert!((at(0.5) - at(0.0) - 1.0).abs() < 1e-5);
+}
+
+/// A box's twelve triangles about `center` (half sizes `half`), wound
+/// counterclockwise seen from outside, as the host sends an object's
+/// collision.
+fn box_triangles(center: Vector3, half: Vector3) -> Vec<[Vector3; 3]> {
+    let o = KinematicObstacle {
+        kind: ObstacleKind::Vehicle,
+        shape: ObstacleShape::Box {
+            center,
+            basis: IDENTITY_BASIS,
+            half_extents: half,
+        },
+        linear_velocity: Vector3::ZERO,
+        angular_velocity: Vector3::ZERO,
+    };
+    o.triangles_at(0.0)
+}
+
+fn mesh_obstacle(triangles: &[[Vector3; 3]], velocity: Vector3) -> KinematicObstacle {
+    KinematicObstacle {
+        kind: ObstacleKind::Vehicle,
+        shape: ObstacleShape::Mesh {
+            center: Vector3::ZERO,
+            mesh: Arc::new(ObstacleMesh::new(triangles).expect("a mesh")),
+        },
+        linear_velocity: velocity,
+        angular_velocity: Vector3::ZERO,
+    }
+}
+
+#[test]
+fn a_mesh_knows_its_creases_from_its_corners() {
+    let triangles = box_triangles(Vector3::new(1.0, 2.0, 3.0), Vector3::new(0.5, 1.0, 2.0));
+    let mesh = ObstacleMesh::new(&triangles).unwrap();
+    assert_eq!(mesh.triangles().len(), 12);
+    let (center, radius) = mesh.bounds();
+    assert!(length(sub(center, Vector3::new(1.0, 2.0, 3.0))) < 1e-5);
+    assert!((radius - (0.25f32 + 1.0 + 4.0).sqrt()).abs() < 1e-4);
+    for t in mesh.triangles() {
+        let flags = t.feature.flags;
+        assert_ne!(flags & TriangleFeature::ONE_SIDED, 0, "one-sided");
+        assert_ne!(flags & TriangleFeature::USE_EDGE_COSINES, 0);
+        // each half of a face shares its diagonal with the other half (flat:
+        // no edge to catch on) and its two outer edges with the next faces
+        // (a right angle: convex)
+        let convex = (0..3).filter(|&e| t.feature.edge_convex(e)).count();
+        let flat = (0..3).filter(|&e| !t.feature.edge_convex(e)).count();
+        assert_eq!((convex, flat), (2, 1), "{t:?}");
+        for e in 0..3 {
+            let c = t.feature.edge_cosines[e];
+            assert!(c.abs() < 1e-4 || (c - 1.0).abs() < 1e-4, "a right angle or flat: {c}");
+        }
+        // a box's corners meet three faces: none is disabled
+        assert_eq!(flags & 0xe00, 0);
+    }
+    assert!(ObstacleMesh::new(&[]).is_none(), "no triangles");
+    let p = Vector3::new(1.0, 0.0, 0.0);
+    assert!(ObstacleMesh::new(&[[p, p, p]]).is_none(), "no area");
+    let nan = Vector3::new(f32::NAN, 0.0, 0.0);
+    assert_eq!(ObstacleMesh::new(&[triangles[0], [nan, p, p]]).unwrap().triangles().len(), 1);
+}
+
+#[test]
+fn a_mesh_carries_on_turns_and_gives_only_its_near_triangles() {
+    let triangles = box_triangles(Vector3::new(0.0, 0.5, 2.0), Vector3::new(2.0, 1.0, 0.5));
+    let mut o = mesh_obstacle(&triangles, Vector3::new(0.0, 0.0, 2.0)).validated().unwrap();
+    // carried, as a box is: its triangles and its sphere
+    let moved = o.triangles_at(0.5);
+    assert_eq!(moved.len(), 12);
+    for (a, b) in triangles.iter().zip(&moved) {
+        for i in 0..3 {
+            assert!(length(sub(add(a[i], Vector3::new(0.0, 0.0, 1.0)), b[i])) < 1e-5);
+        }
+    }
+    let mut all = Vec::new();
+    o.volumes_at(0.0, CollisionBody::Attached(2), MATERIAL, |_, _| true, &mut all);
+    assert_eq!(all.len(), 12, "a volume a triangle, of the one body");
+    assert!(all.iter().all(|v| v.body == CollisionBody::Attached(2)));
+    let mut none = Vec::new();
+    o.volumes_at(0.0, CollisionBody::Attached(2), MATERIAL, |_, _| false, &mut none);
+    assert!(none.is_empty(), "none near");
+    // (only those touching a sphere at the near face, z 1.5)
+    let mut near = Vec::new();
+    let probe = Vector3::new(0.0, 0.5, 1.3);
+    o.volumes_at(
+        0.0,
+        CollisionBody::Attached(2),
+        MATERIAL,
+        |c, r| length(sub(c, probe)) <= r + 0.25,
+        &mut near,
+    );
+    assert!(!near.is_empty() && near.len() < 12, "some: {}", near.len());
+    // a turning obstacle's points move with the turn
+    o.angular_velocity = Vector3::new(0.0, 1.0, 0.0);
+    let v = o.velocity_at(Vector3::new(1.0, 0.0, 0.0), 0.0);
+    assert!(length(sub(v, Vector3::new(0.0, 0.0, 1.0))) < 1e-5, "{v:?}");
+    assert_eq!(o.body_at(0.0).rates.angular_velocity, Vector3::new(0.0, 1.0, 0.0));
+    o.angular_velocity.x = f32::NAN;
+    assert!(o.validated().is_none(), "a turn not finite");
+}
+
+#[test]
+fn a_board_rolling_into_a_mesh_stops_at_its_face() {
+    // the same box as the standing obstacle above, sent as its triangles
+    let triangles = box_triangles(Vector3::new(0.0, 0.5, 2.0), Vector3::new(2.0, 1.0, 0.5));
+    let obstacle = mesh_obstacle(&triangles, Vector3::ZERO).validated().unwrap();
+    let mut b = board();
+    for body in b.bodies_mut() {
+        body.rates.linear_velocity = Vector3::new(0.0, 0.0, 6.0);
+    }
+    let reported = ride(&mut b, &obstacle, 60);
+    let v = deck_velocity(&b);
+    assert!(reported, "the board reports hitting it, as a wall");
+    assert!(v.z < 1.0, "stopped (or bounced) at it: {v:?}");
+    let poses = b.part_transforms();
+    let front = BodyId::ORDER[..4]
+        .iter()
+        .map(|id| poses[id.index()].translation.z)
+        .fold(f32::MIN, f32::max);
+    assert!(front < 1.5 + RETAIL_WHEEL_RADIUS, "not through it: the front wheel at z {front}");
+    // and pushed along by one driving into it
+    let mut b = board();
+    let driving = mesh_obstacle(
+        &box_triangles(Vector3::new(0.0, 0.5, -1.0), Vector3::new(2.0, 1.0, 0.5)),
+        Vector3::new(0.0, 0.0, 3.0),
+    );
+    assert!(ride(&mut b, &driving.validated().unwrap(), 60));
+    assert!(deck_velocity(&b).z > 2.0, "pushed along at its speed: {:?}", deck_velocity(&b));
 }

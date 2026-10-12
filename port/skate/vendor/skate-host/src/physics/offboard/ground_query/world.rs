@@ -65,7 +65,7 @@ impl GroundQueryScene for WorldScene<'_> {
                 surfaces: &metadata.packed_surfaces[source.triangle_range.clone()],
             });
         }
-        super::lines::query_pools(
+        let mut output = super::lines::query_pools(
             [
                 &pools[0],
                 &pools[1],
@@ -76,7 +76,12 @@ impl GroundQueryScene for WorldScene<'_> {
                 },
             ],
             packet,
-        )
+        )?;
+        // halo-skate: and the kinematic obstacles (set_offboard_obstacles), so
+        // that the walking skater stands on a vehicle's roof, a crate or a lift
+        // as on the ground
+        super::lines::query_obstacles(self.world.offboard_obstacles(), packet, &mut output);
+        Ok(output)
     }
 }
 

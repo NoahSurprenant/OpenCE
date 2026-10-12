@@ -249,3 +249,46 @@ impl Reader<'_> {
         Ok((self.u32(at)?, self.u32(at + 4)?))
     }
 }
+
+/// `collision_model`'s nodes block (`source/physics/collision_model_definitions.h`:
+/// after the 0x258-byte damage resistance, 16 unused bytes, the pathfinding
+/// box and spheres), and a `collision_node`'s size and its BSPs block.
+const COLLISION_MODEL_NODES: u32 = 0x28C;
+const COLLISION_NODE_SIZE: u32 = 0x40;
+const COLLISION_NODE_BSPS: u32 = 0x34;
+
+/// The collision model (`coll`) whose tag name ends with `name` in the map at
+/// `path`: its root nodes' first BSPs as triangles (nine floats each, world
+/// units, in the object's own space, as skate.c's `skate_bsp_triangles`
+/// makes them), the hull of a vehicle at rest; and the tag's full name.
+pub fn read_collision_model(path: &Path, name: &str) -> Result<(String, Vec<f32>), String> {
+    let file = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let map = decompress(&file)?;
+    let r = Reader(&map);
+    let tags = Space { file: r.u32(0x10)? as usize, base: TAG_CACHE_BASE_ADDRESS };
+    let instances = r.u32(tags.at(TAG_CACHE_BASE_ADDRESS)?)?;
+    let tag_count = r.u32(tags.at(TAG_CACHE_BASE_ADDRESS + 0xC)?)?;
+    for slot in 0..tag_count {
+        let instance = instances + slot * 0x20;
+        if r.u32(tags.at(instance)?)? != u32::from_be_bytes(*b"coll") {
+            continue;
+        }
+        let tag_name = cstr(&map[tags.at(r.u32(tags.at(instance + 0x10)?)?)?..]);
+        if !tag_name.ends_with(name) {
+            continue;
+        }
+        let model = r.u32(tags.at(instance + 0x14)?)?;
+        let (node_count, nodes) = r.block(tags.at(model + COLLISION_MODEL_NODES)?)?;
+        let mut out = Vec::new();
+        for node in 0..node_count {
+            let at = nodes + node * COLLISION_NODE_SIZE;
+            let parent = i16::from_le_bytes(r.bytes(tags.at(at + 0x22)?)?);
+            let (bsp_count, bsps) = r.block(tags.at(at + COLLISION_NODE_BSPS)?)?;
+            if parent == -1 && bsp_count > 0 {
+                out.extend(collision_triangles(&r, &tags, bsps)?);
+            }
+        }
+        return Ok((tag_name, out));
+    }
+    Err(format!("no collision model named ...{name}"))
+}

@@ -100,6 +100,9 @@ enum Job {
     /// Makes the session, on a placeholder floor, before any map.
     Preload { root: PathBuf },
     Load { root: PathBuf, triangles: Vec<[Vec3; 3]>, generation: u64 },
+    /// The same level's collision again (scenery made or gone): built aside,
+    /// the skater riding the old meanwhile (`halo_skate_reload`).
+    Reload { root: PathBuf, triangles: Vec<[Vec3; 3]>, generation: u64 },
     Activate { sequence: u64, spawn: Vec3, yaw: f32 },
     /// The obstacles the next steps collide with (`obstacles.rs`).
     Obstacles { obstacles: Vec<skate_host::bridge::KinematicObstacle>, bail_speed: f32 },
@@ -110,6 +113,8 @@ enum Job {
 enum Reply {
     Preloaded,
     Loaded { triangles: usize, rails: usize, generation: u64 },
+    /// A reload installed (`Job::Reload`).
+    Reloaded { triangles: usize, rails: usize, generation: u64 },
     /// The board of the skater model the session was made from (`board.rs`),
     /// or None when it has none to draw.
     Board(Option<Arc<board::Board>>),
@@ -242,6 +247,15 @@ impl Host {
                     self.ready = true;
                 }
             }
+            Reply::Reloaded {
+                triangles,
+                rails,
+                generation,
+            } => {
+                if generation == self.generation.load(Ordering::SeqCst) {
+                    eprintln!("halo-skate: map rebuilt, {triangles} triangles, {rails} rails");
+                }
+            }
             Reply::Board(board) => {
                 self.board = board;
                 self.board_generation = BOARD_GENERATIONS.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1);
@@ -345,9 +359,79 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
     let mut recovery = recovery::Recovery::default();
     let mut hits = obstacles::HitLog::default();
     let current = |generation: u64| generation == latest.load(Ordering::SeqCst);
+    // a level's collision built again aside (Job::Reload), and its generation
+    let mut rebuilding: Option<(u64, Rebuild)> = None;
     for job in jobs {
+        // (installed between steps once built, when the skater is not on a
+        // rail nor in the air, which hold the old grind world's rails)
+        if let Some((generation, rebuild)) = rebuilding.take() {
+            let ready = rebuild.is_finished() && session.as_ref().is_none_or(|(_, s)| installable(&s.state_name()));
+            if !ready {
+                rebuilding = Some((generation, rebuild));
+            } else if current(generation) {
+                let reply = match (rebuild.join(), session.as_mut()) {
+                    (Ok((Ok(prepared), triangles, rails)), Some((_, s))) => match s.install_collision(prepared) {
+                        Ok(()) => Reply::Reloaded {
+                            triangles,
+                            rails,
+                            generation,
+                        },
+                        Err(e) => Reply::Error(e),
+                    },
+                    (Ok((Err(e), ..)), _) => Reply::Error(e),
+                    (Ok(_), None) => Reply::Error("no session to rebuild the map in".into()),
+                    (Err(_), _) => Reply::Error("the map's rebuild failed".into()),
+                };
+                let failed = matches!(reply, Reply::Error(_));
+                if replies.send(reply).is_err() || failed {
+                    return;
+                }
+            }
+        }
         let reply = match job {
             Job::Preload { root } => preload(&mut session, root),
+            Job::Reload {
+                root,
+                triangles,
+                generation,
+            } => {
+                if !current(generation) {
+                    continue;
+                }
+                match session.as_ref() {
+                    Some((loaded, s)) if *loaded == root => {
+                        let builder = s.collision_builder();
+                        let spawned = std::thread::Builder::new()
+                            .name("skate-rebuild".into())
+                            .stack_size(WORKER_STACK)
+                            .spawn(move || {
+                                let started = Instant::now();
+                                let (triangles, rails) = prepare(triangles);
+                                let counts = (triangles.len(), rails.len());
+                                let built = builder.build(triangles, rails);
+                                eprintln!("halo-skate: map rebuilt aside in {}ms", started.elapsed().as_millis());
+                                (built, counts.0, counts.1)
+                            });
+                        match spawned {
+                            Ok(handle) => {
+                                rebuilding = Some((generation, handle));
+                                continue;
+                            }
+                            Err(e) => Reply::Error(format!("skate rebuild: {e}")),
+                        }
+                    }
+                    // (no session for these assets yet: loaded as any map)
+                    _ => match load(&mut session, root, triangles, || current(generation)) {
+                        Some(Ok((triangles, rails))) => Reply::Reloaded {
+                            triangles,
+                            rails,
+                            generation,
+                        },
+                        Some(Err(e)) => Reply::Error(e),
+                        None => continue,
+                    },
+                }
+            }
             Job::Load {
                 root,
                 triangles,
@@ -485,6 +569,16 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
             return;
         }
     }
+}
+
+/// A level's collision being built again aside: its build, triangles and rails.
+type Rebuild = std::thread::JoinHandle<(Result<skate_host::bridge::PreparedCollision, String>, usize, usize)>;
+
+/// Whether a rebuilt collision may be swapped in with the skater in `state`:
+/// not on a rail, nor in the air (where the grind selector holds the old
+/// world's rails), nor being put somewhere.
+fn installable(state: &str) -> bool {
+    !(state.starts_with("Grind") || state.contains("Air") || state == "Teleporting" || state == "LandingOnDeck")
 }
 
 fn pose_is_finite(pose: &Pose) -> bool {
@@ -887,6 +981,50 @@ pub unsafe extern "C" fn halo_skate_load(assets: *const c_char, triangles: *cons
     0
 }
 
+/// Builds the loaded level's collision again (`count` triangles as
+/// `halo_skate_load` takes them: the same level with scenery made or gone)
+/// aside, in the background, while the skater rides the old one, and swaps it
+/// in between steps once built, never with the skater on a rail or in the
+/// air. The state stays ready throughout (2); a map sent later replaces it.
+/// With no map loaded from `assets` yet it loads as `halo_skate_load` does.
+/// Returns 0, or -1 when the engine could not be started.
+///
+/// # Safety
+/// `assets` is a C string and `triangles` holds `count * 9` floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_reload(assets: *const c_char, triangles: *const f32, count: i32) -> i32 {
+    if assets.is_null() || (triangles.is_null() && count > 0) {
+        return -1;
+    }
+    let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let ready = guard.as_ref().is_some_and(|h| h.ready && h.error.is_none());
+    drop(guard);
+    if !ready {
+        return unsafe { halo_skate_load(assets, triangles, count) };
+    }
+    let root = PathBuf::from(unsafe { CStr::from_ptr(assets) }.to_string_lossy().into_owned());
+    let floats: &[f32] = if count > 0 {
+        unsafe { std::slice::from_raw_parts(triangles, count as usize * 9) }
+    } else {
+        &[]
+    };
+    let triangles = floats
+        .chunks_exact(9)
+        .map(|t| [Vec3::new(t[0], t[1], t[2]), Vec3::new(t[3], t[4], t[5]), Vec3::new(t[6], t[7], t[8])])
+        .collect::<Vec<_>>();
+    guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(host) = guard.as_mut() else {
+        return -1;
+    };
+    let generation = host.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    eprintln!("halo-skate: map {generation} sent to rebuild, {} triangles", triangles.len());
+    if host.jobs.send(Job::Reload { root, triangles, generation }).is_err() {
+        host.fail("the skate engine stopped".into());
+        return -1;
+    }
+    0
+}
+
 /// The map's collision: 0: nothing loaded, 1: loading, 2: ready, -1: failed
 /// (`halo_skate_error`; a failed preload too).
 #[unsafe(no_mangle)]
@@ -1048,16 +1186,25 @@ pub extern "C" fn halo_skate_suspend() {
 
 /// The obstacles the board and the skater collide with from the next step
 /// (`obstacles.rs`): `count` of them (0 for none), where they are now and how
-/// they move; they carry on at their velocities until the next call. Those of
-/// a kind or shape not known, or not valid, are left out, as are any past
-/// the engine's most (HALO_SKATE_MAXIMUM_OBSTACLES); the game sends the
-/// nearest first. Returns how many were sent on, or -1.
+/// they move; they carry on at their velocities until the next call. A mesh's
+/// triangles are among `triangles` (`triangle_count` of 9 floats each, world
+/// units, where the object is now). Those of a kind or shape not known, or not
+/// valid, are left out, as are any past the engine's most
+/// (HALO_SKATE_MAXIMUM_OBSTACLES) and meshes past its most triangles
+/// (HALO_SKATE_MAXIMUM_OBSTACLE_TRIANGLES); the game sends the nearest first.
+/// Returns how many were sent on, or -1.
 ///
 /// # Safety
-/// `obstacles` holds `count` obstacles (or is NULL with `count` 0).
+/// `obstacles` holds `count` obstacles (or is NULL with `count` 0), and
+/// `triangles` `triangle_count * 9` floats (or is NULL with `triangle_count` 0).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn halo_skate_set_obstacles(obstacles: *const obstacles::HaloSkateObstacle, count: i32) -> i32 {
-    if count < 0 || (count > 0 && obstacles.is_null()) {
+pub unsafe extern "C" fn halo_skate_set_obstacles(
+    obstacles: *const obstacles::HaloSkateObstacle,
+    count: i32,
+    triangles: *const f32,
+    triangle_count: i32,
+) -> i32 {
+    if count < 0 || (count > 0 && obstacles.is_null()) || triangle_count < 0 || (triangle_count > 0 && triangles.is_null()) {
         return -1;
     }
     let given = if count == 0 {
@@ -1065,9 +1212,22 @@ pub unsafe extern "C" fn halo_skate_set_obstacles(obstacles: *const obstacles::H
     } else {
         unsafe { std::slice::from_raw_parts(obstacles, count as usize) }
     };
+    let floats = if triangle_count == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(triangles, triangle_count as usize * 9) }
+    };
+    let mut meshed = 0usize;
     let taken: Vec<_> = given
         .iter()
-        .filter_map(|o| o.to_engine())
+        .filter(|o| {
+            // (meshes, nearest first, until the most triangles are taken)
+            o.shape != obstacles::SHAPE_MESH || {
+                meshed += o.triangle_count.max(0) as usize;
+                meshed <= skate_host::bridge::MAXIMUM_MESH_TRIANGLES
+            }
+        })
+        .filter_map(|o| o.to_engine(floats))
         .filter_map(|o| o.validated())
         .take(skate_host::bridge::MAXIMUM_OBSTACLES)
         .collect();

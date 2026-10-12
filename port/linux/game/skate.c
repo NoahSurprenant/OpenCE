@@ -231,6 +231,7 @@ static float *skate_collision_triangles(struct collision_bsp *bsp, long *count)
 }
 
 static void skate_stop(const char *reason);
+static void skate_bsp_cache_clear(void);
 
 static boolean skate_map_loaded(void)
 {
@@ -261,9 +262,13 @@ them is placed, join the structure BSP's (skate_load_map). The board and the
 skater meet a rock's slopes and a crate's top as they are, at any size, the
 skater walking off the board stops at them, and their edges are grind rails
 (the rail finder takes them with the level's). Those pieces are then no
-obstacles (skate_send_obstacles). Scenery made later (by a script) is an
-obstacle each tick, as a box; a piece destroyed or moved later stays where it
-was to the engine until the next structure BSP. */
+obstacles (skate_send_obstacles). Scenery a script makes, destroys, deletes
+or moves later changes the level: looked at twice a second
+(skate_watch_scenery), the level's collision is built again with the scenery
+as it is then, a second after the last change seen (three at most, so that a
+burst of them is one rebuild), aside while the skater rides the old one
+(halo_skate_reload). Until then a piece made is an obstacle (its own
+collision, as a vehicle's), and one gone is still solid. */
 
 #define SKATE_MAXIMUM_BAKED_SCENERY 1024
 
@@ -356,22 +361,91 @@ static float *skate_add_scenery(float *triangles, long *count, long *pieces, lon
 	return triangles;
 }
 
+/* scenery made, gone or moved since the level's collision was sent
+(skate_watch_scenery): looked at every SKATE_SCENERY_CHECK_TICKS, rebuilt
+SKATE_SCENERY_QUIET_TICKS after the last change seen, or
+SKATE_SCENERY_LONGEST_TICKS after the first */
+#define SKATE_SCENERY_CHECK_TICKS (TICKS_PER_SECOND / 2)
+#define SKATE_SCENERY_QUIET_TICKS TICKS_PER_SECOND
+#define SKATE_SCENERY_LONGEST_TICKS (3 * TICKS_PER_SECOND)
+
+static struct
+{
+	/* the scenery as it was sent (skate_scenery_signature), and the latest
+	seen unlike it */
+	unsigned long sent;
+	unsigned long seen;
+	/* when it was first seen changed since it was sent (NONE: it is not),
+	and when it last changed */
+	long changed_time;
+	long quiet_time;
+} skate_scenery_watch = { 0, 0, NONE, NONE };
+
+static unsigned long skate_signature_add(unsigned long signature, void const *data, size_t size)
+{
+	unsigned char const *bytes = (unsigned char const *)data;
+	size_t index;
+
+	/* (FNV-1a) */
+	for (index = 0; index < size; index++)
+		signature = (signature ^ bytes[index]) * 16777619UL;
+	return signature;
+}
+
+/* the scenery skate_add_scenery takes, as it is now: which pieces, where,
+and which of their collision's permutations (a piece destroyed shows another) */
+static unsigned long skate_scenery_signature(long *pieces)
+{
+	struct object_iterator iterator;
+	struct object_datum *scenery;
+	unsigned long signature = 2166136261UL;
+
+	*pieces = 0;
+	object_iterator_new(&iterator, _object_mask_scenery, 0);
+	while ((scenery = (struct object_datum *)object_iterator_next(&iterator)) != NULL)
+	{
+		struct collision_model_instance instance;
+		long object_index = iterator.index;
+
+		if (scenery->object.parent_object_index != NONE ||
+			!collision_model_instance_new(&instance, object_index) || !instance.matrices)
+		{
+			continue;
+		}
+		signature = skate_signature_add(signature, &object_index, sizeof(object_index));
+		signature = skate_signature_add(signature, &scenery->object.position, sizeof(scenery->object.position));
+		signature = skate_signature_add(signature, &scenery->object.forward, sizeof(scenery->object.forward));
+		signature = skate_signature_add(signature, &scenery->object.up, sizeof(scenery->object.up));
+		if (instance.region_permutation_indices)
+		{
+			signature = skate_signature_add(signature, instance.region_permutation_indices,
+				MAXIMUM_REGIONS_PER_OBJECT);
+		}
+		(*pieces)++;
+	}
+	return signature;
+}
+
 /* sends the BSP's collision, with the static scenery in it, to be built in
 the background; the engine copies the triangles, so this never waits for the
-build */
-static boolean skate_load_map(void)
+build. rebuild: the same level again, its scenery changed (halo_skate_reload:
+the skater rides the old meanwhile) */
+static boolean skate_load_map(boolean rebuild)
 {
 	struct collision_bsp *bsp = global_collision_bsp_get();
 	long count;
 	long pieces = 0;
 	long added = 0;
+	long signature_pieces;
 	float *triangles;
 	boolean sent = FALSE;
 
 	skate_globals.map_pending = FALSE;
 	skate_baked_scenery_count = 0;
+	skate_scenery_watch.changed_time = NONE;
 	if (!bsp)
 		return FALSE;
+	skate_scenery_watch.sent = skate_scenery_signature(&signature_pieces);
 	triangles = skate_collision_triangles(bsp, &count);
 	if (triangles)
 		triangles = skate_add_scenery(triangles, &count, &pieces, &added);
@@ -380,9 +454,9 @@ static boolean skate_load_map(void)
 		skate_baked_scenery_count = 0;
 		return FALSE;
 	}
-	platform_log("skate: the level's collision: %ld triangles, %ld of them %ld pieces of scenery", count, added,
-		pieces);
-	if (halo_skate_load(skate_assets(), triangles, (int)count) == 0)
+	platform_log("skate: the level's collision%s: %ld triangles, %ld of them %ld pieces of scenery",
+		rebuild ? " again, its scenery changed" : "", count, added, pieces);
+	if ((rebuild ? halo_skate_reload : halo_skate_load)(skate_assets(), triangles, (int)count) == 0)
 	{
 		skate_globals.loaded_scenario_index = global_scenario_index;
 		skate_globals.loaded_structure_bsp_index = global_structure_bsp_index;
@@ -392,6 +466,44 @@ static boolean skate_load_map(void)
 		skate_baked_scenery_count = 0;
 	free(triangles);
 	return sent;
+}
+
+/* the level's collision built again when its scenery changed: looked at
+every SKATE_SCENERY_CHECK_TICKS, rebuilt once it has not changed for
+SKATE_SCENERY_QUIET_TICKS (a burst of pieces made or gone is one rebuild),
+or SKATE_SCENERY_LONGEST_TICKS after the first change at most */
+static void skate_watch_scenery(void)
+{
+	long now = game_time_get();
+	unsigned long signature;
+	long pieces;
+
+	if (now % SKATE_SCENERY_CHECK_TICKS != 0)
+		return;
+	signature = skate_scenery_signature(&pieces);
+	if (signature == skate_scenery_watch.sent)
+	{
+		skate_scenery_watch.changed_time = NONE;
+		return;
+	}
+	if (skate_scenery_watch.changed_time == NONE)
+	{
+		skate_scenery_watch.changed_time = now;
+		skate_scenery_watch.quiet_time = now;
+		skate_scenery_watch.seen = signature;
+		platform_log("skate: the level's scenery changed (%ld pieces now)", pieces);
+		return;
+	}
+	if (signature != skate_scenery_watch.seen)
+	{
+		skate_scenery_watch.seen = signature;
+		skate_scenery_watch.quiet_time = now;
+	}
+	if (now - skate_scenery_watch.quiet_time >= SKATE_SCENERY_QUIET_TICKS ||
+		now - skate_scenery_watch.changed_time >= SKATE_SCENERY_LONGEST_TICKS)
+	{
+		skate_load_map(TRUE);
+	}
 }
 
 static void skate_log(const char *line)
@@ -428,6 +540,8 @@ void skate_structure_bsp_changed(void)
 	skate_globals.loaded_structure_bsp_index = NONE;
 	skate_globals.map_pending = FALSE;
 	skate_baked_scenery_count = 0;
+	/* (a new map's collision models are other tags) */
+	skate_bsp_cache_clear();
 	/* nobody skates in the main menu; a failed preload is retried on J */
 	if (!skate_globals.preloaded || !scenario || scenario->type == _scenario_type_main_menu ||
 		halo_skate_state() == -1)
@@ -1012,10 +1126,42 @@ SKATE_TEST_OFF_SECONDS on, and on again five seconds later. */
 #define SKATE_TEST_OFF_SECONDS 40
 #define SKATE_TEST_BACK_SECONDS 45
 #define SKATE_TEST_CARVE 8000.f
+/* a player who should be on a board and is not (a death, a respawn) tries
+again this often */
+#define SKATE_TEST_RETRY_TICKS (2 * TICKS_PER_SECOND)
 
 double config_real(const char *name);
 
-/* debug.network_test_skate_duel: that many seconds into a game this
+/* whether the network test's player, off the board where it should be on
+one, gets on now: alive, and SKATE_TEST_RETRY_TICKS since the last try (in
+*tried, ticks of the test's own count), so that a death or a failed J does
+not end the test's skating. Tells of a death, and where, for the log */
+static boolean skate_test_should_get_on(long *tried, long tick)
+{
+	static long dead_unit_index = NONE;
+	long unit_index = player_control_get_unit_index(0);
+	struct object_datum *object = unit_index != NONE ? object_try_and_get(unit_index) : NULL;
+
+	if (object && (object->object.damage_flags & FLAG(_object_dead_bit)))
+	{
+		if (dead_unit_index != unit_index)
+		{
+			platform_log("skate test: this machine's player died at (%.2f %.2f %.2f)", object->object.position.x,
+				object->object.position.y, object->object.position.z);
+			dead_unit_index = unit_index;
+		}
+		return FALSE;
+	}
+	if (skate_globals.skating || skate_globals.activate_when_ready || !skate_unit_can_skate(unit_index) ||
+		(*tried != NONE && *tried <= tick && tick - *tried < SKATE_TEST_RETRY_TICKS))
+	{
+		return FALSE;
+	}
+	*tried = tick;
+	return TRUE;
+}
+
+/* debug.network_test_skate_duel:that many seconds into a game this
 machine's player gets on a board and stands on it, Y stepping back on after
 a fall; with debug.network_test_skate_block on a host it is put on the board
 in another machine's skater's way every five seconds, facing them
@@ -1024,6 +1170,7 @@ TRUE while it has the pad */
 static boolean skate_test_duel_pad(struct halo_skate_pad *pad, boolean *toggle)
 {
 	static real start = -1.f;
+	static long tried = NONE;
 	long tick;
 
 	if (start < 0.f)
@@ -1031,7 +1178,8 @@ static boolean skate_test_duel_pad(struct halo_skate_pad *pad, boolean *toggle)
 	if (!(start > 0.f) || !game_in_progress())
 		return FALSE;
 	tick = game_time_get() - (long)(start * TICKS_PER_SECOND);
-	if (tick == 0 && !skate_globals.skating && !skate_globals.activate_when_ready)
+	/* (and on again after a death, once the player lives again) */
+	if (tick >= 0 && skate_test_should_get_on(&tried, tick))
 	{
 		platform_log("skate test: on the board, to stand in the skater's way");
 		*toggle = TRUE;
@@ -1045,9 +1193,76 @@ static boolean skate_test_duel_pad(struct halo_skate_pad *pad, boolean *toggle)
 	return TRUE;
 }
 
+/* debug.network_test_skate_scenery: that many seconds into a game this
+machine deletes the piece of the level's scenery nearest its player, as a
+script does (the level's collision is built again without it:
+skate_watch_scenery), and makes it again where it was
+SKATE_TEST_SCENERY_BACK_TICKS later (and the level again with it) */
+#define SKATE_TEST_SCENERY_BACK_TICKS (4 * TICKS_PER_SECOND)
+
+static void skate_test_scenery(void)
+{
+	static real start = -1.f;
+	static long definition_index = NONE;
+	static real_point3d position;
+	static real_vector3d forward, up;
+	long unit_index = player_control_get_unit_index(0);
+	long tick;
+
+	if (start < 0.f)
+		start = (real)config_real("debug.network_test_skate_scenery");
+	if (!(start > 0.f) || !game_in_progress() || unit_index == NONE)
+		return;
+	tick = game_time_get() - (long)(start * TICKS_PER_SECOND);
+	if (tick == 0)
+	{
+		real_point3d const *at = &object_get(unit_index)->object.position;
+		struct object_iterator iterator;
+		struct object_datum *scenery;
+		long nearest_index = NONE;
+		real nearest = 0.f;
+
+		object_iterator_new(&iterator, _object_mask_scenery, 0);
+		while ((scenery = (struct object_datum *)object_iterator_next(&iterator)) != NULL)
+		{
+			struct collision_model_instance instance;
+			real distance = (real)sqrt(distance_squared3d(at, &scenery->object.position));
+
+			if (scenery->object.parent_object_index == NONE &&
+				collision_model_instance_new(&instance, iterator.index) && instance.matrices &&
+				(nearest_index == NONE || distance < nearest))
+			{
+				nearest_index = iterator.index;
+				nearest = distance;
+			}
+		}
+		if (nearest_index != NONE)
+		{
+			scenery = object_get(nearest_index);
+			definition_index = scenery->definition_index;
+			position = scenery->object.position;
+			forward = scenery->object.forward;
+			up = scenery->object.up;
+			platform_log("skate test: deleted a piece of scenery %.2f world units away", nearest);
+			object_delete(nearest_index);
+		}
+	}
+	else if (tick == SKATE_TEST_SCENERY_BACK_TICKS && definition_index != NONE)
+	{
+		struct object_placement_data data;
+
+		object_placement_data_new(&data, definition_index, NONE);
+		data.position = position;
+		data.forward = forward;
+		data.up = up;
+		platform_log("skate test: made the piece of scenery again%s", object_new(&data) != NONE ? "" : ": it failed");
+	}
+}
+
 static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
 {
 	static real start = -1.f;
+	static long tried = NONE;
 	long tick;
 	long cycle;
 
@@ -1060,8 +1275,9 @@ static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
 	tick = game_time_get() - (long)(start * TICKS_PER_SECOND);
 	if (tick < 0)
 		return;
-	if ((tick == 0 || tick == SKATE_TEST_BACK_SECONDS * TICKS_PER_SECOND) &&
-		!skate_globals.skating && !skate_globals.activate_when_ready)
+	/* (and on again after a death, once the player lives again) */
+	if ((tick < SKATE_TEST_OFF_SECONDS * TICKS_PER_SECOND || tick >= SKATE_TEST_BACK_SECONDS * TICKS_PER_SECOND) &&
+		skate_test_should_get_on(&tried, tick))
 	{
 		platform_log("skate test: on the board");
 		*toggle = TRUE;
@@ -1098,18 +1314,19 @@ Each tick the objects near the skater go to the engine as obstacles the
 board and the skater collide with (halo_skate_set_obstacles; the engine's
 side is skate-core's kinematic_obstacle.rs): other bipeds, players and AI,
 yours and other machines' alike, as their collision pills, and vehicles,
-scenery and devices as a box for each node of their collision model, the
-box around that node's BSP as the object is now (a turret, a door, a lift
-moves with its node). Each carries on at its velocity until the next tick.
+devices and scenery made later as their own collision: each node's BSP made
+into triangles once (skate_bsp_triangles), placed by the node as the object
+is now (a turret, a door, a lift moves with its node), the triangles near
+the skater only. Each carries on at its velocity until the next tick.
 Nothing is pushed back on Halo's side: the skater bumps or bails off them. */
 
 /* how far from the skater objects are looked for (world units, 24 m: a
 tick at any board speed is under 3 m) */
 #define SKATE_OBSTACLE_RADIUS 8.f
-/* scenery and devices larger than this (half a side, world units: 6 m) are
-left out: a box would fill a building's doors and arches, or a bridge's
-underside. Vehicles are taken up to the engine's most (50 m) */
-#define SKATE_MAXIMUM_SCENERY_HALF_EXTENT 2.f
+/* how near the skater a moving object's triangles are sent (world units,
+9 m: a tick at any board speed, the skater's height and a vehicle's tick at
+speed, with room) */
+#define SKATE_TRIANGLE_REACH 3.f
 #define SKATE_OBSTACLE_SEARCH 128
 /* a biped's velocity is taken up to this (world units a second: 10 m/s,
 past any run): another machine's unit jumps where the host says after a
@@ -1121,44 +1338,95 @@ skater's shoulders, slimmer than Halo's pill), and their velocity taken up to
 #define SKATE_SKATER_RADIUS 0.09f
 #define SKATE_MAXIMUM_SKATER_OBSTACLE_SPEED (20.f / 3.048f)
 
-/* the box around a collision BSP's vertices in its node's space: FALSE for
-none */
-static boolean skate_bsp_bounds(struct collision_bsp *bsp, real_point3d *minimum, real_point3d *maximum)
+/* a collision BSP as triangles in its node's space (skate_collision_triangles),
+made once and kept until the next structure BSP (a map's tags go with it),
+with a sphere around them */
+#define SKATE_MAXIMUM_CACHED_BSPS 256
+
+struct skate_bsp_triangles
 {
-	long index;
+	struct collision_bsp const *bsp;
+	float *triangles;
+	long count;
+	real_point3d center;
+	real radius;
+};
 
-	if (bsp->vertices.count <= 0)
-		return FALSE;
-	for (index = 0; index < bsp->vertices.count; index++)
-	{
-		struct collision_vertex *vertex = TAG_BLOCK_GET_ELEMENT(&bsp->vertices, index, struct collision_vertex);
+static struct skate_bsp_triangles skate_bsp_cache[SKATE_MAXIMUM_CACHED_BSPS];
+static int skate_bsp_cache_count;
 
-		if (index == 0)
-		{
-			*minimum = vertex->point;
-			*maximum = vertex->point;
-			continue;
-		}
-		minimum->x = MIN(minimum->x, vertex->point.x);
-		minimum->y = MIN(minimum->y, vertex->point.y);
-		minimum->z = MIN(minimum->z, vertex->point.z);
-		maximum->x = MAX(maximum->x, vertex->point.x);
-		maximum->y = MAX(maximum->y, vertex->point.y);
-		maximum->z = MAX(maximum->z, vertex->point.z);
-	}
-	return TRUE;
+static void skate_bsp_cache_clear(void)
+{
+	int index;
+
+	for (index = 0; index < skate_bsp_cache_count; index++)
+		skate_free(skate_bsp_cache[index].triangles);
+	skate_bsp_cache_count = 0;
 }
 
-/* the obstacles kept so far, nearest first, and how far each is */
+/* bsp's triangles, made now if they were not yet; NULL out of memory */
+static struct skate_bsp_triangles const *skate_bsp_triangles(struct collision_bsp *bsp)
+{
+	struct skate_bsp_triangles *entry;
+	real_point3d minimum, maximum;
+	long index;
+	int found;
+
+	for (found = 0; found < skate_bsp_cache_count; found++)
+	{
+		if (skate_bsp_cache[found].bsp == bsp)
+			return &skate_bsp_cache[found];
+	}
+	/* (more pieces than are kept: made again as they come) */
+	if (skate_bsp_cache_count == SKATE_MAXIMUM_CACHED_BSPS)
+		skate_bsp_cache_clear();
+	entry = &skate_bsp_cache[skate_bsp_cache_count];
+	entry->triangles = skate_collision_triangles(bsp, &entry->count);
+	if (!entry->triangles)
+		return NULL;
+	entry->bsp = bsp;
+	entry->radius = 0.f;
+	minimum.x = minimum.y = minimum.z = FLT_MAX;
+	maximum.x = maximum.y = maximum.z = -FLT_MAX;
+	for (index = 0; index < entry->count * 3; index++)
+	{
+		float const *p = entry->triangles + index * 3;
+
+		minimum.x = MIN(minimum.x, p[0]);
+		minimum.y = MIN(minimum.y, p[1]);
+		minimum.z = MIN(minimum.z, p[2]);
+		maximum.x = MAX(maximum.x, p[0]);
+		maximum.y = MAX(maximum.y, p[1]);
+		maximum.z = MAX(maximum.z, p[2]);
+	}
+	entry->center.x = (minimum.x + maximum.x) / 2.f;
+	entry->center.y = (minimum.y + maximum.y) / 2.f;
+	entry->center.z = (minimum.z + maximum.z) / 2.f;
+	for (index = 0; index < entry->count * 3; index++)
+	{
+		float const *p = entry->triangles + index * 3;
+		real dx = p[0] - entry->center.x, dy = p[1] - entry->center.y, dz = p[2] - entry->center.z;
+
+		entry->radius = MAX(entry->radius, (real)sqrt(dx * dx + dy * dy + dz * dz));
+	}
+	skate_bsp_cache_count++;
+	return entry;
+}
+
+/* the obstacles kept so far, nearest first, how far each is, and for a mesh
+the object it is (its triangles made once the nearest are known) */
 struct skate_obstacles
 {
 	struct halo_skate_obstacle obstacles[HALO_SKATE_MAXIMUM_OBSTACLES];
 	real distances[HALO_SKATE_MAXIMUM_OBSTACLES];
+	long object_indices[HALO_SKATE_MAXIMUM_OBSTACLES];
 	int count;
 };
 
-/* keeps obstacle, distance world units away, among the nearest */
-static void skate_obstacle_keep(struct skate_obstacles *kept, struct halo_skate_obstacle const *obstacle, real distance)
+/* keeps obstacle (of object_index, NONE but for a mesh), distance world units
+away, among the nearest */
+static void skate_obstacle_keep(struct skate_obstacles *kept, struct halo_skate_obstacle const *obstacle, real distance,
+	long object_index)
 {
 	int slot = kept->count;
 
@@ -1174,10 +1442,12 @@ static void skate_obstacle_keep(struct skate_obstacles *kept, struct halo_skate_
 	{
 		kept->obstacles[slot] = kept->obstacles[slot - 1];
 		kept->distances[slot] = kept->distances[slot - 1];
+		kept->object_indices[slot] = kept->object_indices[slot - 1];
 		slot--;
 	}
 	kept->obstacles[slot] = *obstacle;
 	kept->distances[slot] = distance;
+	kept->object_indices[slot] = object_index;
 }
 
 static void skate_obstacle_velocity(struct object_datum const *object, struct halo_skate_obstacle *obstacle)
@@ -1239,57 +1509,137 @@ static void skate_biped_obstacle(long object_index, real_point3d const *skater, 
 			obstacle.velocity[2] *= SKATE_MAXIMUM_BIPED_OBSTACLE_SPEED / speed;
 		}
 	}
-	skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - obstacle.half_extents[2]);
+	skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - obstacle.half_extents[2], NONE);
 }
 
-/* an object as a box for each node of its collision model that has a BSP */
-static void skate_box_obstacles(long object_index, real_point3d const *skater, struct skate_obstacles *kept)
+/* the velocity of a device, which Halo moves by setting where it is rather
+than by a velocity: from where it was the tick before (a lift rising, a
+platform sliding) */
+#define SKATE_MOVED_DEVICES 32
+
+static void skate_device_velocity(long object_index, struct halo_skate_obstacle *obstacle)
+{
+	static struct
+	{
+		long object_index;
+		long time;
+		real_point3d position;
+	} seen[SKATE_MOVED_DEVICES];
+	static int next;
+	struct object_datum *object = object_get(object_index);
+	long now = game_time_get();
+	int index;
+
+	for (index = 0; index < SKATE_MOVED_DEVICES; index++)
+	{
+		if (seen[index].object_index == object_index && seen[index].time != NONE)
+			break;
+	}
+	if (index == SKATE_MOVED_DEVICES)
+	{
+		index = next;
+		next = (next + 1) % SKATE_MOVED_DEVICES;
+	}
+	else if (seen[index].time == now - 1)
+	{
+		obstacle->velocity[0] = (object->object.position.x - seen[index].position.x) * TICKS_PER_SECOND;
+		obstacle->velocity[1] = (object->object.position.y - seen[index].position.y) * TICKS_PER_SECOND;
+		obstacle->velocity[2] = (object->object.position.z - seen[index].position.z) * TICKS_PER_SECOND;
+	}
+	seen[index].object_index = object_index;
+	seen[index].time = now;
+	seen[index].position = object->object.position;
+}
+
+/* a vehicle, a device or a piece of scenery made later, as a mesh of its own
+collision: kept among the nearest by its bounding sphere, its triangles made
+later (skate_mesh_triangles), unless it is too far for any to be sent */
+static void skate_mesh_obstacle(long object_index, real_point3d const *skater, struct skate_obstacles *kept)
 {
 	struct object_datum *object = object_get(object_index);
+	struct halo_skate_obstacle obstacle;
+	real distance;
+
+	distance = skate_distance(skater, &object->object.bounding_sphere_center.x) - object->object.bounding_sphere_radius;
+	if (distance > SKATE_TRIANGLE_REACH)
+		return;
+	memset(&obstacle, 0, sizeof(obstacle));
+	obstacle.kind = object->object.type == _object_type_vehicle ? HALO_SKATE_OBSTACLE_VEHICLE :
+		HALO_SKATE_OBSTACLE_SCENERY;
+	obstacle.shape = HALO_SKATE_OBSTACLE_MESH;
+	obstacle.center[0] = object->object.bounding_sphere_center.x;
+	obstacle.center[1] = object->object.bounding_sphere_center.y;
+	obstacle.center[2] = object->object.bounding_sphere_center.z;
+	skate_obstacle_velocity(object, &obstacle);
+	if (object->object.type == _object_type_machine || object->object.type == _object_type_control)
+		skate_device_velocity(object_index, &obstacle);
+	/* (Halo's turn is radians a tick about the object's middle) */
+	obstacle.angular_velocity[0] = object->object.angular_velocity.i * TICKS_PER_SECOND;
+	obstacle.angular_velocity[1] = object->object.angular_velocity.j * TICKS_PER_SECOND;
+	obstacle.angular_velocity[2] = object->object.angular_velocity.k * TICKS_PER_SECOND;
+	skate_obstacle_keep(kept, &obstacle, distance, object_index);
+}
+
+/* the triangles of the object_index's collision within SKATE_TRIANGLE_REACH
+of skater, each node's BSP (skate_bsp_triangles) placed by the node as the
+object is now, appended to triangles (*used of them so far, capacity at
+most): how many */
+static int skate_mesh_triangles(long object_index, real_point3d const *skater, float *triangles, int *used,
+	int capacity)
+{
 	struct collision_model_instance instance;
-	int kind = object->object.type == _object_type_vehicle ? HALO_SKATE_OBSTACLE_VEHICLE : HALO_SKATE_OBSTACLE_SCENERY;
+	int first = *used;
 	short node_index;
 
 	if (!collision_model_instance_new(&instance, object_index) || !instance.matrices)
-		return;
+		return 0;
 	for (node_index = 0; node_index < instance.node_count; node_index++)
 	{
-		real_matrix4x3 const *matrix = &instance.matrices[node_index];
 		struct collision_bsp *bsp = skate_node_bsp(&instance, node_index);
-		struct halo_skate_obstacle obstacle;
-		real_point3d minimum, maximum, middle, center;
-		real largest;
+		real_matrix4x3 const *matrix = &instance.matrices[node_index];
+		struct skate_bsp_triangles const *local;
+		real_point3d center;
+		long index;
 
-		if (!bsp || !skate_bsp_bounds(bsp, &minimum, &maximum))
+		if (!bsp || !(local = skate_bsp_triangles(bsp)))
 			continue;
-		memset(&obstacle, 0, sizeof(obstacle));
-		obstacle.kind = kind;
-		obstacle.shape = HALO_SKATE_OBSTACLE_BOX;
-		obstacle.half_extents[0] = (maximum.x - minimum.x) / 2.f * matrix->scale;
-		obstacle.half_extents[1] = (maximum.y - minimum.y) / 2.f * matrix->scale;
-		obstacle.half_extents[2] = (maximum.z - minimum.z) / 2.f * matrix->scale;
-		largest = MAX(obstacle.half_extents[0], MAX(obstacle.half_extents[1], obstacle.half_extents[2]));
-		if (kind != HALO_SKATE_OBSTACLE_VEHICLE && largest > SKATE_MAXIMUM_SCENERY_HALF_EXTENT)
+		matrix4x3_transform_point(matrix, &local->center, &center);
+		if (skate_distance(skater, &center.x) - local->radius * matrix->scale > SKATE_TRIANGLE_REACH)
 			continue;
-		middle.x = (minimum.x + maximum.x) / 2.f;
-		middle.y = (minimum.y + maximum.y) / 2.f;
-		middle.z = (minimum.z + maximum.z) / 2.f;
-		matrix4x3_transform_point(matrix, &middle, &center);
-		obstacle.center[0] = center.x;
-		obstacle.center[1] = center.y;
-		obstacle.center[2] = center.z;
-		obstacle.forward[0] = matrix->forward.i;
-		obstacle.forward[1] = matrix->forward.j;
-		obstacle.forward[2] = matrix->forward.k;
-		obstacle.left[0] = matrix->left.i;
-		obstacle.left[1] = matrix->left.j;
-		obstacle.left[2] = matrix->left.k;
-		obstacle.up[0] = matrix->up.i;
-		obstacle.up[1] = matrix->up.j;
-		obstacle.up[2] = matrix->up.k;
-		skate_obstacle_velocity(object, &obstacle);
-		skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - largest);
+		for (index = 0; index < local->count && *used < capacity; index++)
+		{
+			float *out = triangles + *used * 9;
+			real_point3d placed[3];
+			real_point3d middle;
+			real reach = 0.f;
+			int corner;
+
+			for (corner = 0; corner < 3; corner++)
+			{
+				real_point3d point;
+
+				point.x = local->triangles[index * 9 + corner * 3];
+				point.y = local->triangles[index * 9 + corner * 3 + 1];
+				point.z = local->triangles[index * 9 + corner * 3 + 2];
+				matrix4x3_transform_point(matrix, &point, &placed[corner]);
+			}
+			middle.x = (placed[0].x + placed[1].x + placed[2].x) / 3.f;
+			middle.y = (placed[0].y + placed[1].y + placed[2].y) / 3.f;
+			middle.z = (placed[0].z + placed[1].z + placed[2].z) / 3.f;
+			for (corner = 0; corner < 3; corner++)
+				reach = MAX(reach, skate_distance(&middle, &placed[corner].x));
+			if (skate_distance(skater, &middle.x) - reach > SKATE_TRIANGLE_REACH)
+				continue;
+			for (corner = 0; corner < 3; corner++)
+			{
+				out[corner * 3] = placed[corner].x;
+				out[corner * 3 + 1] = placed[corner].y;
+				out[corner * 3 + 2] = placed[corner].z;
+			}
+			(*used)++;
+		}
 	}
+	return *used - first;
 }
 
 /* the velocity of an obstacle taken up to maximum (world units a second) */
@@ -1391,7 +1741,7 @@ static boolean skate_skater_obstacles(long object_index, real_point3d const *ska
 	obstacle.half_extents[2] = length / 2.f + SKATE_SKATER_RADIUS;
 	skate_obstacle_velocity(object, &obstacle);
 	skate_obstacle_speed_limit(&obstacle, SKATE_MAXIMUM_SKATER_OBSTACLE_SPEED);
-	skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - obstacle.half_extents[2]);
+	skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - obstacle.half_extents[2], NONE);
 	/* (the board drawn last tick: halo_skate_board_obstacle sizes it) */
 	if (player_index != NONE &&
 		skate_network_board((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), 1.f, &board_unit_index, placement) &&
@@ -1401,7 +1751,7 @@ static boolean skate_skater_obstacles(long object_index, real_point3d const *ska
 
 		skate_obstacle_velocity(object, &obstacle);
 		skate_obstacle_speed_limit(&obstacle, SKATE_MAXIMUM_SKATER_OBSTACLE_SPEED);
-		skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - largest);
+		skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - largest, NONE);
 	}
 	return TRUE;
 }
@@ -1409,10 +1759,13 @@ static boolean skate_skater_obstacles(long object_index, real_point3d const *ska
 /* the obstacles around the skater's biped unit_index, to the engine */
 static void skate_send_obstacles(long unit_index)
 {
+	static float triangles[HALO_SKATE_MAXIMUM_OBSTACLE_TRIANGLES * 9];
 	struct object_datum *unit = object_get(unit_index);
 	long object_indices[SKATE_OBSTACLE_SEARCH];
 	struct skate_obstacles kept;
 	real_point3d skater;
+	int used = 0;
+	int sent = 0;
 	short count;
 	short index;
 
@@ -1428,7 +1781,7 @@ static void skate_send_obstacles(long unit_index)
 		struct object_datum *object = object_get(object_index);
 
 		/* (not the skater, nor what rides or is carried: a vehicle's riders
-		are inside its boxes) */
+		are inside its hull) */
 		if (object_index == unit_index || object->object.parent_object_index != NONE)
 			continue;
 		if (object->object.type == _object_type_biped)
@@ -1443,9 +1796,27 @@ static void skate_send_obstacles(long unit_index)
 		}
 		/* (static scenery is part of the level: skate_add_scenery) */
 		else if (!(object->object.type == _object_type_scenery && skate_scenery_baked(object_index)))
-			skate_box_obstacles(object_index, &skater, &kept);
+			skate_mesh_obstacle(object_index, &skater, &kept);
 	}
-	halo_skate_set_obstacles(kept.obstacles, kept.count);
+	/* the meshes' triangles, nearest first, as many as the engine takes; one
+	with none near is left out */
+	for (index = 0; index < kept.count; index++)
+	{
+		struct halo_skate_obstacle *obstacle = &kept.obstacles[index];
+
+		if (obstacle->shape == HALO_SKATE_OBSTACLE_MESH)
+		{
+			obstacle->first_triangle = used;
+			obstacle->triangle_count = skate_mesh_triangles(kept.object_indices[index], &skater, triangles, &used,
+				HALO_SKATE_MAXIMUM_OBSTACLE_TRIANGLES);
+			if (!obstacle->triangle_count)
+				continue;
+		}
+		kept.distances[sent] = kept.distances[index];
+		kept.obstacles[sent++] = *obstacle;
+	}
+	kept.count = sent;
+	halo_skate_set_obstacles(kept.obstacles, kept.count, triangles, used);
 	/* (the network tests, debug.network_test_skate and _duel, tell what is
 	near once a second; the engine tells of each hit: "halo-skate: hit a biped
 	at ...") */
@@ -1459,9 +1830,9 @@ static void skate_send_obstacles(long unit_index)
 			kinds[kept.obstacles[index].kind]++;
 		if (kept.count)
 		{
-			platform_log("skate test: %d obstacles near (%d bipeds, %d of skaters, %d vehicle boxes, %d scenery "
-				"boxes), the nearest a %s %.2f world units away", kept.count, kinds[0], kinds[3], kinds[1], kinds[2],
-				names[kept.obstacles[0].kind], kept.distances[0]);
+			platform_log("skate test: %d obstacles near (%d bipeds, %d of skaters, %d vehicles, %d scenery and "
+				"devices; %d triangles), the nearest a %s %.2f world units away", kept.count, kinds[0], kinds[3],
+				kinds[1], kinds[2], used, names[kept.obstacles[0].kind], kept.distances[0]);
 		}
 		else
 			platform_log("skate test: no obstacles near");
@@ -1483,11 +1854,15 @@ void skate_update_before_objects(void)
 		(skate_globals.previous_buttons & SKATE_THUMB_CLICKS) != SKATE_THUMB_CLICKS);
 	skate_globals.previous_buttons = pad.buttons;
 	skate_test_pad(&pad, &toggle);
+	skate_test_scenery();
 	/* (other machines' skaters carried on: skate_network.c) */
 	skate_network_update_before_objects();
 	/* the structure bsp loaded since the last tick, with its scenery placed */
-	if (skate_globals.map_pending && !skate_load_map())
+	if (skate_globals.map_pending && !skate_load_map(FALSE))
 		skate_globals.activate_when_ready = FALSE;
+	/* (and again when its scenery changed) */
+	else if (!skate_globals.map_pending && skate_map_loaded() && halo_skate_state() == 2)
+		skate_watch_scenery();
 
 	if (skate_globals.skating && (unit_index != skate_globals.unit_index ||
 		!skate_unit_can_skate(unit_index) || !skate_map_loaded()))
@@ -1506,7 +1881,7 @@ void skate_update_before_objects(void)
 			Without the preload, or after a failure, it loads now) */
 			if (!skate_map_loaded() || halo_skate_state() == -1)
 			{
-				if (skate_load_map())
+				if (skate_load_map(FALSE))
 					console_printf(FALSE, "skate: loading");
 			}
 			skate_globals.activate_when_ready = TRUE;

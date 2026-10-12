@@ -470,7 +470,8 @@ def test_skate_multiplayer(tmp_path):
                          "HALO_NETWORK_TEST_SKATE_WATCH": "1", "HALO_NETWORK_TEST_SKATE_BLOCK": "1",
                          "HALO_NETWORK_TEST_SKATE_DUEL": "56"},
                 "join": {"HALO_NET_ADDRESS": "127.0.0.211", "HALO_NET_BROADCAST": "127.0.0.210",
-                         "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15"}}
+                         "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15",
+                         "HALO_NETWORK_TEST_SKATE_SCENERY": "30"}}
     games = {}
     # (each should exit after its seconds, debug.exit_after, but with the null
     # renderer neither does, so both are stopped at a deadline - and stopped
@@ -547,3 +548,16 @@ def test_skate_multiplayer(tmp_path):
                          join)
     print(f"the level's collision: {scenery}")
     assert scenery and int(scenery[-1][2]) > 0, f"no scenery in the level's collision:\n{join[:4000]}"
+    # the client deletes the piece of scenery nearest its player, and makes
+    # it again four seconds on (debug.network_test_skate_scenery): each time
+    # the level's collision is built again (skate.c's skate_watch_scenery),
+    # with a piece fewer, then as before, and the engine swaps it in
+    assert "skate test: deleted a piece of scenery" in join, join[-4000:]
+    assert "skate test: made the piece of scenery again" in join, join[-4000:]
+    again = [int(n) for n in re.findall(r"skate: the level's collision again, its scenery changed: \d+ triangles, "
+                                        r"\d+ of them (\d+) pieces of scenery", join)]
+    rebuilt = re.findall(r"halo-skate: map rebuilt, (\d+) triangles", join)
+    print(f"the level built again with {again} pieces of scenery; {len(rebuilt)} rebuilds swapped in")
+    pieces = int(scenery[-1][2])
+    assert again[:2] == [pieces - 1, pieces], f"rebuilt with {again} pieces, not {pieces - 1} then {pieces}"
+    assert len(rebuilt) >= 2, f"the rebuilds were not swapped in:\n{join[-4000:]}"

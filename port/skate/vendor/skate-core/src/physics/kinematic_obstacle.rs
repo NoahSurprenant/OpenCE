@@ -3,11 +3,15 @@
 //!
 //! Skate 3 shares its solve with other assemblies (cars, other skaters) as
 //! attached bodies; this is the same path for bodies the host moves itself.
-//! Each obstacle is one shape (a capsule or a box) on a body that the solve
-//! treats as fixed: state flags 1 (never integrated, inverse mass 0, as the
-//! static world), but with the obstacle's velocity, so that a contact's
-//! relative velocity, and so its response, is the one against a moving
-//! object. Nothing pushes the obstacle back: the host owns its motion.
+//! Each obstacle is one shape on a body that the solve treats as fixed:
+//! state flags 1 (never integrated, inverse mass 0, as the static world), but
+//! with the obstacle's velocity, so that a contact's relative velocity, and
+//! so its response, is the one against a moving object. Nothing pushes the
+//! obstacle back: the host owns its motion. The shape is a capsule or a box,
+//! the shapes the skater's own parts are made of, or a mesh: an object's own
+//! collision as triangles the host placed (a vehicle's hull, a door, a lift),
+//! each triangle a volume of the one body, as the static world's triangles
+//! are, with its edges' convexity found from its neighbours (`ObstacleMesh`).
 //!
 //! Its contacts with the board are reported to the board as the world's
 //! (`board_reports::collect`, `AttachedStep::kinematic_from`): riding into
@@ -15,21 +19,28 @@
 //! Its contacts with the skater's body are classified by `contact_group`, as
 //! Skate 3's own other assemblies are (`SkeletonCollisionFeedback`).
 use crate::math::{Basis3, Vector3};
+use std::{collections::HashMap, sync::Arc};
 
 use super::{
     assembly::BodySnapshot,
     board_step::{BoardCollision, CollisionBody},
     board_world::BoardWorldVolume,
+    collision::{Triangle, TriangleFeature},
     contact::{RetailContactInput, RetailContactMaterial, combine_contact_materials},
     rigid_body::{RetailBodyRates, RetailInertiaDynamics, RetailQuaternion},
-    world_contact::{ContactPrimitive, PrimitivePairSettings, primitive_pair_contacts},
+    world_contact::{
+        ContactPrimitive, PrimitivePairSettings, primitive_pair_contacts, triangle_from_volume,
+    },
 };
 
 /// The most obstacles a tick takes; the host sends the nearest.
 pub const MAXIMUM_OBSTACLES: usize = 32;
-/// Largest obstacle dimension taken (metres): past this a shape is not an
-/// object but a building, and a box would fill its doors and arches.
+/// Largest box or capsule dimension taken (metres): past this a shape is not
+/// an object but a building, and a box would fill its doors and arches. A
+/// mesh is its own shape, and is taken at any size.
 pub const MAXIMUM_EXTENT: f32 = 50.0;
+/// The most triangles a tick's meshes take between them.
+pub const MAXIMUM_MESH_TRIANGLES: usize = 4096;
 /// Rounding of an obstacle box's edges (metres), so that the board slides
 /// off a corner rather than catching on it.
 pub const BOX_ROUNDING: f32 = 0.02;
@@ -61,7 +72,147 @@ impl ObstacleKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// An object's collision as triangles where the host placed them, each wound
+/// counterclockwise seen from outside, made into the native triangle volume
+/// the static world's are (`skate_world.rs`): one-sided, each edge convex or
+/// not by the neighbour it shares it with (a crease between two faces of the
+/// hull is no edge to catch on; an outside corner is), and a vertex amid one
+/// flat face disabled.
+#[derive(Clone, Debug)]
+pub struct ObstacleMesh {
+    triangles: Vec<Triangle>,
+    /// a sphere around them: its centre and radius
+    center: Vector3,
+    radius: f32,
+}
+
+impl PartialEq for ObstacleMesh {
+    fn eq(&self, other: &Self) -> bool {
+        self.triangles.len() == other.triangles.len()
+            && self
+                .triangles
+                .iter()
+                .zip(&other.triangles)
+                .all(|(a, b)| a.vertices == b.vertices)
+    }
+}
+
+/// Vertices this near (metres) are one, for finding a mesh's neighbours.
+const WELD: f32 = 0.001;
+
+impl ObstacleMesh {
+    /// The mesh of `triangles`, leaving out any not finite or with no area;
+    /// None when none is left, or more than MAXIMUM_MESH_TRIANGLES are given.
+    pub fn new(triangles: &[[Vector3; 3]]) -> Option<Self> {
+        if triangles.len() > MAXIMUM_MESH_TRIANGLES {
+            return None;
+        }
+        let triangles: Vec<[Vector3; 3]> = triangles
+            .iter()
+            .copied()
+            .filter(|t| {
+                t.iter().all(|&p| finite(p)) && {
+                    let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+                    dot(n, n) > 1e-12
+                }
+            })
+            .collect();
+        if triangles.is_empty() {
+            return None;
+        }
+        let key = |p: Vector3| [p.x, p.y, p.z].map(|v| (v / WELD).round() as i64);
+        let mut ids = HashMap::new();
+        let vertices: Vec<[usize; 3]> = triangles
+            .iter()
+            .map(|t| {
+                t.map(|p| {
+                    let next = ids.len();
+                    *ids.entry(key(p)).or_insert(next)
+                })
+            })
+            .collect();
+        let normals: Vec<Vector3> = triangles
+            .iter()
+            .map(|t| normalized(cross(sub(t[1], t[0]), sub(t[2], t[0]))))
+            .collect();
+        // (flag and cosine index `edge` is the edge from corner `edge` to
+        // the next, as skate_world.rs numbers them)
+        let mut flags = vec![TriangleFeature::ONE_SIDED | TriangleFeature::USE_EDGE_COSINES | 0xe0; triangles.len()];
+        let mut cosines = vec![[1.0f32; 3]; triangles.len()];
+        let mut edges = HashMap::<(usize, usize), Vec<(usize, usize, usize, usize)>>::new();
+        for (i, v) in vertices.iter().enumerate() {
+            for edge in 0..3 {
+                let (a, b) = (v[edge], v[(edge + 1) % 3]);
+                edges.entry((a.min(b), a.max(b))).or_default().push((i, edge, a, b));
+            }
+        }
+        for group in edges.values() {
+            for &(i, edge, a, b) in group {
+                // (the neighbour across it the other way round, the flattest
+                // of them where more than two faces meet)
+                let Some(&(other, ..)) = group
+                    .iter()
+                    .filter(|&&(j, _, ja, jb)| j != i && ja == b && jb == a)
+                    .max_by(|l, r| dot(normals[i], normals[l.0]).total_cmp(&dot(normals[i], normals[r.0])))
+                else {
+                    continue;
+                };
+                let cosine = dot(normals[i], normals[other]).clamp(-1.0, 1.0);
+                let along = sub(triangles[i][(edge + 1) % 3], triangles[i][edge]);
+                let orientation = dot(along, cross(normals[i], normals[other]));
+                cosines[i][edge] = cosine;
+                if orientation <= -1.0e-6 || cosine >= 1.0 - 1.0e-5 {
+                    flags[i] &= !(0x20 << edge);
+                }
+            }
+        }
+        let mut faces = vec![Vec::new(); ids.len()];
+        for (i, v) in vertices.iter().enumerate() {
+            for (corner, &id) in v.iter().enumerate() {
+                faces[id].push((i, corner));
+            }
+        }
+        for around in &faces {
+            let reference = normals[around[0].0];
+            if around.iter().all(|&(i, _)| (dot(reference, normals[i]) - 1.0).abs() <= 0.01) {
+                for &(i, corner) in around {
+                    flags[i] |= 0x200 << corner;
+                }
+            }
+        }
+        let (mut low, mut high) = (triangles[0][0], triangles[0][0]);
+        for p in triangles.iter().flatten() {
+            low = Vector3::new(low.x.min(p.x), low.y.min(p.y), low.z.min(p.z));
+            high = Vector3::new(high.x.max(p.x), high.y.max(p.y), high.z.max(p.z));
+        }
+        let center = scale(add(low, high), 0.5);
+        let radius = triangles
+            .iter()
+            .flatten()
+            .map(|&p| length(sub(p, center)))
+            .fold(0.0, f32::max);
+        Some(Self {
+            triangles: triangles
+                .iter()
+                .zip(flags.iter().zip(&cosines))
+                .map(|(&t, (&f, &c))| triangle_from_volume(t, 0.0, c, f))
+                .collect(),
+            center,
+            radius,
+        })
+    }
+
+    pub fn triangles(&self) -> &[Triangle] {
+        &self.triangles
+    }
+
+    /// A sphere around the mesh, where the host put it: its centre and radius.
+    pub fn bounds(&self) -> (Vector3, f32) {
+        (self.center, self.radius)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ObstacleShape {
     /// A segment `center` +- `axis` * `half_length` (axis a unit vector),
     /// grown by `radius`.
@@ -77,23 +228,31 @@ pub enum ObstacleShape {
         basis: Basis3,
         half_extents: Vector3,
     },
+    /// Triangles where the host placed them, the body's centre `center`
+    /// (the point its angular velocity turns about).
+    Mesh {
+        center: Vector3,
+        mesh: Arc<ObstacleMesh>,
+    },
 }
 
 /// One obstacle, where it is when the host sends it, in the engine's space
-/// (Y up, metres) and moving at `linear_velocity` (metres a second).
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// (Y up, metres) and moving at `linear_velocity` (metres a second), turning
+/// at `angular_velocity` (radians a second, about its centre).
+#[derive(Clone, Debug, PartialEq)]
 pub struct KinematicObstacle {
     pub kind: ObstacleKind,
     pub shape: ObstacleShape,
     pub linear_velocity: Vector3,
+    pub angular_velocity: Vector3,
 }
 
 impl KinematicObstacle {
     /// The obstacle with its axes made unit length, or None when it is not
-    /// one the solve can take: not finite, no size, a degenerate axis, or
-    /// larger than MAXIMUM_EXTENT.
+    /// one the solve can take: not finite, no size, a degenerate axis, or a
+    /// box or capsule larger than MAXIMUM_EXTENT.
     pub fn validated(self) -> Option<Self> {
-        if !finite(self.linear_velocity) {
+        if !finite(self.linear_velocity) || !finite(self.angular_velocity) {
             return None;
         }
         let shape = match self.shape {
@@ -141,25 +300,49 @@ impl KinematicObstacle {
                     half_extents,
                 }
             }
+            // (the mesh checked its triangles as it was made)
+            ObstacleShape::Mesh { center, mesh } => {
+                if !finite(center) {
+                    return None;
+                }
+                ObstacleShape::Mesh { center, mesh }
+            }
         };
         Some(Self { shape, ..self })
     }
 
-    /// Where the obstacle is `age` seconds after the host sent it: carried
-    /// on at its velocity, as Halo carries a unit on between network updates.
+    /// How far it has been carried `age` seconds after the host sent it: on
+    /// at its velocity, as Halo carries a unit on between network updates.
+    pub fn carried(&self, age: f32) -> Vector3 {
+        scale(self.linear_velocity, age)
+    }
+
+    /// Where the obstacle's centre is `age` seconds after the host sent it.
     pub fn center_at(&self, age: f32) -> Vector3 {
-        let center = match self.shape {
-            ObstacleShape::Capsule { center, .. } | ObstacleShape::Box { center, .. } => center,
+        let center = match &self.shape {
+            ObstacleShape::Capsule { center, .. }
+            | ObstacleShape::Box { center, .. }
+            | ObstacleShape::Mesh { center, .. } => *center,
         };
-        add(center, scale(self.linear_velocity, age))
+        add(center, self.carried(age))
+    }
+
+    /// The velocity of its point `point` (carried `age` seconds on): its
+    /// linear velocity and its turn about its centre.
+    pub fn velocity_at(&self, point: Vector3, age: f32) -> Vector3 {
+        add(
+            self.linear_velocity,
+            cross(self.angular_velocity, sub(point, self.center_at(age))),
+        )
     }
 
     /// Its contact shape `age` seconds on. A box keeps BOX_ROUNDING inside
-    /// its extents, so that its outside stays where the host put it.
+    /// its extents, so that its outside stays where the host put it. A mesh
+    /// has no one shape (`volumes_at`): this is the sphere around it.
     pub fn primitive_at(&self, age: f32) -> ContactPrimitive {
         let center = self.center_at(age);
-        match self.shape {
-            ObstacleShape::Capsule {
+        match &self.shape {
+            &ObstacleShape::Capsule {
                 axis,
                 half_length,
                 radius,
@@ -170,7 +353,7 @@ impl KinematicObstacle {
                 half_length,
                 radius,
             },
-            ObstacleShape::Box {
+            &ObstacleShape::Box {
                 basis,
                 half_extents,
                 ..
@@ -190,16 +373,31 @@ impl KinematicObstacle {
                     radius: rounding,
                 }
             }
+            ObstacleShape::Mesh { mesh, .. } => {
+                let (middle, radius) = mesh.bounds();
+                ContactPrimitive::Sphere(super::collision::Sphere {
+                    center: add(middle, self.carried(age)),
+                    radius,
+                })
+            }
         }
     }
 
     /// Its outside as triangles wound to face out, `age` seconds on, for
     /// the off-board controller's queries, which sweep triangles alone
-    /// (`BoardWorld::set_offboard_obstacles`): a box's twelve, and a capsule
-    /// as the eight-sided prism around it, as long as it with its caps (a
-    /// walking skater meets its side; its ends are flat).
+    /// (`BoardWorld::set_offboard_obstacles`): a box's twelve, a capsule as
+    /// the eight-sided prism around it, as long as it with its caps (a
+    /// walking skater meets its side; its ends are flat), and a mesh's own.
     pub fn triangles_at(&self, age: f32) -> Vec<[Vector3; 3]> {
         let center = self.center_at(age);
+        if let ObstacleShape::Mesh { mesh, .. } = &self.shape {
+            let carried = self.carried(age);
+            return mesh
+                .triangles()
+                .iter()
+                .map(|t| t.vertices.map(|p| add(p, carried)))
+                .collect();
+        }
         let mut out = Vec::with_capacity(28);
         let mut push = |t: [Vector3; 3]| {
             // (wound so that its normal points away from the middle)
@@ -273,6 +471,7 @@ impl KinematicObstacle {
                     push([ring(0, -end), ring(k, -end), ring(k + 1, -end)]);
                 }
             }
+            ObstacleShape::Mesh { .. } => {}
         }
         out
     }
@@ -290,7 +489,7 @@ impl KinematicObstacle {
                 },
                 position: self.center_at(age),
                 linear_velocity: self.linear_velocity,
-                angular_velocity: Vector3::ZERO,
+                angular_velocity: self.angular_velocity,
                 force_acceleration: Vector3::ZERO,
                 torque_acceleration: Vector3::ZERO,
                 kinetic_energy: 0.0,
@@ -308,7 +507,8 @@ impl KinematicObstacle {
         }
     }
 
-    /// Its contact volume `age` seconds on, for the attached body `body`.
+    /// Its contact volume `age` seconds on, for the attached body `body` (a
+    /// box or a capsule: a mesh's are `volumes_at`'s).
     pub fn volume_at(
         &self,
         age: f32,
@@ -320,6 +520,42 @@ impl KinematicObstacle {
             primitive: self.primitive_at(age),
             linear_velocity: self.linear_velocity,
             material,
+        }
+    }
+
+    /// Its contact volumes `age` seconds on, for the attached body `body`,
+    /// appended to `out`: a box's or a capsule's one, or each of a mesh's
+    /// triangles whose sphere `near` takes (a centre and a radius: those
+    /// near enough to the board or the skater to touch them).
+    pub fn volumes_at(
+        &self,
+        age: f32,
+        body: CollisionBody,
+        material: RetailContactMaterial,
+        near: impl Fn(Vector3, f32) -> bool,
+        out: &mut Vec<BoardWorldVolume>,
+    ) {
+        let ObstacleShape::Mesh { mesh, .. } = &self.shape else {
+            out.push(self.volume_at(age, body, material));
+            return;
+        };
+        let carried = self.carried(age);
+        let (middle, radius) = mesh.bounds();
+        if !near(add(middle, carried), radius) {
+            return;
+        }
+        for triangle in mesh.triangles() {
+            let mut moved = *triangle;
+            moved.vertices = triangle.vertices.map(|p| add(p, carried));
+            let (center, reach) = enclosing_sphere(ContactPrimitive::Triangle(moved));
+            if near(center, reach) {
+                out.push(BoardWorldVolume {
+                    body,
+                    primitive: ContactPrimitive::Triangle(moved),
+                    linear_velocity: self.velocity_at(center, age),
+                    material,
+                });
+            }
         }
     }
 }
@@ -422,6 +658,12 @@ fn finite(v: Vector3) -> bool {
 fn unit(v: Vector3) -> Option<Vector3> {
     let length = dot(v, v).sqrt();
     (finite(v) && length > 1e-6).then(|| scale(v, 1.0 / length))
+}
+fn length(v: Vector3) -> f32 {
+    dot(v, v).sqrt()
+}
+fn normalized(v: Vector3) -> Vector3 {
+    unit(v).unwrap_or(Vector3::ZERO)
 }
 fn add(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(a.x + b.x, a.y + b.y, a.z + b.z)

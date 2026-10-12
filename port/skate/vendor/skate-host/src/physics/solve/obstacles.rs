@@ -4,7 +4,7 @@ use super::super::GamePhysics;
 use skate_core::physics::{
     board_step::{BoardCollision, CollisionBody},
     board_world::BoardWorldVolume,
-    kinematic_obstacle::{ObstacleKind, obstacle_contacts},
+    kinematic_obstacle::{ObstacleKind, enclosing_sphere, obstacle_contacts},
 };
 
 /// Obstacles not sent again for this long (seconds of simulation) are
@@ -37,12 +37,23 @@ pub(super) fn append(
     physics
         .obstacle_bodies
         .extend(physics.obstacles.iter().map(|o| o.body_at(age)));
-    let volumes: Vec<_> = physics
-        .obstacles
+    // (a mesh's triangles only near enough the board or the skater to touch)
+    let local: Vec<_> = board
         .iter()
-        .enumerate()
-        .map(|(i, o)| o.volume_at(age, CollisionBody::Attached(base + i), material))
+        .chain(skeleton)
+        .map(|v| enclosing_sphere(v.primitive))
         .collect();
+    let near = |center: skate_core::math::Vector3, radius: f32| {
+        local.iter().any(|&(c, r)| {
+            let (x, y, z) = (c.x - center.x, c.y - center.y, c.z - center.z);
+            let reach = r + radius + PADDING;
+            x * x + y * y + z * z <= reach * reach
+        })
+    };
+    let mut volumes = Vec::with_capacity(physics.obstacles.len());
+    for (i, o) in physics.obstacles.iter().enumerate() {
+        o.volumes_at(age, CollisionBody::Attached(base + i), material, near, &mut volumes);
+    }
     let first = contacts.len();
     obstacle_contacts(board, &volumes, PADDING, contacts);
     obstacle_contacts(skeleton, &volumes, PADDING, contacts);
@@ -61,7 +72,9 @@ pub(super) fn append(
             .find(|v| v.body == c.body_a)
             .map_or(skate_core::math::Vector3::ZERO, |v| v.linear_velocity);
         let n = c.contact.normal;
-        let v = obstacle.linear_velocity;
+        // (where it touched, as the obstacle moves there: a turning
+        // vehicle's nose faster than its middle)
+        let v = obstacle.velocity_at(c.contact.position_on_b, age);
         // (the normal points from the obstacle toward the board or skater)
         let closing = -((local.x - v.x) * n.x + (local.y - v.y) * n.y + (local.z - v.z) * n.z);
         if physics.obstacle_hit.is_none_or(|(_, fastest)| closing > fastest) {
