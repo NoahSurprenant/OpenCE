@@ -218,6 +218,25 @@ impl<'a> StaticScene<'a> {
                 }
             }
         }
+        // halo-skate: the obstacles, on the ground pool's turn (set_offboard_obstacles)
+        if pool == QueryPool::Ground {
+            for &vertices in self.world.offboard_obstacles() {
+                let mut hit = TriangleLineHit {
+                    position: Vector3::ZERO,
+                    normal: Vector3::ZERO,
+                    fraction: 0.,
+                    volume_parameter: [0.; 3],
+                };
+                if !triangle_segment(&mut hit, start, direction, vertices, probe.radius, 0.) {
+                    continue;
+                }
+                let fraction = hit.fraction.clamp(0., 1.);
+                if fraction < nearest {
+                    nearest = fraction;
+                    output = Some(obstacle_hit(hit.position, vertices, fraction));
+                }
+            }
+        }
         Ok(output)
     }
     fn nearby(
@@ -250,6 +269,17 @@ impl<'a> StaticScene<'a> {
                     output.push(vertices);
                     if output.len() == 64 {
                         return Ok(output);
+                    }
+                }
+            }
+        }
+        if pool == QueryPool::Ground {
+            for vertices in self.world.offboard_obstacles() {
+                let vertices = vertices.map(lanes);
+                if triangle_box(vertices, center, radius) {
+                    output.push(vertices);
+                    if output.len() == 64 {
+                        break;
                     }
                 }
             }
@@ -389,4 +419,22 @@ fn triangle_box(vertices: [Vector; 3], center: Vector, radius: f32) -> bool {
         }
     }
     !separated(cross(edges[0], edges[1]))
+}
+/// halo-skate: a line's hit on an obstacle's triangle: the static world's
+/// plain surface (packed 0, geometry 0, no mesh frame), as the test
+/// terrains' triangles are.
+fn obstacle_hit(position: Vector3, vertices: [Vector3; 3], fraction: f32) -> LineHit {
+    LineHit {
+        position: lanes(position),
+        normal: face(vertices.map(lanes)),
+        fraction,
+        surface: 0,
+        geometry: 0,
+        mesh_frame: [
+            [1., 0., 0., 0.],
+            [0., 1., 0., 0.],
+            [0., 0., 1., 0.],
+            [0., 0., 0., 0.],
+        ],
+    }
 }

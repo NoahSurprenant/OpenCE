@@ -113,6 +113,10 @@ impl Session {
                 .take(MAXIMUM_OBSTACLES),
         );
         self.physics.obstacle_age = 0.0;
+        // (and to the off-board controller, which sweeps triangles: where
+        // they are now, a tick's carry at most behind)
+        let triangles = self.physics.obstacles.iter().flat_map(|o| o.triangles_at(0.0)).collect();
+        self.physics.world.set_offboard_obstacles(triangles);
         if bail_speed.is_finite() && bail_speed >= 0.0 {
             self.physics.obstacle_bail_speed = bail_speed;
         }

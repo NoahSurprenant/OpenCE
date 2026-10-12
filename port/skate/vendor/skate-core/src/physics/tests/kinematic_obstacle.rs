@@ -102,6 +102,7 @@ fn an_obstacle_carries_on_at_its_velocity_and_its_body_is_fixed() {
     assert!((half_extents.x + radius - 0.5).abs() < 1e-6);
     assert!((half_extents.z + radius - 2.0).abs() < 1e-6);
     assert_eq!(ObstacleKind::Biped.contact_group(), 5);
+    assert_eq!(ObstacleKind::Skater.contact_group(), 5);
     assert_eq!(ObstacleKind::Vehicle.contact_group(), 8);
     assert_eq!(ObstacleKind::Scenery.contact_group(), 0);
 }
@@ -270,4 +271,46 @@ fn a_moving_obstacle_carries_a_standing_board_with_it() {
     let v = deck_velocity(&b);
     assert!(reported);
     assert!(v.z > 2.0, "pushed along at its speed: {v:?}");
+}
+
+#[test]
+fn an_obstacle_as_triangles_faces_out_and_bounds_its_shape() {
+    let cross = |a: Vector3, b: Vector3| {
+        Vector3::new(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
+    };
+    for (obstacle, count, reach) in [
+        // a box 1 by 2 by 4 m: its corners 2.29 m from its middle
+        (wall(Vector3::new(3.0, 1.0, -2.0), Vector3::ZERO), 12, 2.30),
+        // a capsule 1.8 m long, 0.3 m round: the prism's corners just past it
+        (person(Vector3::new(3.0, 1.0, -2.0)), 28, 0.96),
+    ] {
+        let o = obstacle.validated().unwrap();
+        let center = o.center_at(0.0);
+        let triangles = o.triangles_at(0.0);
+        assert_eq!(triangles.len(), count);
+        for t in &triangles {
+            let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+            let middle = scale(add(add(t[0], t[1]), t[2]), 1.0 / 3.0);
+            assert!(dot(n, sub(middle, center)) > 0.0, "faces out: {t:?}");
+            for p in t {
+                let d = sub(*p, center);
+                assert!(dot(d, d).sqrt() <= reach, "within the shape's reach: {p:?}");
+            }
+        }
+    }
+    // a person's prism: as tall as the capsule, its sides outside the round
+    let o = person(Vector3::ZERO).validated().unwrap();
+    let triangles = o.triangles_at(0.0);
+    let top = triangles.iter().flatten().map(|p| p.y).fold(f32::MIN, f32::max);
+    assert!((top - 0.9).abs() < 1e-5, "the caps' top: {top}");
+    let side = triangles
+        .iter()
+        .flatten()
+        .map(|p| (p.x * p.x + p.z * p.z).sqrt())
+        .fold(f32::MIN, f32::max);
+    assert!(side > 0.3 && side < 0.33, "around the round: {side}");
+    // carried on at its velocity, as the solve carries it
+    let moving = wall(Vector3::ZERO, Vector3::new(2.0, 0.0, 0.0)).validated().unwrap();
+    let at = |age: f32| moving.triangles_at(age).iter().flatten().map(|p| p.x).fold(f32::MIN, f32::max);
+    assert!((at(0.5) - at(0.0) - 1.0).abs() < 1e-5);
 }

@@ -85,6 +85,12 @@ boolean skate_network_board(short player_index, real fraction, long *unit_index,
 /* player_control.c: debug.network_test_skate_watch turns the local player
 to another machine's skater, to see them (the network test) */
 boolean skate_local_player_watching(short local_player_index, real *yaw, real *pitch);
+/* debug.network_test_skate_block (a host's player only): every five seconds,
+where the unit steps into the way of another machine's nearest skater, ahead of
+them the way they go, and the yaw (if asked) that faces them; FALSE when it is
+not time, or no skater goes fast enough. on_board: the unit skates (skate.c
+puts it on the board there) */
+boolean skate_network_block_spot(long unit_index, boolean on_board, union real_point3d *spot, real *yaw);
 /* skate.c: a unit's weapon holstered on its posed nodes */
 struct real_matrix4x3;
 void skate_holster_weapon(long unit_index, struct real_matrix4x3 const *node_matrices, int node_count);

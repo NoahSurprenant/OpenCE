@@ -5,14 +5,15 @@
 //! units) to Skate's (Y up, metres) as everything else is (`to_skate`).
 
 use crate::{METRES, to_skate};
-use bevy_math::Vec3;
+use bevy_math::{Quat, Vec3};
 use skate_host::bridge::{Basis3, KinematicObstacle, ObstacleKind, ObstacleShape, Vector3};
 
 /// `halo_skate_obstacle` (include/halo_skate.h).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HaloSkateObstacle {
-    /// 0 a biped, 1 a vehicle, 2 scenery (anything else solid)
+    /// 0 a biped, 1 a vehicle, 2 scenery (anything else solid), 3 another
+    /// skater (their body or their board)
     pub kind: i32,
     /// 0 a box, 1 a capsule along `up`
     pub shape: i32,
@@ -32,6 +33,7 @@ pub struct HaloSkateObstacle {
 pub const KIND_BIPED: i32 = 0;
 pub const KIND_VEHICLE: i32 = 1;
 pub const KIND_SCENERY: i32 = 2;
+pub const KIND_SKATER: i32 = 3;
 pub const SHAPE_BOX: i32 = 0;
 pub const SHAPE_CAPSULE: i32 = 1;
 
@@ -52,6 +54,7 @@ impl HaloSkateObstacle {
             KIND_BIPED => ObstacleKind::Biped,
             KIND_VEHICLE => ObstacleKind::Vehicle,
             KIND_SCENERY => ObstacleKind::Scenery,
+            KIND_SKATER => ObstacleKind::Skater,
             _ => return None,
         };
         let center = point(self.center);
@@ -88,11 +91,32 @@ impl HaloSkateObstacle {
     }
 }
 
+/// A board placed at `rotation` and `position` (world units, Z up) whose box
+/// in its own axes is `middle` +- `half` (`board.rs`'s `local_box`), as an
+/// obstacle: a box of another skater's, at rest.
+pub fn board_obstacle(rotation: Quat, position: Vec3, middle: Vec3, half: Vec3) -> HaloSkateObstacle {
+    HaloSkateObstacle {
+        kind: KIND_SKATER,
+        shape: SHAPE_BOX,
+        center: (rotation * middle + position).to_array(),
+        forward: (rotation * Vec3::X).to_array(),
+        left: (rotation * Vec3::Y).to_array(),
+        up: (rotation * Vec3::Z).to_array(),
+        // (no side flat: a board seen edge on still has its thickness)
+        half_extents: half.max(Vec3::splat(MINIMUM_HALF_EXTENT)).to_array(),
+        velocity: [0.0; 3],
+    }
+}
+
+/// The least half size a board's box is given, world units (1.5 cm).
+const MINIMUM_HALF_EXTENT: f32 = 0.005;
+
 pub fn kind_name(kind: ObstacleKind) -> &'static str {
     match kind {
         ObstacleKind::Biped => "biped",
         ObstacleKind::Vehicle => "vehicle",
         ObstacleKind::Scenery => "scenery",
+        ObstacleKind::Skater => "skater",
     }
 }
 
@@ -271,6 +295,27 @@ mod tests {
         let flat = HaloSkateObstacle { half_extents: [0.3, 0.0, 0.3], ..good };
         assert!(flat.to_engine().and_then(|o| o.validated()).is_none());
     }
+    #[test]
+    fn another_skaters_board_is_a_box_turned_as_the_board_is() {
+        // a board 0.27 world units long (Z up), turned a quarter left and
+        // tipped on its side, its middle a little ahead of its deck joint
+        let rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(0.5);
+        let o = board_obstacle(
+            rotation,
+            Vec3::new(1.0, 2.0, 0.1),
+            Vec3::new(0.02, 0.0, -0.01),
+            Vec3::new(0.135, 0.035, 0.0),
+        );
+        assert_eq!((o.kind, o.shape), (KIND_SKATER, SHAPE_BOX));
+        let c = rotation * Vec3::new(0.02, 0.0, -0.01) + Vec3::new(1.0, 2.0, 0.1);
+        assert!((Vec3::from_array(o.center) - c).length() < 1e-6);
+        assert!((Vec3::from_array(o.forward) - Vec3::Y).length() < 1e-6, "its length along +Y now");
+        assert!(Vec3::from_array(o.up).dot(Vec3::Z) < 0.9, "tipped");
+        assert_eq!(o.half_extents, [0.135, 0.035, 0.005], "never flat");
+        let e = o.to_engine().and_then(|e| e.validated()).expect("the engine takes it");
+        assert_eq!(e.kind, ObstacleKind::Skater);
+    }
+
     #[test]
     fn the_hit_log_tells_each_hit_once_with_what_followed() {
         let mut log = HitLog::default();
