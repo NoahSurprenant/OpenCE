@@ -67,8 +67,11 @@ enum
 	_shader_type_model = 4,
 };
 
-/* golden orange (the design's), for the visor's reflection at both angles */
-static real_rgb_color const long_nose_visor_tint = { 0.95f, 0.63f, 0.16f };
+/* the visor golden orange: the design's (0.95, 0.63, 0.16), tuned in the game
+(Blood Gulch, Hang 'Em High) to a lighter gold seen straight on and a deeper
+orange at its edges, which keeps the visor's and the nose's shape */
+static real_rgb_color const long_nose_visor_perpendicular_tint = { 1.f, 0.72f, 0.22f };
+static real_rgb_color const long_nose_visor_parallel_tint = { 0.62f, 0.38f, 0.08f };
 
 /* ---------- structures */
 
@@ -687,8 +690,8 @@ static boolean long_nose_chief_apply(
 		shader_definition_get(visor_reference->shader.index), _shader_type_model);
 	long_nose_chief_globals.visor_perpendicular_tint = long_nose_chief_globals.visor->perpendicular_tint_color;
 	long_nose_chief_globals.visor_parallel_tint = long_nose_chief_globals.visor->parallel_tint_color;
-	long_nose_chief_globals.visor->perpendicular_tint_color = long_nose_visor_tint;
-	long_nose_chief_globals.visor->parallel_tint_color = long_nose_visor_tint;
+	long_nose_chief_globals.visor->perpendicular_tint_color = long_nose_visor_perpendicular_tint;
+	long_nose_chief_globals.visor->parallel_tint_color = long_nose_visor_parallel_tint;
 	long_nose_chief_globals.applied = TRUE;
 
 	return TRUE;

@@ -411,3 +411,28 @@ def test_custom_edition_loader_and_validator_survive_damaged_maps():
     result = subprocess.run([str(MAP_VALIDATE), "--fuzz", "100", "--seed", "1", *map(str, chosen)],
                             capture_output=True, text=True, timeout=3600)
     assert result.returncode == 0, (result.stdout + result.stderr)[-6000:]
+
+
+# ---------- the long-nose Master Chief (port/linux/game/long_nose_chief_geometry.c)
+
+def test_long_nose_chief_geometry(tmp_path):
+    """the long nose's and the smile's pieces, made against a made-up helmet:
+    counts, bounds, normals, winding, texture coordinates and strips
+    (tools/long_nose_chief_check.c). The module also builds alone as the
+    game builds its own (gnu89), warnings as errors."""
+    clang = shutil.which("clang")
+    if not clang:
+        pytest.skip("needs clang")
+    module = "port/linux/game/long_nose_chief_geometry.c"
+    strict = ["-Wall", "-Wextra", "-Werror"]
+    built = subprocess.run([clang, "-std=gnu89", *strict, "-c", "-o", str(tmp_path / "geometry.o"), module],
+                           capture_output=True, text=True)
+    assert built.returncode == 0, built.stderr[-4000:]
+    program = tmp_path / "long_nose_chief_check"
+    built = subprocess.run([clang, "-std=c99", *strict, "-fsanitize=undefined", "-fsanitize-trap=undefined", "-O1",
+                            "-o", str(program), "tools/long_nose_chief_check.c", module, "-lm"],
+                           capture_output=True, text=True)
+    assert built.returncode == 0, built.stderr[-4000:]
+    result = subprocess.run([str(program)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout[-6000:]
+    assert "PASS" in result.stdout
