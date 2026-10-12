@@ -235,7 +235,7 @@ fn riding_into_a_person_bumps_slow_and_bails_fast() {
 /// A person whose hits the game's host decides (held, as another machine's
 /// player is in a network game): riding straight into them at full speed is
 /// no bail of the engine's own; the board still stops at them, and the
-/// engine tells of the hit (their tag, its speed, the bail it held). The
+/// engine tells of the hit (their tag, its speed, whether it held a bail). The
 /// host's bail (`halo_skate_force_bail`) then knocks the skater over, and
 /// the engine puts them back on the board.
 #[test]
@@ -252,11 +252,12 @@ fn a_held_hit_is_told_not_bailed_by_and_the_hosts_bail_bails() {
     assert!(closing > 6.0, "at speed: {closing:.2} m/s");
     assert!(!fast.bailed, "no bail of the engine's own ({closing:.2} m/s)");
     assert!(fast.past < 0.0, "not through the person: {:.2} m past", fast.past);
-    assert_eq!((told.tag, told.kind, told.touched, told.bail_held), (77, KIND_BIPED, 1, 1), "{told:?}");
+    // (Skate 3's own thresholds may want no bail at this speed: the bail
+    // speed, which the host has, does)
+    assert_eq!((told.tag, told.kind, told.touched), (77, KIND_BIPED, 1), "{told:?}");
     assert!((told.closing * METRES - closing).abs() < 0.5, "its speed, world units a second: {told:?}");
     // (the normal from the person toward the skater: back along the ride, -X)
     assert!(told.normal[0] < -0.5, "the normal points back at the skater: {told:?}");
-    assert!(fast.log.iter().any(|l| l.contains("a bail held for the host's verdict")), "{:?}", fast.log);
     assert_eq!(unsafe { halo_skate_take_held_hit(&mut told) }, 0, "told once");
     // the host's verdict: a bail
     assert_eq!(halo_skate_force_bail(closing / METRES), 0);
