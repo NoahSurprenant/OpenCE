@@ -72,6 +72,13 @@ void platform_log(const char *format, ...);
 /* world units the board may move in one tick before it is drawn there at
 once: past any speed on a board (90 m/s) */
 #define SKATE_BOARD_SNAP_DISTANCE 1.f
+/* a push Halo gives a skating biped faster than this (world units a second:
+1 m/s) is told of in the log, and undone */
+#define SKATE_PUSH_TOLD (1.f / 3.048f)
+/* the biped found further than this from where the skater was put last tick
+(world units, 3 m: past any tick on a board) was moved by something else, a
+teleporter or a script, and the skater goes there (skate_follow_teleport) */
+#define SKATE_TELEPORT_DISTANCE 1.f
 
 static struct
 {
@@ -96,6 +103,18 @@ static struct
 	/* a structure bsp loaded: its collision goes to the engine on the next
 	tick, with the scenery placed in it by then (skate_load_map) */
 	boolean map_pending;
+	/* where skate_apply_frame last put the biped, the way it faced and how fast
+	it went: moved from there since by something else (a teleporter, a script)
+	the skater is taken there (skate_follow_teleport); pushed faster (a blast)
+	is told of and undone */
+	boolean placed;
+	real_point3d placed_position;
+	real placed_yaw;
+	real_vector3d placed_velocity;
+	long pushed_time;
+	/* a blast's push on the skater since the last tick (world units a tick):
+	the skate engine takes it before the next step (skate_apply_blast) */
+	real_vector3d blast;
 } skate_globals ={ FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, { 0.f, 0.f } };
 
 /* the board grown about its middle: Master Chief (about 2.1 m) is larger
@@ -796,12 +815,33 @@ static void skate_apply_frame(long unit_index, boolean starting)
 	if (!(skate_globals.camera.heading >= 0.f && skate_globals.camera.heading < 2.f * _pi))
 		skate_globals.camera.heading = 0.f;
 
+	/* (a push Halo gave the biped since the last tick, a blast or a vehicle's
+	hit, goes nowhere: the skate engine has the skater) */
+	if (!starting && skate_globals.placed)
+	{
+		real_vector3d push;
+
+		push.i = object->object.translational_velocity.i - skate_globals.placed_velocity.i;
+		push.j = object->object.translational_velocity.j - skate_globals.placed_velocity.j;
+		push.k = object->object.translational_velocity.k - skate_globals.placed_velocity.k;
+		if (magnitude3d(&push) * TICKS_PER_SECOND > SKATE_PUSH_TOLD &&
+			(skate_globals.pushed_time == NONE || game_time_get() - skate_globals.pushed_time >= TICKS_PER_SECOND))
+		{
+			skate_globals.pushed_time = game_time_get();
+			platform_log("skate: a push of %.1f m/s on the skater undone (the skate engine has them)",
+				magnitude3d(&push) * TICKS_PER_SECOND * 3.048f);
+		}
+	}
 	object_set_position(unit_index, &position, &forward, &up);
 	/* the biped moves with the skater: off the board, not with the board */
 	velocity = skate_globals.frame.off_board ? skate_globals.frame.skater_velocity : skate_globals.frame.velocity;
 	object->object.translational_velocity.i = velocity[0] / TICKS_PER_SECOND;
 	object->object.translational_velocity.j = velocity[1] / TICKS_PER_SECOND;
 	object->object.translational_velocity.k = velocity[2] / TICKS_PER_SECOND;
+	skate_globals.placed = TRUE;
+	skate_globals.placed_position = object->object.position;
+	skate_globals.placed_yaw = (real)atan2(forward.j, forward.i);
+	skate_globals.placed_velocity = object->object.translational_velocity;
 }
 
 /* ---------- the board
@@ -1047,6 +1087,8 @@ static void skate_stop(const char *reason)
 	skate_globals.skating = FALSE;
 	skate_globals.activate_when_ready = FALSE;
 	skate_globals.unit_index = NONE;
+	skate_globals.placed = FALSE;
+	skate_globals.blast.i = skate_globals.blast.j = skate_globals.blast.k = 0.f;
 	skate_board_forget();
 }
 
@@ -1114,6 +1156,63 @@ static void skate_start(long unit_index)
 	skate_board_forget();
 	skate_apply_frame(unit_index, TRUE);
 	console_printf(FALSE, "skate: on");
+}
+
+/* the skating biped was moved since the last tick by something other than
+the skate engine: a teleporter (game_engine.c's game_engine_update_teleporter
+turns the unit by the exit's facing less the entrance's and puts it at the
+exit), a script, or a respawn's or the host's placing. The skate engine's
+skater goes there, on the board, turned as the unit was turned and moving as
+fast as before, the same way round from the exit as it came into the
+entrance; the camera turns with it, and the board is drawn there at once */
+static void skate_follow_teleport(long unit_index)
+{
+	struct object_datum *object = object_get(unit_index);
+	real_point3d ground;
+	real turn, yaw, c, s;
+	float velocity[3];
+	float const *was;
+
+	if (!skate_globals.placed ||
+		distance_squared3d(&object->object.position, &skate_globals.placed_position) <=
+		SKATE_TELEPORT_DISTANCE * SKATE_TELEPORT_DISTANCE)
+	{
+		return;
+	}
+	turn = (real)atan2(object->object.forward.j, object->object.forward.i) - skate_globals.placed_yaw;
+	yaw = (real)atan2(skate_globals.frame.forward[1], skate_globals.frame.forward[0]) + turn;
+	c = (real)cos(turn);
+	s = (real)sin(turn);
+	was = skate_globals.frame.off_board ? skate_globals.frame.skater_velocity : skate_globals.frame.velocity;
+	velocity[0] = c * was[0] - s * was[1];
+	velocity[1] = s * was[0] + c * was[1];
+	velocity[2] = was[2];
+	ground = skate_ground_under(unit_index, &object->object.position);
+	if (halo_skate_teleport(&ground.x, yaw, velocity, &skate_globals.frame) != 0)
+		return;
+	platform_log("skate: teleported %.2f world units to (%.2f %.2f %.2f), turned %.0f degrees, at %.1f m/s",
+		(real)sqrt(distance_squared3d(&object->object.position, &skate_globals.placed_position)), ground.x, ground.y,
+		ground.z, turn * 180.f / _pi, sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1]) * 3.048f);
+	skate_board_forget();
+	skate_apply_frame(unit_index, TRUE);
+}
+
+/* a blast's push on the skater since the last tick (skate_unit_pushed) goes
+to the skate engine: added to the skater's velocity before this step, as
+biped_accelerate adds it to a player's on foot */
+static void skate_apply_blast(void)
+{
+	real_vector3d blast = skate_globals.blast;
+	real speed = magnitude3d(&blast) * TICKS_PER_SECOND;
+
+	skate_globals.blast.i = skate_globals.blast.j = skate_globals.blast.k = 0.f;
+	if (!(speed > 0.f))
+		return;
+	if (halo_skate_apply_impulse(blast.i * TICKS_PER_SECOND, blast.j * TICKS_PER_SECOND, blast.k * TICKS_PER_SECOND) != 0)
+		return;
+	platform_log("skate: a push of %.1f m/s on the skater applied at tick %ld (%s), along (%.2f %.2f %.2f)",
+		speed * 3.048f, game_time_get(), skate_globals.frame.off_board ? "off the board" : "on the board",
+		blast.i * TICKS_PER_SECOND / speed, blast.j * TICKS_PER_SECOND / speed, blast.k * TICKS_PER_SECOND / speed);
 }
 
 /* ---------- the network test's skater
@@ -1206,17 +1305,21 @@ static void skate_test_scenery(void)
 	static long definition_index = NONE;
 	static real_point3d position;
 	static real_vector3d forward, up;
+	/* (where the player was last alive: the test goes on if it is dead then) */
+	static real_point3d player_at;
 	long unit_index = player_control_get_unit_index(0);
 	long tick;
 
 	if (start < 0.f)
 		start = (real)config_real("debug.network_test_skate_scenery");
-	if (!(start > 0.f) || !game_in_progress() || unit_index == NONE)
+	if (!(start > 0.f) || !game_in_progress())
 		return;
+	if (unit_index != NONE)
+		player_at = object_get(unit_index)->object.position;
 	tick = game_time_get() - (long)(start * TICKS_PER_SECOND);
 	if (tick == 0)
 	{
-		real_point3d const *at = &object_get(unit_index)->object.position;
+		real_point3d const *at = &player_at;
 		struct object_iterator iterator;
 		struct object_datum *scenery;
 		long nearest_index = NONE;
@@ -1917,6 +2020,10 @@ void skate_update_before_objects(void)
 		if (skate_network_block_spot(skate_globals.unit_index, TRUE, &spot, &yaw))
 			skate_put(skate_globals.unit_index, &spot, yaw);
 	}
+	/* (moved by a teleporter or a script: the skater goes there) */
+	skate_follow_teleport(skate_globals.unit_index);
+	/* (a blast pushed them) */
+	skate_apply_blast();
 	skate_send_obstacles(skate_globals.unit_index);
 	stepped =halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skate_globals.frame);
 	if (stepped == 2)
@@ -2226,6 +2333,26 @@ void skate_update_after_objects(void)
 	}
 }
 
+boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration)
+{
+	struct biped_datum *biped;
+
+	if (!skate_globals.skating || unit_index == NONE || unit_index != skate_globals.unit_index)
+		return FALSE;
+	biped = biped_get(unit_index);
+	/* (dead, the body flies as anyone's) */
+	if (TEST_FLAG(biped->object.damage_flags, _object_dead_bit))
+		return FALSE;
+	/* (as biped_accelerate pushes a living biped: half) */
+	if (!TEST_FLAG(biped_definition_get(biped->definition_index)->unit.flags, _unit_is_special_bit))
+	{
+		skate_globals.blast.i += acceleration->i * 0.5f;
+		skate_globals.blast.j += acceleration->j * 0.5f;
+		skate_globals.blast.k += acceleration->k * 0.5f;
+	}
+	return TRUE;
+}
+
 boolean skate_unit_is_skating(long unit_index)
 {
 	return (skate_globals.skating && unit_index != NONE && unit_index == skate_globals.unit_index) ||
@@ -2376,6 +2503,11 @@ void skate_update_after_objects(void)
 
 void skate_render_board(void)
 {
+}
+
+boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration)
+{
+	return FALSE;
 }
 
 boolean skate_unit_is_skating(long unit_index)

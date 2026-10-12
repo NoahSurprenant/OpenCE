@@ -6,6 +6,8 @@
 //! skater stays on), fast is a bail; nothing passes through, every frame is
 //! finite, and after the bail the engine puts the skater back on the board.
 //! Off the board, walking into a wall sent as an obstacle stops the skater.
+//! A blast's push (`halo_skate_apply_impulse`) moves the skater riding or
+//! walking, and a strong one bails.
 //! Skipped unless `HALO_SKATE_TEST_ASSETS` is set; run with `--release`.
 
 mod common;
@@ -169,7 +171,16 @@ fn ride_into_meshes(
 /// After a bail the engine resets the skater onto the board: within a few
 /// seconds it stands on it, not wiping out.
 fn assert_back_on_the_board(engine: &mut Engine, what: &str) {
+    // (five seconds, ten at most: a ragdoll a vehicle carried on slides a
+    // while, longer on some machines, before the engine puts it back)
     engine.hold(Pad::NEUTRAL, 150);
+    for _ in 0..150 {
+        let last = engine.history.last().unwrap();
+        if !last.off_board() && !last.state.starts_with("Wipeout") {
+            break;
+        }
+        engine.step(Pad::NEUTRAL);
+    }
     let last = engine.history.last().unwrap().clone();
     assert!(
         !last.off_board() && !last.state.starts_with("Wipeout"),
@@ -676,4 +687,149 @@ fn scenery_made_and_gone_is_built_into_the_level_and_out() {
     assert!(walled_furthest > 20.0, "the skater got to it: {walled_furthest:.2} m");
     assert!(open_furthest > 27.0, "past where the wall was, once it is gone: {open_furthest:.2} m");
     engine.hold(Pad::NEUTRAL, 30);
+}
+
+/// A teleporter takes the skater riding at speed along +X: put on the board
+/// at its exit 40 m on (skate.c's `skate_follow_teleport` sends
+/// `halo_skate_teleport`), turned a quarter left as the exit faces, moving as
+/// fast as before, now along +Y. Half a second on they are still riding,
+/// that way, near that fast.
+#[test]
+fn a_teleporter_keeps_the_skaters_speed_turned_with_the_exit() {
+    let Some(assets) = assets("a teleporter") else { return };
+    let mut engine = Engine::start(&assets);
+    assert_eq!(set(&[]), 0);
+    engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+    for _ in 0..3 {
+        push(&mut engine, 12);
+    }
+    let before = engine.history.last().unwrap().clone();
+    let v = before.velocity;
+    let speed = before.ground_speed();
+    assert!(speed > 5.0, "riding fast: {speed:.2} m/s");
+    let yaw = before.forward[1].atan2(before.forward[0]) + std::f32::consts::FRAC_PI_2;
+    // (the velocity turned a quarter left, as the unit was)
+    let turned = [-v[1], v[0], v[2]];
+    let exit = metres([before.at()[0] + 40.0, TestMap::OPEN, 0.0]);
+    let code = unsafe { halo_skate_teleport(exit.as_ptr(), yaw, turned.as_ptr(), &mut engine.frame) };
+    assert_eq!(code, 0, "halo_skate_teleport: {}", error());
+    let at = Snapshot::of(code, &engine.frame);
+    let first = engine.history.len();
+    engine.hold(Pad::NEUTRAL, 15);
+    let after = engine.history.last().unwrap().clone();
+    engine.trace(first, 3);
+    let moved = [after.at()[0] - at.at()[0], after.at()[1] - at.at()[1]];
+    eprintln!(
+        "teleported at {speed:.2} m/s: put at ({:.2}, {:.2}) m, half a second on {:.2} m/s, moved ({:.2}, {:.2}) m, {}",
+        at.at()[0],
+        at.at()[1],
+        after.ground_speed(),
+        moved[0],
+        moved[1],
+        after.state
+    );
+    assert!((at.at()[0] - exit[0] * METRES).abs() < 1.0 && (at.at()[1] - exit[1] * METRES).abs() < 1.0, "at the exit");
+    assert!(engine.since(first).iter().all(Snapshot::is_finite), "every frame is finite");
+    assert!(!after.state.starts_with("Wipeout") && !after.off_board(), "still riding: {}", after.state);
+    assert!(after.ground_speed() > 0.6 * speed, "near as fast: {:.2} of {speed:.2} m/s", after.ground_speed());
+    assert!(moved[1] > 2.0 && moved[1] > 3.0 * moved[0].abs(), "going the exit's way, +Y: {moved:?}");
+}
+
+/// Rides along the open lane at speed, then a blast pushes the skater
+/// (`halo_skate_apply_impulse`, as skate.c sends Halo's push) by `blast`
+/// (m/s, Halo's way: from in front of them, back and a little up), or none.
+/// Returns the board's velocity (m/s, along the ground) just before, half a
+/// second on, how far it went along its way in that half second (m), and
+/// whether the skater bailed then.
+fn blasted(engine: &mut Engine, blast: f32) -> ([f32; 2], [f32; 2], f32, bool) {
+    assert_eq!(set(&[]), 0);
+    engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+    for _ in 0..3 {
+        push(engine, 12);
+    }
+    let before = engine.history.last().unwrap().clone();
+    let v = [before.velocity[0] * METRES, before.velocity[1] * METRES];
+    let along = (v[0] * v[0] + v[1] * v[1]).sqrt().max(1e-6);
+    let way = [v[0] / along, v[1] / along];
+    if blast > 0.0 {
+        // (Halo's: the way from the blast, raised by 0.45 and made unit)
+        let lift = 0.45f32;
+        let n = (1.0 + lift * lift).sqrt();
+        let p = [-way[0] / n * blast / METRES, -way[1] / n * blast / METRES, lift / n * blast / METRES];
+        assert_eq!(halo_skate_apply_impulse(p[0], p[1], p[2]), 0, "halo_skate_apply_impulse: {}", error());
+    }
+    let first = engine.history.len();
+    engine.hold(Pad::NEUTRAL, 15);
+    let after = engine.history.last().unwrap().clone();
+    let bailed = engine.since(first).iter().any(|s| s.state.starts_with("Wipeout") || s.code == 2);
+    let moved = (after.at()[0] - before.at()[0]) * way[0] + (after.at()[1] - before.at()[1]) * way[1];
+    assert!(engine.since(first).iter().all(Snapshot::is_finite), "every frame is finite");
+    (v, [after.velocity[0] * METRES, after.velocity[1] * METRES], moved, bailed)
+}
+
+
+/// A blast pushes the skater riding along as Halo's pushes a player on
+/// foot: one of 3 m/s from in front slows the board by about its level part
+/// (2.7 m/s), so that it goes about that much less far in half a second
+/// than with none, and they ride on; one of 9 m/s, faster than the obstacle
+/// bail speed (6 m/s), knocks them over, and the engine puts them back on
+/// the board.
+#[test]
+fn a_blast_pushes_the_riding_skater_and_a_strong_one_bails() {
+    let Some(assets) = assets("a blast") else { return };
+    let mut engine = Engine::start(&assets);
+    let (v0, after0, moved0, bailed0) = blasted(&mut engine, 0.0);
+    let (v1, after1, moved1, bailed1) = blasted(&mut engine, 3.0);
+    let speed = |v: [f32; 2]| (v[0] * v[0] + v[1] * v[1]).sqrt();
+    let slowed0 = speed(v0) - speed(after0);
+    let slowed1 = speed(v1) - speed(after1);
+    eprintln!(
+        "no blast: {:.2} to {:.2} m/s, {moved0:.2} m on; a 3 m/s blast: {:.2} to {:.2} m/s, {moved1:.2} m on",
+        speed(v0),
+        speed(after0),
+        speed(v1),
+        speed(after1)
+    );
+    assert!(!bailed0 && !bailed1, "a small blast is no bail");
+    assert!(
+        (slowed1 - slowed0 - 2.7).abs() < 1.0,
+        "slowed by the blast's level part, 2.7 m/s: {:.2} m/s",
+        slowed1 - slowed0
+    );
+    assert!(moved0 - moved1 > 0.6, "went less far: {moved1:.2} m, not {moved0:.2} m");
+    let (_, _, _, bailed) = blasted(&mut engine, 9.0);
+    take_log();
+    assert!(bailed, "a 9 m/s blast knocks the skater over");
+    assert_back_on_the_board(&mut engine, "a blast");
+}
+
+/// Off the board, standing, a blast of 3 m/s along +X pushes the walking
+/// skater that way, a third of a metre in half a second (the off-board
+/// controller slows them back to a stand at once).
+#[test]
+fn a_blast_pushes_the_skater_off_the_board() {
+    let Some(assets) = assets("a blast off the board") else { return };
+    let mut engine = Engine::start(&assets);
+    assert_eq!(set(&[]), 0);
+    engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+    engine.hold(Pad::NEUTRAL, 15);
+    engine.hold(Pad::buttons(Y), 4);
+    for _ in 0..90 {
+        if engine.step(Pad::NEUTRAL).off_board() {
+            break;
+        }
+    }
+    engine.hold(Pad::NEUTRAL, 45);
+    let stood = engine.history.last().unwrap().clone();
+    assert!(stood.off_board(), "off the board: {}", stood.state);
+    engine.hold(Pad::NEUTRAL, 15);
+    let still = engine.history.last().unwrap().clone();
+    let drift = [still.at()[0] - stood.at()[0], still.at()[1] - stood.at()[1]];
+    assert_eq!(halo_skate_apply_impulse(3.0 / METRES, 0.0, 0.0), 0, "halo_skate_apply_impulse: {}", error());
+    engine.hold(Pad::NEUTRAL, 15);
+    let pushed = engine.history.last().unwrap().clone();
+    let moved = [pushed.at()[0] - still.at()[0], pushed.at()[1] - still.at()[1]];
+    eprintln!("standing off the board: {drift:?} m in half a second; blasted, {moved:?} m, {}", pushed.state);
+    assert!(pushed.off_board(), "still off the board: {}", pushed.state);
+    assert!(moved[0] > 0.2 && moved[0] > 2.0 * moved[1].abs(), "pushed along +X: {moved:?} m");
 }

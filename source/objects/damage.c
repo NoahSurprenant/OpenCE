@@ -138,6 +138,7 @@ symbols in this file:
 #include "units/bipeds.h"
 #include "units/units.h"
 #include "units/vehicles.h"
+#include "skate.h" /* port: port/linux/game/skate.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -1069,7 +1070,9 @@ static void object_damage_aftermath(
 				{
 					if (object->object.type == _object_type_biped)
 					{
-						biped_accelerate(object_index, &acceleration);
+						/* port: a skater's push goes to the skate engine (skate.c) */
+						if (!skate_unit_pushed(object_index, &acceleration))
+							biped_accelerate(object_index, &acceleration);
 					}
 					else if (object->object.type == _object_type_vehicle)
 					{

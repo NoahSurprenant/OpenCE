@@ -103,9 +103,14 @@ enum Job {
     /// The same level's collision again (scenery made or gone): built aside,
     /// the skater riding the old meanwhile (`halo_skate_reload`).
     Reload { root: PathBuf, triangles: Vec<[Vec3; 3]>, generation: u64 },
-    Activate { sequence: u64, spawn: Vec3, yaw: f32 },
+    /// On the board at `spawn`; with `velocity` (world units a second) moving
+    /// so from the start, as a teleporter leaves a skater.
+    Activate { sequence: u64, spawn: Vec3, yaw: f32, velocity: Option<Vec3> },
     /// The obstacles the next steps collide with (`obstacles.rs`).
     Obstacles { obstacles: Vec<skate_host::bridge::KinematicObstacle>, bail_speed: f32 },
+    /// A blast's push (metres a second) on the skater, before the next step
+    /// (`halo_skate_apply_impulse`).
+    Impulse { velocity: Vec3 },
     Step { sequence: u64, pad: HaloSkatePad, dt: f32 },
     Suspend,
 }
@@ -455,13 +460,19 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 sequence,
                 spawn,
                 yaw,
+                velocity,
             } => match session.as_mut() {
                 Some((_, s)) => {
                     accumulated = 0.0;
                     recovery.reset();
                     hits.reset();
                     // Skate's board faces its local +Z; a yaw of zero faces +X.
-                    match s.activate(to_skate(spawn).to_array(), yaw + std::f32::consts::FRAC_PI_2) {
+                    let heading = yaw + std::f32::consts::FRAC_PI_2;
+                    let placed = match velocity {
+                        Some(v) => s.teleport(to_skate(spawn).to_array(), heading, to_skate(v).to_array()),
+                        None => s.activate(to_skate(spawn).to_array(), heading),
+                    };
+                    match placed {
                         Ok(pose) => {
                             last = Some(Last::of(&pose));
                             sound::reset(s);
@@ -543,6 +554,12 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
             Job::Obstacles { obstacles, bail_speed } => {
                 if let Some((_, s)) = session.as_mut() {
                     s.set_obstacles(&obstacles, bail_speed);
+                }
+                continue;
+            }
+            Job::Impulse { velocity } => {
+                if let Some((_, s)) = session.as_mut() {
+                    s.apply_impulse(velocity.to_array());
                 }
                 continue;
             }
@@ -1070,6 +1087,35 @@ pub extern "C" fn halo_skate_error() -> *const c_char {
 /// `position` holds 3 floats; `out` is writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn halo_skate_activate(position: *const f32, yaw: f32, out: *mut HaloSkateFrame) -> i32 {
+    unsafe { activate(position, yaw, None, out) }
+}
+
+/// A teleporter took the skater: on the board at `position` (world units, on
+/// the ground) facing `yaw` radians from +X, as `halo_skate_activate`, and
+/// moving at `velocity` (3 floats, world units a second) from the start.
+/// Returns 0 with `out` filled, or -1.
+///
+/// # Safety
+/// `position` and `velocity` hold 3 floats; `out` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_teleport(
+    position: *const f32,
+    yaw: f32,
+    velocity: *const f32,
+    out: *mut HaloSkateFrame,
+) -> i32 {
+    if velocity.is_null() {
+        return -1;
+    }
+    let v = unsafe { std::slice::from_raw_parts(velocity, 3) };
+    let v = Vec3::new(v[0], v[1], v[2]);
+    if !v.is_finite() {
+        return -1;
+    }
+    unsafe { activate(position, yaw, Some(v), out) }
+}
+
+unsafe fn activate(position: *const f32, yaw: f32, velocity: Option<Vec3>, out: *mut HaloSkateFrame) -> i32 {
     if position.is_null() || out.is_null() {
         return -1;
     }
@@ -1083,7 +1129,7 @@ pub unsafe extern "C" fn halo_skate_activate(position: *const f32, yaw: f32, out
         host.sequence += 1;
         host.recovered = false;
         let sequence = host.sequence;
-        if !host.request(Job::Activate { sequence, spawn, yaw }, sequence, ACTIVATE_WAIT) {
+        if !host.request(Job::Activate { sequence, spawn, yaw, velocity }, sequence, ACTIVATE_WAIT) {
             return -1;
         }
         match host.pose.as_ref() {
@@ -1339,6 +1385,26 @@ pub extern "C" fn halo_skate_set_obstacle_bail_speed(speed: f32) -> f32 {
         OBSTACLE_BAIL_SPEED.set(speed);
     }
     OBSTACLE_BAIL_SPEED.get()
+}
+
+/// A blast's push on Halo's world units a second (`x`, `y`, `z`) in the skate
+/// engine's metres a second; none for one not finite or nothing.
+pub(crate) fn impulse_to_skate(velocity: Vec3) -> Option<Vec3> {
+    (velocity.is_finite() && velocity != Vec3::ZERO).then(|| to_skate(velocity))
+}
+
+/// A blast pushes the skater as Halo's pushes a player on foot (skate.c takes
+/// the velocity Halo's damage gives the biped, `biped_accelerate`'s): `x`,
+/// `y`, `z` world units a second added to the skater's before the next step,
+/// the board's too while riding, and faster than the obstacle bail speed
+/// (`halo_skate_set_obstacle_bail_speed`) a bail. Returns 0, or -1 (nothing
+/// skating, or a push not finite).
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_apply_impulse(x: f32, y: f32, z: f32) -> i32 {
+    let Some(velocity) = impulse_to_skate(Vec3::new(x, y, z)) else {
+        return -1;
+    };
+    with_host(|host| if host.jobs.send(Job::Impulse { velocity }).is_ok() { 0 } else { -1 }).unwrap_or(-1)
 }
 
 /// How the riding biped stands on the deck: its ankle node `ankle_height`
@@ -1624,6 +1690,21 @@ pub unsafe extern "C" fn halo_skate_board_obstacle(placement: *const f32, out: *
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A blast's push in world units a second goes to the skate engine in
+    /// metres a second, its axes as positions' are (Halo's up is the engine's
+    /// +Y, Halo's +Y its -Z); nothing, or not finite, is no push.
+    #[test]
+    fn a_blasts_push_goes_to_the_engine_in_metres_a_second() {
+        let close = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
+        assert!(close(impulse_to_skate(Vec3::new(1.0, 0.0, 0.0)).unwrap(), Vec3::new(METRES, 0.0, 0.0)));
+        assert!(close(impulse_to_skate(Vec3::new(0.0, 1.0, 0.0)).unwrap(), Vec3::new(0.0, 0.0, -METRES)));
+        assert!(close(impulse_to_skate(Vec3::new(0.0, 0.0, 2.0)).unwrap(), Vec3::new(0.0, 2.0 * METRES, 0.0)));
+        assert_eq!(impulse_to_skate(Vec3::ZERO), None);
+        assert_eq!(impulse_to_skate(Vec3::new(f32::NAN, 0.0, 0.0)), None);
+        assert_eq!(impulse_to_skate(Vec3::new(0.0, f32::INFINITY, 0.0)), None);
+        assert_eq!(halo_skate_apply_impulse(f32::NAN, 0.0, 0.0), -1);
+    }
 
     fn rig() -> rig::Rig {
         rig::Rig::new(vec![rig::NodeDefault {
