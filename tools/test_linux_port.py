@@ -599,7 +599,7 @@ def test_skate_multiplayer(tmp_path):
         elif further and throws:
             throws[-1]["further"] = float(further)
     for throw in throws:
-        throw["early"] = [p for p in pushes if throw["thrown"] <= p[1] < throw.get("off", throw["thrown"] + 90)]
+        throw["early"] = [p for p in pushes if throw["thrown"] <= p[1] < throw.get("off", throw["thrown"])]
         throw["blast"] = [p for p in pushes if "off" in throw and throw["off"] <= p[1] <= throw["off"] + 2]
     # (a grenade that went off on its fuse, a second and a half on, hurting
     # the skater without killing them)
