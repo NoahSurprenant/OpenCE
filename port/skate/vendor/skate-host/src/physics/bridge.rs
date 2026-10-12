@@ -11,7 +11,7 @@ pub use sound::SoundObservation;
 pub use skate_core::{
     math::{Basis3, Vector3},
     physics::kinematic_obstacle::{
-        KinematicObstacle, MAXIMUM_MESH_TRIANGLES, MAXIMUM_OBSTACLES, ObstacleKind, ObstacleMesh,
+        HeldHit, KinematicObstacle, MAXIMUM_MESH_TRIANGLES, MAXIMUM_OBSTACLES, ObstacleKind, ObstacleMesh,
         ObstacleShape,
     },
 };
@@ -31,6 +31,20 @@ pub struct Session {
     input: ControllerInput,
     camera: CameraRuntime,
     markers: crate::session_marker::Runtime,
+}
+/// halo-skate: what the game has not been told yet of hits on held obstacles
+/// (`KinematicObstacle::held`, `Session::take_held`): the fastest contact
+/// with one since, whether a bail was held (the engine wanted the skater to
+/// fall, and the host decides), and of a bail the host decided
+/// (`Session::force_bail`), the tick it was requested on, or the state it
+/// was given up in (the skater never rode in time).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HeldReport {
+    pub hit: Option<HeldHit>,
+    pub bail_held: bool,
+    pub bail_held_tick: u64,
+    pub forced: Option<u64>,
+    pub dropped: Option<String>,
 }
 /// halo-skate: what took a blast's push (`Session::apply_impulse`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +157,20 @@ impl Session {
     pub fn obstacle_contacts(&self) -> (usize, Option<(ObstacleKind, f32)>) {
         (self.physics.obstacle_contacts, self.physics.obstacle_hit)
     }
+    /// halo-skate: what there is to tell of hits on held obstacles since the
+    /// last call (`HeldReport`), and none after.
+    pub fn take_held(&mut self) -> HeldReport {
+        std::mem::take(&mut self.physics.held)
+    }
+    /// halo-skate: a bail the host decided (`closing`, metres a second, its
+    /// hit's speed): requested on the first tick the skater rides, as running
+    /// into a person that fast is, through the same wipeout requests, whether
+    /// the engine wanted it or not; given up after half a second of not riding
+    /// (bailing already, walking, on a rail).
+    pub fn force_bail(&mut self, closing: f32) {
+        let closing = if closing.is_finite() { closing.max(0.0) } else { 0.0 };
+        self.physics.forced_bail = Some((closing, self.physics.ticks + super::wipeout::FORCE_TICKS));
+    }
     /// halo-skate: the skater's physical state, by name (`PhysicsGround`,
     /// `GrindFiftyFifty`, `BipedAir`, ...), as `Pose::state` has it.
     pub fn state_name(&self) -> String {
@@ -164,6 +192,11 @@ impl Session {
     /// resets physical bodies and animation state at the new MW2 position.
     pub fn activate(&mut self, spawn: [f32; 3], heading: f32) -> Result<Pose, String> {
         self.input = ControllerInput::default();
+        // (halo-skate: a hit held or a bail forced before is no longer this
+        // skater's)
+        self.physics.held = HeldReport::default();
+        self.physics.held_contact_tick = None;
+        self.physics.forced_bail = None;
         self.markers.suspend();
         if self.physics.ticks == 0 {
             self.tick(Controls::default())?;

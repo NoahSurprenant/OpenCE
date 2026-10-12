@@ -158,6 +158,11 @@ struct halo_skate_obstacle
 	the first and how many, each wound counterclockwise seen from outside */
 	int first_triangle;
 	int triangle_count;
+	int tag; /* the game's name for it (its object), told back with a held hit */
+	int held; /* non-zero: a hit on it is the game host's to decide, not the
+		engine's (a network game's other players, their vehicles, other
+		skaters): the engine holds any bail it would have had by it, and tells
+		of the hit (halo_skate_take_held_hit) */
 };
 
 /* the obstacles the board and the skater collide with from the next step,
@@ -173,6 +178,26 @@ int halo_skate_set_obstacles(const struct halo_skate_obstacle *obstacles, int co
 a vehicle knocks the skater over: a bail (6 m/s at first); slower is a bump.
 Returns the speed kept */
 float halo_skate_set_obstacle_bail_speed(float speed);
+
+/* hits on held obstacles (halo_skate_obstacle's held), for the game's host to
+decide (../linux/game/skate_authority.c) */
+struct halo_skate_held_hit
+{
+	int tag; /* the obstacle's (its object) */
+	int kind; /* HALO_SKATE_OBSTACLE_BIPED, _VEHICLE, _SCENERY or _SKATER */
+	float closing; /* world units a second along the contact */
+	float normal[3]; /* the contact's, from the obstacle toward the skater */
+	int touched; /* the above are of a contact since the last call */
+	int bail_held; /* the engine held a bail it would have had since the last call */
+};
+/* what the steps since the last call had to tell of hits on held obstacles:
+the fastest contact with one, and whether a bail was held. 1 with out filled,
+0 with nothing to tell, -1 on failure */
+int halo_skate_take_held_hit(struct halo_skate_held_hit *out);
+/* the game's host decided the skater bails: knocked over on the next step
+they ride, as running into a person at closing world units a second is (given
+up after half a second of not riding). 0, or -1 */
+int halo_skate_force_bail(float closing);
 
 /* multiplayer (../linux/game/skate_network.c): where the skater's last pose
 has the board, 7 floats (a unit quaternion x, y, z, w, and a position in world

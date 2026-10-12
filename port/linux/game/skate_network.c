@@ -63,6 +63,9 @@ enum
 	_skate_state_board_bit,
 	/* the skater walks, off the board */
 	_skate_state_off_board_bit,
+	/* the skater bails (the engine's wipeout): their machine's word, for the
+	host's verdicts (skate_authority.c) and the network test's log */
+	_skate_state_bailing_bit,
 };
 
 /* the offsets' scale: 1/1024 world units, to 32 world units either way */
@@ -93,6 +96,9 @@ pushed speed, so the carve does not take them round it) */
 #define SKATE_NETWORK_BLOCK_TICKS (5 * TICKS_PER_SECOND)
 #define SKATE_NETWORK_BLOCK_SPEED 0.5f
 #define SKATE_NETWORK_BLOCK_AHEAD 1.5f
+/* ... but not this many ticks either side of the host's own skater's
+teleport (debug.network_test_skate_teleport: a second) */
+#define SKATE_NETWORK_BLOCK_CLEAR TICKS_PER_SECOND
 /* a spot the watcher is put at has ground this near under it (world units)
 and nothing of the level's between it and the skater */
 #define SKATE_NETWORK_SPOT_GROUND 1.0f
@@ -479,6 +485,8 @@ static struct skate_network_player
 	short latest;
 	boolean has_latest;
 	boolean has_previous;
+	/* (another machine's) its state said it bails, last tick */
+	boolean bailing;
 } skate_network_players[SKATE_NETWORK_PLAYERS];
 
 /* each model's bind pose, for posing others' skaters */
@@ -511,7 +519,9 @@ void skate_network_new_game(void)
 		skate_network_players[index].time = NONE;
 		skate_network_players[index].has_latest = FALSE;
 		skate_network_players[index].board_unit_index = NONE;
+		skate_network_players[index].bailing = FALSE;
 	}
+	skate_authority_new_game();
 	skate_network_globals.log = config_string("debug.network_test") && *config_string("debug.network_test");
 	skate_network_globals.watch = config_boolean("debug.network_test_skate_watch");
 	skate_network_globals.block = config_boolean("debug.network_test_skate_block");
@@ -640,6 +650,16 @@ boolean skate_network_player_skating(short player_index)
 	return !state->local && skate_network_fresh(state) && TEST_FLAG(state->entry[1], _skate_state_skating_bit);
 }
 
+boolean skate_network_player_riding(short player_index)
+{
+	struct skate_network_player const *state;
+
+	if (!skate_network_player_skating(player_index))
+		return FALSE;
+	state = &skate_network_players[player_index];
+	return !TEST_FLAG(state->entry[1], _skate_state_off_board_bit) && !TEST_FLAG(state->entry[1], _skate_state_bailing_bit);
+}
+
 boolean skate_network_unit_skating(long unit_index)
 {
 	struct object_datum *object = unit_index != NONE ? object_try_and_get(unit_index) : NULL;
@@ -696,7 +716,8 @@ static void skate_network_pose_error(long unit_index, real_matrix4x3 const *node
 	}
 }
 
-void skate_network_note_local(long player_index, long unit_index, boolean off_board, real const *board_placement)
+void skate_network_note_local(long player_index, long unit_index, boolean off_board, boolean bailing,
+	real const *board_placement)
 {
 	struct skate_network_player *player;
 	struct skate_state state;
@@ -722,7 +743,8 @@ void skate_network_note_local(long player_index, long unit_index, boolean off_bo
 		return;
 	}
 	object = object_get(unit_index);
-	state.flags = FLAG(_skate_state_skating_bit) | (off_board ? FLAG(_skate_state_off_board_bit) : 0);
+	state.flags = FLAG(_skate_state_skating_bit) | (off_board ? FLAG(_skate_state_off_board_bit) : 0) |
+		(bailing ? FLAG(_skate_state_bailing_bit) : 0);
 	{
 		struct skate_network_skeleton *skeleton = skate_network_skeleton(unit_index);
 		short count = (short)(object->object.node_matrices.size / (int)sizeof(real_matrix4x3));
@@ -1142,6 +1164,8 @@ void skate_network_update_after_objects(void)
 
 	skate_network_test_shoot();
 	skate_network_test_teleport();
+	/* (the host's verdicts on skaters' hits: skate_authority.c) */
+	skate_authority_update();
 	if (log)
 		skate_network_globals.logged_time = game_time_get();
 	for (index = 0; index < SKATE_NETWORK_PLAYERS; index++)
@@ -1160,7 +1184,15 @@ void skate_network_update_after_objects(void)
 			!skate_state_read(player->entry, player->entry + player->size, &player_index, &state))
 		{
 			player->has_latest = FALSE;
+			player->bailing = FALSE;
 			continue;
+		}
+		/* (a bail seen here, as their machine says: the network test's log) */
+		if (TEST_FLAG(state.flags, _skate_state_bailing_bit) != player->bailing)
+		{
+			player->bailing = TEST_FLAG(state.flags, _skate_state_bailing_bit);
+			if (player->bailing && skate_network_globals.log)
+				platform_log("skate network: player %d bails on another machine, at tick %ld", index, game_time_get());
 		}
 		object = object_get(unit_index);
 		node_matrices = (real_matrix4x3 *)object_header_block_get(unit_index, &object->object.node_matrices);
@@ -1347,6 +1379,20 @@ boolean skate_network_block_spot(long unit_index, boolean on_board, real_point3d
 		game_time_get() - skate_network_globals.blocked_time < SKATE_NETWORK_BLOCK_TICKS))
 	{
 		return FALSE;
+	}
+	/* (the host's own skater not moved while the test times what moves them:
+	near its teleport, which putting them elsewhere that tick would undo, nor
+	while a grenade thrown at them is about or its push is measured) */
+	if (on_board)
+	{
+		real teleport = (real)config_real("debug.network_test_skate_teleport");
+		long since = game_time_get() - (long)(teleport * TICKS_PER_SECOND);
+
+		if ((teleport > 0.f && since >= -SKATE_NETWORK_BLOCK_CLEAR && since <= SKATE_NETWORK_BLOCK_CLEAR) ||
+			(skate_shoot.local && (skate_shoot.grenade_index != NONE || skate_shoot.detonated_time != NONE)))
+		{
+			return FALSE;
+		}
 	}
 	for (index = 0; index < SKATE_NETWORK_PLAYERS; index++)
 	{

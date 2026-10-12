@@ -35,6 +35,12 @@ pub struct HaloSkateObstacle {
     /// a mesh's triangles among those sent with it: the first, and how many
     pub first_triangle: i32,
     pub triangle_count: i32,
+    /// the game's name for it (its object), told back with a held hit
+    pub tag: i32,
+    /// non-zero: a hit on it is decided elsewhere (the game's host), not by
+    /// the engine (`KinematicObstacle::held`): the engine holds any bail it
+    /// would have had by it, and tells of the hit (`halo_skate_take_held_hit`)
+    pub held: i32,
 }
 
 pub const KIND_BIPED: i32 = 0;
@@ -113,6 +119,8 @@ impl HaloSkateObstacle {
             shape,
             linear_velocity: Vector3::new(v.x, v.y, v.z),
             angular_velocity: w,
+            tag: self.tag as u32,
+            held: self.held != 0,
         })
     }
 }
@@ -137,6 +145,16 @@ pub fn board_obstacle(rotation: Quat, position: Vec3, middle: Vec3, half: Vec3) 
 
 /// The least half size a board's box is given, world units (1.5 cm).
 const MINIMUM_HALF_EXTENT: f32 = 0.005;
+
+/// The kind as `halo_skate_obstacle` numbers it.
+pub fn kind_number(kind: ObstacleKind) -> i32 {
+    match kind {
+        ObstacleKind::Biped => KIND_BIPED,
+        ObstacleKind::Vehicle => KIND_VEHICLE,
+        ObstacleKind::Scenery => KIND_SCENERY,
+        ObstacleKind::Skater => KIND_SKATER,
+    }
+}
 
 pub fn kind_name(kind: ObstacleKind) -> &'static str {
     match kind {
@@ -302,6 +320,27 @@ mod tests {
         close(half_extents, [0.8 * METRES, 0.4 * METRES, 0.3 * METRES]);
         close(e.linear_velocity, [0.0, 0.0, -3.0 * METRES]);
         assert!(e.validated().is_some());
+    }
+
+    #[test]
+    fn a_held_obstacle_keeps_its_tag_for_the_host() {
+        // another machine's skater's body, a hit on which the host decides,
+        // named by its object (a datum index: its salt makes it negative)
+        let o = HaloSkateObstacle {
+            kind: KIND_SKATER,
+            shape: SHAPE_CAPSULE,
+            center: [0.0, 0.0, 0.4],
+            up: [0.0, 0.0, 1.0],
+            half_extents: [0.09, 0.0, 0.4],
+            tag: -0x1234_0005,
+            held: 1,
+            ..Default::default()
+        };
+        let e = o.to_engine(&[]).and_then(|e| e.validated()).expect("the engine takes it");
+        assert!(e.held);
+        assert_eq!(e.tag as i32, -0x1234_0005, "told back as it came");
+        assert_eq!(kind_number(e.kind), KIND_SKATER);
+        assert!(!HaloSkateObstacle { held: 0, ..o }.to_engine(&[]).unwrap().held, "not held: the engine's own");
     }
 
     #[test]

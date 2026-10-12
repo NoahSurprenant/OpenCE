@@ -245,6 +245,28 @@ pub struct KinematicObstacle {
     pub shape: ObstacleShape,
     pub linear_velocity: Vector3,
     pub angular_velocity: Vector3,
+    /// halo-skate: the host's name for it (in Halo, its object), told back
+    /// with a held hit; 0 for none.
+    pub tag: u32,
+    /// halo-skate: a hit on it is decided elsewhere (in a network game by the
+    /// game's host: another player, their vehicle, another skater). The
+    /// board still stops at it, but the engine bails by it on its own neither
+    /// past the bail speed (`knocks_over` leaves it out) nor by Skate 3's own
+    /// thresholds while touching it (the wipeout requests are held:
+    /// `wipeout.rs`); it tells of the hit instead (`HeldHit`).
+    pub held: bool,
+}
+
+/// halo-skate: the fastest contact a tick had with a held obstacle
+/// (`KinematicObstacle::held`): its tag and kind, its closing speed (metres
+/// a second along the contact) and the contact's normal (a unit vector from
+/// the obstacle toward the board or the skater, the engine's space).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeldHit {
+    pub tag: u32,
+    pub kind: ObstacleKind,
+    pub closing: f32,
+    pub normal: Vector3,
 }
 
 impl KinematicObstacle {
@@ -568,7 +590,8 @@ impl KinematicObstacle {
 /// knocks the skater over instead: the wipeout requests a body hit (0) and a
 /// closing hit (2) make, two of them, so a wipeout rather than a runout
 /// (`Requests::requests_runout`). Slower is the solve's bump alone. Scenery
-/// is left to Skate 3's own thresholds, as the level's walls are.
+/// is left to Skate 3's own thresholds, as the level's walls are. A held
+/// obstacle's hit is never `hit` here: the host decides it (`HeldHit`).
 pub fn knocks_over(hit: Option<(ObstacleKind, f32)>, bail_speed: f32) -> bool {
     matches!(hit, Some((kind, closing)) if kind != ObstacleKind::Scenery && closing > bail_speed)
 }
