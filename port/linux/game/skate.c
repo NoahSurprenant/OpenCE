@@ -1360,7 +1360,7 @@ static boolean skate_skater_obstacles(long object_index, real_point3d const *ska
 	real placement[7];
 	long board_unit_index;
 
-	skate_skater_nodes(object->object.definition_index, nodes);
+	skate_skater_nodes(object->definition_index, nodes);
 	if (nodes[0] == NONE || nodes[1] == NONE || nodes[2] == NONE ||
 		MAX(nodes[0], MAX(nodes[1], nodes[2])) >= node_count)
 	{

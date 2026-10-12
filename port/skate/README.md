@@ -574,8 +574,8 @@ rock, a crate or an arch is then the level: the board and the skater meet
 its slopes and its top as they are, at any size; the skater walking off the
 board stops at it; and its edges are grind rails, which the rail finder
 (`rails.rs`) takes with the level's. The log says what went
-(`skate: the level's collision: 3794 triangles, 920 of them 31 pieces of
-scenery`). Scenery made later (by a script) is an obstacle instead, as
+(`skate: the level's collision: 6908 triangles, 1440 of them 23 pieces
+of scenery` on Blood Gulch). Scenery made later (by a script) is an obstacle instead, as
 below, and a piece destroyed or moved later stays where it was to the engine
 until the next structure BSP.
 
@@ -767,8 +767,8 @@ another client, as everything of another player's. Nothing more is sent.
 
 Halo's side of a skating biped, on every machine, is as for any player's,
 but that Halo never moves it (its own physics are off, `bipeds.c`): a player
-on foot walks into its pill where the skate engine has it and stops there
-(players pass through each other only where Halo lets them, a co-op game's
+on foot meets its pill where the skate engine has it, as Halo tests any
+biped's (players pass through each other only where Halo lets them, a co-op game's
 no-collisions setting); a vehicle that hits it damages it as it would any
 biped, and the push it gives goes nowhere, as the skater's own machine has
 the vehicle as an obstacle and bumps or bails off it; projectiles hit its
