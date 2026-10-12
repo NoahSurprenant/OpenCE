@@ -153,7 +153,13 @@ fn collect(physics: &GamePhysics, skater: &SkaterRuntime) -> Vec<SkeletonContact
                 other_group: match other {
                     CollisionBody::StaticWorld => 0,
                     CollisionBody::Board(_) => physics.board.collision_group(),
-                    CollisionBody::Attached(_) => skater.skeleton_collision.assembly_group,
+                    //halo-skate: a kinematic obstacle has its own (solve/obstacles.rs).
+                    CollisionBody::Attached(index) => super::solve::obstacle_group(
+                        physics,
+                        index,
+                        remote_base + physics.network_proxies.bodies.len(),
+                    )
+                    .unwrap_or(skater.skeleton_collision.assembly_group),
                 },
                 other_entity: None,
                 body_a: contact_body(resolve(spy[24], physics, skater)),
@@ -175,7 +181,8 @@ fn resolve<'a>(
         CollisionBody::Board(id) => Some(&physics.board.bodies()[id.index()]),
         CollisionBody::Attached(part) => skater.skeleton.bodies().iter()
             .chain(skater.skeleton_drives.targets.bodies.iter())
-            .chain(physics.network_proxies.bodies.iter()).nth(part),
+            .chain(physics.network_proxies.bodies.iter())
+            .chain(physics.obstacle_bodies.iter()).nth(part),
     }
 }
 fn contact_body(body: Option<&BodySnapshot>) -> SkeletonContactBody {

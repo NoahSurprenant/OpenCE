@@ -113,6 +113,35 @@ int halo_skate_board_vertices(float *out, int capacity);
 Chief is larger than the skater it was made for); returns the scale kept */
 float halo_skate_set_board_scale(float scale);
 
+/* the game's moving objects the board and the skater collide with, as a wall:
+other bipeds as capsules, vehicles and scenery as boxes (obstacles.rs) */
+#define HALO_SKATE_OBSTACLE_BIPED 0
+#define HALO_SKATE_OBSTACLE_VEHICLE 1
+#define HALO_SKATE_OBSTACLE_SCENERY 2
+#define HALO_SKATE_OBSTACLE_BOX 0
+#define HALO_SKATE_OBSTACLE_CAPSULE 1
+#define HALO_SKATE_MAXIMUM_OBSTACLES 32
+
+struct halo_skate_obstacle
+{
+	int kind; /* HALO_SKATE_OBSTACLE_BIPED, _VEHICLE or _SCENERY */
+	int shape; /* HALO_SKATE_OBSTACLE_BOX, or _CAPSULE along up */
+	float center[3]; /* its middle, world units */
+	float forward[3]; /* a box's axes, unit vectors (a capsule's is up) */
+	float left[3];
+	float up[3];
+	/* a box's half sizes along forward, left and up; a capsule's radius,
+	0, and half its height with its caps, world units */
+	float half_extents[3];
+	float velocity[3]; /* world units a second */
+};
+
+/* the obstacles the board and the skater collide with from the next step,
+where they are now (nearest first): they carry on at their velocities until
+the next call. Unknown or invalid ones are left out, and no more than
+HALO_SKATE_MAXIMUM_OBSTACLES are taken; how many were, or -1 */
+int halo_skate_set_obstacles(const struct halo_skate_obstacle *obstacles, int count);
+
 /* multiplayer (../linux/game/skate_network.c): where the skater's last pose
 has the board, 7 floats (a unit quaternion x, y, z, w, and a position in world
 units), 0 or -1 with no board or pose; and the board's vertices placed whole

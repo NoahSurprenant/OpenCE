@@ -24,6 +24,8 @@ macro_rules! eprintln {
 mod board;
 mod camera;
 mod mixer;
+pub mod obstacles;
+pub use obstacles::HaloSkateObstacle;
 mod rails;
 mod recovery;
 mod rig;
@@ -99,6 +101,8 @@ enum Job {
     Preload { root: PathBuf },
     Load { root: PathBuf, triangles: Vec<[Vec3; 3]>, generation: u64 },
     Activate { sequence: u64, spawn: Vec3, yaw: f32 },
+    /// The obstacles the next steps collide with (`obstacles.rs`).
+    Obstacles(Vec<skate_host::bridge::KinematicObstacle>),
     Step { sequence: u64, pad: HaloSkatePad, dt: f32 },
     Suspend,
 }
@@ -336,6 +340,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
     // tell of a failure by; and the failures recovered from lately
     let mut last: Option<Last> = None;
     let mut recovery = recovery::Recovery::default();
+    let mut hits = obstacles::HitLog::default();
     let current = |generation: u64| generation == latest.load(Ordering::SeqCst);
     for job in jobs {
         let reply = match job {
@@ -367,6 +372,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 Some((_, s)) => {
                     accumulated = 0.0;
                     recovery.reset();
+                    hits.reset();
                     // Skate's board faces its local +Z; a yaw of zero faces +X.
                     match s.activate(to_skate(spawn).to_array(), yaw + std::f32::consts::FRAC_PI_2) {
                         Ok(pose) => {
@@ -399,6 +405,13 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                         result = s.advance();
                         if result.is_ok() {
                             sound::observe(s);
+                            let (contacts, hit) = s.obstacle_contacts();
+                            if contacts > 0 || hits.listening() {
+                                let pose = s.pose();
+                                for line in hits.observe(contacts, hit, &pose.state, pose.tick) {
+                                    eprintln!("{line}");
+                                }
+                            }
                         }
                         accumulated -= period;
                     }
@@ -440,6 +453,12 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 }
                 None => Reply::Error("no map is loaded for skating".into()),
             },
+            Job::Obstacles(obstacles) => {
+                if let Some((_, s)) = session.as_mut() {
+                    s.set_obstacles(&obstacles);
+                }
+                continue;
+            }
             Job::Suspend => {
                 if let Some((_, s)) = session.as_mut() {
                     s.suspend_input();
@@ -1022,6 +1041,41 @@ pub extern "C" fn halo_skate_suspend() {
     with_host(|host| {
         let _ = host.jobs.send(Job::Suspend);
     });
+}
+
+/// The obstacles the board and the skater collide with from the next step
+/// (`obstacles.rs`): `count` of them (0 for none), where they are now and how
+/// they move; they carry on at their velocities until the next call. Those of
+/// a kind or shape not known, or not valid, are left out, as are any past
+/// the engine's most (HALO_SKATE_MAXIMUM_OBSTACLES); the game sends the
+/// nearest first. Returns how many were sent on, or -1.
+///
+/// # Safety
+/// `obstacles` holds `count` obstacles (or is NULL with `count` 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_set_obstacles(obstacles: *const obstacles::HaloSkateObstacle, count: i32) -> i32 {
+    if count < 0 || (count > 0 && obstacles.is_null()) {
+        return -1;
+    }
+    let given = if count == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(obstacles, count as usize) }
+    };
+    let taken: Vec<_> = given
+        .iter()
+        .filter_map(|o| o.to_engine())
+        .filter_map(|o| o.validated())
+        .take(skate_host::bridge::MAXIMUM_OBSTACLES)
+        .collect();
+    let sent = taken.len() as i32;
+    with_host(|host| {
+        if host.jobs.send(Job::Obstacles(taken)).is_err() {
+            return -1;
+        }
+        sent
+    })
+    .unwrap_or(-1)
 }
 
 /// Describes the biped's skeleton: `count` nodes, each with a 32-byte name,

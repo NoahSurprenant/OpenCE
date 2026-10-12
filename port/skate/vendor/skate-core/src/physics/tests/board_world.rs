@@ -263,6 +263,7 @@ fn attached_volume_contact_reaches_its_actual_solver_body() {
             contacts: &mut [],
             joints: &mut [],
             drives: &mut [],
+            kinematic_from: AttachedStep::NO_KINEMATIC,
         },
     );
     assert!(attached.rates.linear_velocity.y > before + 0.5);

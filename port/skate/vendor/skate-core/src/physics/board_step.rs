@@ -10,7 +10,10 @@ use super::{
     assembly::{BoardConstraints, BoardHook, BodySnapshot, prepare_drive_frames},
     board::{BODY_COUNT, BodyId},
     contact::{RetailContactBodyState, RetailContactInput, generate_contact},
-    contact_feedback::{BoardContactReport, board_reports},
+    contact_feedback::{
+        BoardContactReport,
+        board_reports::{self, KinematicBodies},
+    },
     contact_solver::{RetailContactJacobian, build_contact_jacobian},
     drive_frames::RetailAffineTransform,
     drive_parameters::RetailDriveDynamics,
@@ -39,6 +42,14 @@ pub struct AttachedStep<'a> {
     pub contacts: &'a mut [RetailContactJacobian],
     pub joints: &'a mut [JointConstraint],
     pub drives: &'a mut [RetailDriveRows],
+    /// halo-skate: bodies from this index on are kinematic obstacles
+    /// (`kinematic_obstacle.rs`): their contacts with the board are reported
+    /// to the board as the world's. `usize::MAX` (`AttachedStep::NO_KINEMATIC`)
+    /// for none.
+    pub kinematic_from: usize,
+}
+impl AttachedStep<'_> {
+    pub const NO_KINEMATIC: usize = usize::MAX;
 }
 impl AttachedStep<'_> {
     pub fn world_reaction(&self) -> usize {
@@ -139,6 +150,7 @@ impl BoardStep {
                 contacts: &mut [],
                 joints: &mut [],
                 drives: &mut [],
+                kinematic_from: AttachedStep::NO_KINEMATIC,
             },
         );
     }
@@ -242,10 +254,24 @@ impl BoardStep {
         }
         // ContactSpiesJob follows integration (82DC35E0). Step_Solver3 then
         // publishes reports before the physical Adjust/Output phases.
+        let kinematic = KinematicBodies {
+            first_id: attached
+                .kinematic_from
+                .checked_add(ATTACHED_REACTION_BASE)
+                .and_then(|id| u32::try_from(id).ok())
+                .unwrap_or(u32::MAX),
+            velocities: attached
+                .bodies
+                .iter()
+                .skip(attached.kinematic_from)
+                .map(|body| body.rates.linear_velocity)
+                .collect(),
+        };
         board_reports::collect(
             &mut self.reports,
             &self.contacts,
             bodies,
+            &kinematic,
             simulation.frequency,
         );
         //Physical output/spy consumers observe the rows from the shared solve.

@@ -30,6 +30,28 @@ pub struct BoardContactReport {
     pub tangents: [Vector3; 2],
 }
 
+/// halo-skate: the kinematic obstacles in this solve (`kinematic_obstacle.rs`):
+/// contact IDs from `first_id` on (`u32::MAX`: none), each moving at its
+/// velocity in `velocities`, in ID order.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct KinematicBodies {
+    pub first_id: u32,
+    pub velocities: Vec<Vector3>,
+}
+impl KinematicBodies {
+    #[cfg(test)]
+    pub const NONE: Self = Self {
+        first_id: u32::MAX,
+        velocities: Vec::new(),
+    };
+    fn velocity(&self, id: u32) -> Option<Vector3> {
+        if id == u32::MAX || id < self.first_id {
+            return None;
+        }
+        self.velocities.get((id - self.first_id) as usize).copied()
+    }
+}
+
 /// Replace this frame's reports from the actual solved rows. All seven board
 /// parts share one report budget and one owner; their self contacts are excluded
 /// from reporting, independently of whether they participated in the solver.
@@ -37,6 +59,7 @@ pub(crate) fn collect(
     output: &mut Vec<BoardContactReport>,
     contacts: &[RetailContactJacobian],
     bodies: &[BodySnapshot; BODY_COUNT],
+    kinematic: &KinematicBodies,
     frequency: f32,
 ) {
     output.clear();
@@ -50,12 +73,18 @@ pub(crate) fn collect(
         }
         //Other assemblies share this solve. Their own output owners consume
         //their spies; only board/world records are routed to this collector.
-        if !((words[31] < BODY_COUNT as u32 && words[43] == u32::MAX)
-            || (words[43] < BODY_COUNT as u32 && words[31] == u32::MAX)) {
+        //halo-skate: a kinematic obstacle counts as the world, moving (its
+        //weight is 0, as the world's, so the contact point is the board's).
+        let world = |id: u32| id == u32::MAX || kinematic.velocity(id).is_some();
+        if !((words[31] < BODY_COUNT as u32 && world(words[43]))
+            || (words[43] < BODY_COUNT as u32 && world(words[31]))) {
             continue;
         }
         let a = body_id(words[31]);
         let b = body_id(words[43]);
+        let other_velocity = kinematic
+            .velocity(if words[31] < BODY_COUNT as u32 { words[43] } else { words[31] })
+            .unwrap_or(Vector3::ZERO);
         let (part, other, is_body_a) = match (a, b) {
             (CollisionBody::Board(part), CollisionBody::StaticWorld) => (part, b, true),
             (CollisionBody::StaticWorld, CollisionBody::Board(part)) => (part, a, false),
@@ -82,7 +111,10 @@ pub(crate) fn collect(
             is_body_a,
             normal: scale(normal, sign),
             position: scale(position, inverse_weight),
-            relative_linear_velocity: subtract(velocity(this, bodies), velocity(other, bodies)),
+            relative_linear_velocity: subtract(
+                velocity(this, bodies),
+                add(velocity(other, bodies), other_velocity),
+            ),
             other_surface: if is_body_a {
                 words[55] as u16
             } else {
@@ -96,7 +128,8 @@ pub(crate) fn collect(
 }
 
 fn body_id(value: u32) -> CollisionBody {
-    if value == u32::MAX {
+    if value >= BODY_COUNT as u32 {
+        // the world, or (halo-skate) a kinematic obstacle reported as it
         CollisionBody::StaticWorld
     } else {
         CollisionBody::Board(BodyId::ORDER[value as usize])

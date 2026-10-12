@@ -6,6 +6,14 @@ use std::path::Path;
 
 mod sound;
 pub use sound::SoundObservation;
+/// halo-skate: the host's moving objects the board and skater collide with
+/// (`Session::set_obstacles`).
+pub use skate_core::{
+    math::{Basis3, Vector3},
+    physics::kinematic_obstacle::{
+        KinematicObstacle, MAXIMUM_OBSTACLES, ObstacleKind, ObstacleShape,
+    },
+};
 
 #[derive(Clone, Copy, Default)]
 pub struct Controls {
@@ -88,6 +96,28 @@ impl Session {
             .install_world(prepared.world, std::sync::Arc::clone(&prepared.grind))?;
         self.skater.trajectory.bind_grind_world(prepared.grind);
         Ok(())
+    }
+    /// halo-skate: the obstacles the board and the skater collide with from
+    /// the next tick (`kinematic_obstacle.rs`), where they are now and how
+    /// they move; they carry on at their velocities until the next call, and
+    /// are dropped half a second after it. Those that are not valid are left
+    /// out, and no more than MAXIMUM_OBSTACLES are taken. Returns how many.
+    pub fn set_obstacles(&mut self, obstacles: &[KinematicObstacle]) -> usize {
+        self.physics.obstacles.clear();
+        self.physics.obstacles.extend(
+            obstacles
+                .iter()
+                .filter_map(|o| o.validated())
+                .take(MAXIMUM_OBSTACLES),
+        );
+        self.physics.obstacle_age = 0.0;
+        self.physics.obstacles.len()
+    }
+    /// halo-skate: how many contacts the last tick's solve had with the
+    /// obstacles, and the obstacle the fastest of them closed on with its
+    /// closing speed (metres a second), if any.
+    pub fn obstacle_contacts(&self) -> (usize, Option<(ObstacleKind, f32)>) {
+        (self.physics.obstacle_contacts, self.physics.obstacle_hit)
     }
     pub fn period(&self) -> f32 {
         self.physics.period().as_secs_f32()

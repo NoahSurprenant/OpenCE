@@ -32,6 +32,7 @@ pub mod foot_physical_output;
 pub mod hook_drive;
 pub mod joint_builder;
 pub mod joint_records;
+pub mod kinematic_obstacle;
 pub mod joint_solver;
 pub mod manual;
 pub mod mass;
