@@ -132,8 +132,9 @@ pub(super) fn check_after_physics(
         PhysicalStateId::PhysicsAir => skater.wipeout.check_air(&observations, false),
         _ => Ok(()), //Other concrete states dispatch their own postphysics check.
     };
-    //halo-skate: riding into a person or a vehicle (solve/obstacles.rs) fast
-    //enough knocks the skater over, through the same requests.
+    //halo-skate: riding into a person or a vehicle (solve/obstacles.rs), or a
+    //blast's push (Session::apply_impulse), fast enough knocks the skater
+    //over, through the same requests.
     let riding = matches!(
         skater.player_state.current(),
         PhysicalStateId::PhysicsGround
@@ -145,14 +146,23 @@ pub(super) fn check_after_physics(
     if checked.is_ok()
         && riding
         && !(skater.wipeout.state.cooldown > 0.0)
-        && skate_core::physics::kinematic_obstacle::knocks_over(
+        && (skate_core::physics::kinematic_obstacle::knocks_over(
             physics.obstacle_hit,
             physics.obstacle_bail_speed,
-        )
+        ) || blast_knocks_over(physics.blast_speed, physics.obstacle_bail_speed))
     {
-        let closing = physics.obstacle_hit.map_or(0.0, |(_, closing)| closing);
+        let closing = physics
+            .obstacle_hit
+            .map_or(0.0, |(_, closing)| closing)
+            .max(physics.blast_speed);
         skater.wipeout.state.request(0, closing);
         skater.wipeout.state.request(2, closing);
     }
     checked
+}
+
+///halo-skate: a blast's push of `speed` (m/s) knocks a riding skater over
+///past `bail_speed`, as running into a person or a vehicle that fast does.
+pub(crate) fn blast_knocks_over(speed: f32, bail_speed: f32) -> bool {
+    speed.is_finite() && bail_speed.is_finite() && speed > bail_speed
 }

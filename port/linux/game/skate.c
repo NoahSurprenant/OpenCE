@@ -112,6 +112,9 @@ static struct
 	real placed_yaw;
 	real_vector3d placed_velocity;
 	long pushed_time;
+	/* a blast's push on the skater since the last tick (world units a tick):
+	the skate engine takes it before the next step (skate_apply_blast) */
+	real_vector3d blast;
 } skate_globals ={ FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, { 0.f, 0.f } };
 
 /* the board grown about its middle: Master Chief (about 2.1 m) is larger
@@ -1085,6 +1088,7 @@ static void skate_stop(const char *reason)
 	skate_globals.activate_when_ready = FALSE;
 	skate_globals.unit_index = NONE;
 	skate_globals.placed = FALSE;
+	skate_globals.blast.i = skate_globals.blast.j = skate_globals.blast.k = 0.f;
 	skate_board_forget();
 }
 
@@ -1191,6 +1195,24 @@ static void skate_follow_teleport(long unit_index)
 		ground.z, turn * 180.f / _pi, sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1]) * 3.048f);
 	skate_board_forget();
 	skate_apply_frame(unit_index, TRUE);
+}
+
+/* a blast's push on the skater since the last tick (skate_unit_pushed) goes
+to the skate engine: added to the skater's velocity before this step, as
+biped_accelerate adds it to a player's on foot */
+static void skate_apply_blast(void)
+{
+	real_vector3d blast = skate_globals.blast;
+	real speed = magnitude3d(&blast) * TICKS_PER_SECOND;
+
+	skate_globals.blast.i = skate_globals.blast.j = skate_globals.blast.k = 0.f;
+	if (!(speed > 0.f))
+		return;
+	if (halo_skate_apply_impulse(blast.i * TICKS_PER_SECOND, blast.j * TICKS_PER_SECOND, blast.k * TICKS_PER_SECOND) != 0)
+		return;
+	platform_log("skate: a push of %.1f m/s on the skater applied at tick %ld (%s), along (%.2f %.2f %.2f)",
+		speed * 3.048f, game_time_get(), skate_globals.frame.off_board ? "off the board" : "on the board",
+		blast.i * TICKS_PER_SECOND / speed, blast.j * TICKS_PER_SECOND / speed, blast.k * TICKS_PER_SECOND / speed);
 }
 
 /* ---------- the network test's skater
@@ -2000,6 +2022,8 @@ void skate_update_before_objects(void)
 	}
 	/* (moved by a teleporter or a script: the skater goes there) */
 	skate_follow_teleport(skate_globals.unit_index);
+	/* (a blast pushed them) */
+	skate_apply_blast();
 	skate_send_obstacles(skate_globals.unit_index);
 	stepped =halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skate_globals.frame);
 	if (stepped == 2)
@@ -2309,6 +2333,26 @@ void skate_update_after_objects(void)
 	}
 }
 
+boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration)
+{
+	struct biped_datum *biped;
+
+	if (!skate_globals.skating || unit_index == NONE || unit_index != skate_globals.unit_index)
+		return FALSE;
+	biped = biped_get(unit_index);
+	/* (dead, the body flies as anyone's) */
+	if (TEST_FLAG(biped->object.damage_flags, _object_dead_bit))
+		return FALSE;
+	/* (as biped_accelerate pushes a living biped: half) */
+	if (!TEST_FLAG(biped_definition_get(biped->definition_index)->unit.flags, _unit_is_special_bit))
+	{
+		skate_globals.blast.i += acceleration->i * 0.5f;
+		skate_globals.blast.j += acceleration->j * 0.5f;
+		skate_globals.blast.k += acceleration->k * 0.5f;
+	}
+	return TRUE;
+}
+
 boolean skate_unit_is_skating(long unit_index)
 {
 	return (skate_globals.skating && unit_index != NONE && unit_index == skate_globals.unit_index) ||
@@ -2459,6 +2503,11 @@ void skate_update_after_objects(void)
 
 void skate_render_board(void)
 {
+}
+
+boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration)
+{
+	return FALSE;
 }
 
 boolean skate_unit_is_skating(long unit_index)

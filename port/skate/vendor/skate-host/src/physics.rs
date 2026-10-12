@@ -105,6 +105,10 @@ pub(crate) struct GamePhysics {
     /// ... and how fast (m/s) running into a person or vehicle knocks the
     /// skater over (`kinematic_obstacle::knocks_over`).
     pub(crate) obstacle_bail_speed: f32,
+    /// halo-skate: a blast's push given this tick (`Session::apply_impulse`),
+    /// metres a second, while riding: faster than `obstacle_bail_speed`, a
+    /// bail. Taken by the tick's wipeout check.
+    pub(crate) blast_speed: f32,
     clock: clock::SimulationClock,
     pub board: BoardRuntime,
     pub riding: RidingOutputs,
@@ -343,6 +347,7 @@ impl GamePhysics {
             obstacle_contacts: 0,
             obstacle_hit: None,
             obstacle_bail_speed: 6.0,
+            blast_speed: 0.0,
             clock: clock::SimulationClock::default(),
             board,
             riding,

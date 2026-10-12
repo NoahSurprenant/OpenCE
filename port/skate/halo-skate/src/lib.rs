@@ -108,6 +108,9 @@ enum Job {
     Activate { sequence: u64, spawn: Vec3, yaw: f32, velocity: Option<Vec3> },
     /// The obstacles the next steps collide with (`obstacles.rs`).
     Obstacles { obstacles: Vec<skate_host::bridge::KinematicObstacle>, bail_speed: f32 },
+    /// A blast's push (metres a second) on the skater, before the next step
+    /// (`halo_skate_apply_impulse`).
+    Impulse { velocity: Vec3 },
     Step { sequence: u64, pad: HaloSkatePad, dt: f32 },
     Suspend,
 }
@@ -551,6 +554,12 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
             Job::Obstacles { obstacles, bail_speed } => {
                 if let Some((_, s)) = session.as_mut() {
                     s.set_obstacles(&obstacles, bail_speed);
+                }
+                continue;
+            }
+            Job::Impulse { velocity } => {
+                if let Some((_, s)) = session.as_mut() {
+                    s.apply_impulse(velocity.to_array());
                 }
                 continue;
             }
@@ -1378,6 +1387,26 @@ pub extern "C" fn halo_skate_set_obstacle_bail_speed(speed: f32) -> f32 {
     OBSTACLE_BAIL_SPEED.get()
 }
 
+/// A blast's push on Halo's world units a second (`x`, `y`, `z`) in the skate
+/// engine's metres a second; none for one not finite or nothing.
+pub(crate) fn impulse_to_skate(velocity: Vec3) -> Option<Vec3> {
+    (velocity.is_finite() && velocity != Vec3::ZERO).then(|| to_skate(velocity))
+}
+
+/// A blast pushes the skater as Halo's pushes a player on foot (skate.c takes
+/// the velocity Halo's damage gives the biped, `biped_accelerate`'s): `x`,
+/// `y`, `z` world units a second added to the skater's before the next step,
+/// the board's too while riding, and faster than the obstacle bail speed
+/// (`halo_skate_set_obstacle_bail_speed`) a bail. Returns 0, or -1 (nothing
+/// skating, or a push not finite).
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_apply_impulse(x: f32, y: f32, z: f32) -> i32 {
+    let Some(velocity) = impulse_to_skate(Vec3::new(x, y, z)) else {
+        return -1;
+    };
+    with_host(|host| if host.jobs.send(Job::Impulse { velocity }).is_ok() { 0 } else { -1 }).unwrap_or(-1)
+}
+
 /// How the riding biped stands on the deck: its ankle node `ankle_height`
 /// world units above its soles (0 or less for unknown, which leaves its
 /// ankles on the skater's), and raised `offset` world units more along the
@@ -1661,6 +1690,21 @@ pub unsafe extern "C" fn halo_skate_board_obstacle(placement: *const f32, out: *
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A blast's push in world units a second goes to the skate engine in
+    /// metres a second, its axes as positions' are (Halo's up is the engine's
+    /// +Y, Halo's +Y its -Z); nothing, or not finite, is no push.
+    #[test]
+    fn a_blasts_push_goes_to_the_engine_in_metres_a_second() {
+        let close = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
+        assert!(close(impulse_to_skate(Vec3::new(1.0, 0.0, 0.0)).unwrap(), Vec3::new(METRES, 0.0, 0.0)));
+        assert!(close(impulse_to_skate(Vec3::new(0.0, 1.0, 0.0)).unwrap(), Vec3::new(0.0, 0.0, -METRES)));
+        assert!(close(impulse_to_skate(Vec3::new(0.0, 0.0, 2.0)).unwrap(), Vec3::new(0.0, 2.0 * METRES, 0.0)));
+        assert_eq!(impulse_to_skate(Vec3::ZERO), None);
+        assert_eq!(impulse_to_skate(Vec3::new(f32::NAN, 0.0, 0.0)), None);
+        assert_eq!(impulse_to_skate(Vec3::new(0.0, f32::INFINITY, 0.0)), None);
+        assert_eq!(halo_skate_apply_impulse(f32::NAN, 0.0, 0.0), -1);
+    }
 
     fn rig() -> rig::Rig {
         rig::Rig::new(vec![rig::NodeDefault {

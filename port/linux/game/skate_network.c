@@ -824,14 +824,16 @@ tells what each did: the burst's damage (shield and body before and after),
 whether the grenade bounced off the skater (its velocity turned back near
 them), and where the skater was when it went off and a second later. */
 /* when it shoots (seconds into the game), whether at its own skater, and
-whether a grenade too */
+whether a burst and a grenade (the grenade at its own skater alone: any push
+on them till it goes off is its bounce's) */
 static struct
 {
 	short seconds;
 	boolean own;
+	boolean burst;
 	boolean grenade;
-} const skate_shoot_seconds[] = { { 20, FALSE, TRUE }, { 38, FALSE, TRUE }, { 72, TRUE, TRUE }, { 80, TRUE, FALSE },
-	{ 88, TRUE, FALSE }, { 96, FALSE, TRUE } };
+} const skate_shoot_seconds[] = { { 20, FALSE, FALSE, TRUE }, { 38, FALSE, TRUE, TRUE }, { 64, TRUE, TRUE, FALSE },
+	{ 72, TRUE, FALSE, TRUE }, { 80, TRUE, TRUE, FALSE }, { 88, TRUE, TRUE, FALSE }, { 96, FALSE, TRUE, TRUE } };
 /* world units from the skater's middle the round starts and the grenade is
 thrown from */
 #define SKATE_SHOOT_DISTANCE 1.5f
@@ -850,6 +852,12 @@ static struct
 	long detonated_time;
 	real_point3d detonated_at;
 	long shots;
+	/* (where the grenade was last, the skater's shield and body then, and their
+	velocity as it went off) */
+	real_point3d grenade_at;
+	real grenade_shield;
+	real grenade_body;
+	real_vector3d detonated_velocity;
 } skate_shoot = { NONE, FALSE, NONE, 0.f, 0.f, NONE, { 0.f, 0.f, 0.f }, FALSE, NONE, { 0.f, 0.f, 0.f }, 0 };
 
 /* a projectile of definition_index aimed at target_index's middle (raised
@@ -874,7 +882,7 @@ static void skate_network_test_shoot(void)
 	static int enabled = -1;
 	long watcher_index = player_control_get_unit_index(0);
 	struct object_datum *watcher = watcher_index != NONE ? object_try_and_get(watcher_index) : NULL;
-	boolean grenade;
+	boolean burst, grenade;
 	long now = game_time_get();
 
 	if (enabled < 0)
@@ -902,14 +910,18 @@ static void skate_network_test_shoot(void)
 				real near = (real)sqrt(distance_squared3d(&grenade->object.position,
 					&target->object.bounding_sphere_center));
 
+				skate_shoot.grenade_at = grenade->object.position;
+				skate_shoot.grenade_shield = target->object.shield_vitality;
+				skate_shoot.grenade_body = target->object.body_vitality;
+
 				/* (turned more than 60 degrees from its throw near them) */
 				if (!skate_shoot.bounced && near < 1.f && v->i * skate_shoot.grenade_direction.i +
 					v->j * skate_shoot.grenade_direction.j + v->k * skate_shoot.grenade_direction.k <
 					0.5f * magnitude3d(v))
 				{
 					skate_shoot.bounced = TRUE;
-					platform_log("skate test: the grenade bounced off the skater (%s), %.2f world units from them",
-						skate_shoot.local ? "this machine's" : "another machine's", near);
+					platform_log("skate test: the grenade bounced off the skater (%s), %.2f world units from them at tick %ld",
+						skate_shoot.local ? "this machine's" : "another machine's", near, now);
 				}
 			}
 			else
@@ -917,17 +929,42 @@ static void skate_network_test_shoot(void)
 				skate_shoot.grenade_index = NONE;
 				skate_shoot.detonated_time = now;
 				skate_shoot.detonated_at = target->object.position;
-				if (!skate_shoot.bounced)
-					platform_log("skate test: the grenade went off without bouncing off the skater");
+				skate_shoot.detonated_velocity = target->object.translational_velocity;
+				platform_log("skate test: the grenade went off at tick %ld (%s), %.2f world units from the skater (%s): "
+					"shield %.2f to %.2f, body %.2f to %.2f",
+					now, skate_shoot.bounced ? "after bouncing off them" : "without bouncing off them",
+					(real)sqrt(distance_squared3d(&skate_shoot.grenade_at, &target->object.position)),
+					skate_shoot.local ? "this machine's" : "another machine's", skate_shoot.grenade_shield,
+					target->object.shield_vitality, skate_shoot.grenade_body, target->object.body_vitality);
 			}
 		}
 		if (skate_shoot.detonated_time != NONE && now - skate_shoot.detonated_time == TICKS_PER_SECOND / 3)
 		{
+			/* (how far they went from the blast, level, past where their
+			course would have had them, and how much faster away from it) */
+			real_vector3d away;
+			real past = 0.f, faster = 0.f;
+			long ticks = now - skate_shoot.detonated_time;
+
+			away.i = skate_shoot.detonated_at.x - skate_shoot.grenade_at.x;
+			away.j = skate_shoot.detonated_at.y - skate_shoot.grenade_at.y;
+			away.k = 0.f;
+			if (normalize3d(&away) != 0.f)
+			{
+				past = (target->object.position.x - skate_shoot.detonated_at.x -
+					skate_shoot.detonated_velocity.i * ticks) * away.i +
+					(target->object.position.y - skate_shoot.detonated_at.y - skate_shoot.detonated_velocity.j * ticks) *
+					away.j;
+				faster = ((target->object.translational_velocity.i - skate_shoot.detonated_velocity.i) * away.i +
+					(target->object.translational_velocity.j - skate_shoot.detonated_velocity.j) * away.j) *
+					TICKS_PER_SECOND * 3.048f;
+			}
 			platform_log("skate test: after the grenade the skater (%s) was %.2f world units on, going %.1f m/s, "
-				"shield %.2f, body %.2f", skate_shoot.local ? "this machine's" : "another machine's",
+				"shield %.2f, body %.2f; %.2f world units further from the blast than their course, %.1f m/s faster "
+				"away from it", skate_shoot.local ? "this machine's" : "another machine's",
 				(real)sqrt(distance_squared3d(&skate_shoot.detonated_at, &target->object.position)),
 				magnitude3d(&target->object.translational_velocity) * TICKS_PER_SECOND * 3.048f,
-				target->object.shield_vitality, target->object.body_vitality);
+				target->object.shield_vitality, target->object.body_vitality, past, faster);
 			skate_shoot.detonated_time = NONE;
 		}
 	}
@@ -943,6 +980,7 @@ static void skate_network_test_shoot(void)
 			return;
 		skate_shoot.shots = skate_shoot_seconds[which].own;
 		grenade = skate_shoot_seconds[which].grenade;
+		burst = skate_shoot_seconds[which].burst;
 	}
 	/* (a target: the host's own skater every other time it skates, else the
 	nearest skater of another machine) */
@@ -1009,7 +1047,7 @@ static void skate_network_test_shoot(void)
 			skate_shoot.body = target->object.body_vitality;
 			skate_shoot.bullet_time = NONE;
 			/* (a burst of three: at the chest, and a little above and below) */
-			for (shot = -1; bullet_definition != NONE && shot <= 1; shot++)
+			for (shot = -1; burst && bullet_definition != NONE && shot <= 1; shot++)
 			{
 				if (skate_shoot_projectile(bullet_definition, local ? NONE : watcher_index, target_index, &direction,
 					SKATE_SHOOT_DISTANCE, shot * 0.12f) != NONE)
@@ -1022,10 +1060,10 @@ static void skate_network_test_shoot(void)
 			skate_shoot.grenade_index = grenade && grenade_definition != NONE ?
 				skate_shoot_projectile(grenade_definition, local ? NONE : watcher_index, target_index, &direction,
 					SKATE_THROW_DISTANCE, 0.f) : NONE;
-			platform_log("skate test: shooting a skater (%s) %.2f world units away, a burst%s and a grenade%s",
+			platform_log("skate test: shooting a skater (%s) %.2f world units away, a burst%s and a grenade%s at tick %ld",
 				local ? "this machine's" : "another machine's",
 				(real)sqrt(distance_squared3d(&target->object.position, &watcher->object.position)),
-				skate_shoot.bullet_time != NONE ? "" : " (none)", skate_shoot.grenade_index != NONE ? "" : " (none)");
+				skate_shoot.bullet_time != NONE ? "" : " (none)", skate_shoot.grenade_index != NONE ? "" : " (none)", now);
 		}
 	}
 }

@@ -32,6 +32,20 @@ pub struct Session {
     camera: CameraRuntime,
     markers: crate::session_marker::Runtime,
 }
+/// halo-skate: what took a blast's push (`Session::apply_impulse`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Impulse {
+    /// The board and the skater riding it.
+    Riding,
+    /// The skater walking off the board.
+    Walking,
+    /// The skater's ragdoll, bailing.
+    Bailing,
+    /// The body alone: off the board in the air, on BipedAir's trajectory.
+    Air,
+    /// Nothing: the push was not finite.
+    Refused,
+}
 pub struct Pose {
     pub root: Mat4,
     pub bones: Vec<Mat4>,
@@ -184,6 +198,51 @@ impl Session {
         self.skater.player_input.processed.vectors_544_560_592_608[3] = [v.x, v.y, v.z, 0.].map(f32::to_bits);
         Ok(self.pose())
     }
+    /// halo-skate: a blast's push, as Halo's moves a player on foot: `velocity`
+    /// (metres a second) added to the skater's. Riding, to the board's and
+    /// the riding body's alike (as `teleport` sets them), and faster than the
+    /// obstacle bail speed it knocks them over on the next tick (`wipeout.rs`);
+    /// walking, to the off-board controller's movement, which its own
+    /// acceleration then brings back to the stick's; bailing, to the ragdoll.
+    /// In the air off the board (BipedAir's trajectory, worked out at the
+    /// jump) only the body takes it. Returns what took it.
+    pub fn apply_impulse(&mut self, velocity: [f32; 3]) -> Impulse {
+        use skate_core::player::state::PhysicalStateId;
+        let [x, y, z] = velocity;
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            return Impulse::Refused;
+        }
+        let add = |v: &mut skate_core::math::Vector3| *v = skate_core::math::Vector3::new(v.x + x, v.y + y, v.z + z);
+        for body in self.skater.skeleton.bodies_mut() {
+            add(&mut body.rates.linear_velocity);
+        }
+        let state = self.skater.player_state.current();
+        if state == PhysicalStateId::BipedGround {
+            let motion = &mut self.skater.biped_ground.controller.state.motion;
+            for (axis, push) in velocity.into_iter().enumerate() {
+                motion.velocity_480[axis] += push;
+            }
+            let m = motion.velocity_480;
+            motion.speed_704 = (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]).sqrt();
+            return Impulse::Walking;
+        }
+        if self.skater.player_input.physical.state.category_12 == 500 {
+            return Impulse::Air;
+        }
+        if format!("{state:?}").starts_with("Wipeout") {
+            return Impulse::Bailing;
+        }
+        for body in self.physics.board.bodies_mut() {
+            add(&mut body.rates.linear_velocity);
+        }
+        let w = &mut self.skater.animated_skeleton.motion.velocity_world;
+        *w = [w[0] + x, w[1] + y, w[2] + z, w[3]];
+        let processed = &mut self.skater.player_input.processed.vectors_544_560_592_608[3];
+        let pushed = [x, y, z, 0.];
+        *processed = std::array::from_fn(|i| (f32::from_bits(processed[i]) + pushed[i]).to_bits());
+        self.physics.blast_speed = self.physics.blast_speed.max((x * x + y * y + z * z).sqrt());
+        Impulse::Riding
+    }
     pub fn collect(&mut self, frame: InputFrame, dt: f32) {
         self.input.collect(frame.samples);
         self.markers.collect_time(f64::from(dt));
@@ -211,7 +270,7 @@ impl Session {
             self.physics.animation_profile.physics_mode,
             self.skater.player_input.physical.state.state_16,
         );
-        super::frame::advance(
+        let advanced = super::frame::advance(
             &mut self.physics,
             &mut self.skater,
             &mut self.controls,
@@ -219,7 +278,10 @@ impl Session {
             &mut actions,
             published.controller_available(),
             &mut self.camera,
-        )
+        );
+        // (a blast's push knocks over on the tick after it, once)
+        self.physics.blast_speed = 0.0;
+        advanced
     }
     /// Deterministic raw-packet entry point for playback/diagnostics.
     pub fn tick(&mut self, input: Controls) -> Result<(), String> {

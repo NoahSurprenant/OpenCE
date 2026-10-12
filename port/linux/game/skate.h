@@ -27,6 +27,10 @@ void skate_render_board(void);
 /* whether the unit is on a board: its biped's own movement stops, and its
 camera follows it */
 boolean skate_unit_is_skating(long unit_index);
+/* object_damage_aftermath: a blast's push (Halo's acceleration, world units a
+tick) on this machine's living skater, given to the skate engine instead of
+the biped (TRUE: taken, biped_accelerate not to be called) */
+boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration);
 /* whether the local player is on a board; if so, the heading their camera
 keeps (radians) */
 boolean skate_local_player_skating(short local_player_index, real *yaw);
