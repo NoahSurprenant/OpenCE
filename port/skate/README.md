@@ -428,7 +428,17 @@ board's box, 0.95 m long, from `halo_skate_board_obstacle`): after one push a
 bump, at full speed a bail, neither through them. Off the board, walking at
 a wall sent as an obstacle 2.5 m ahead stops the skater 2 m on, where with
 no wall it walks 30 m in the same five seconds. Every frame must be finite.
-It needs only the converted data, and takes some 11 seconds
+Sent as triangles (`SHAPE_MESH`, as the game sends a vehicle now): a real
+Warthog's hull, read from Blood Gulch (`common/halo_map.rs`'s
+`read_collision_model`, 60 triangles), across the lane stops the board at
+its real side after one push and is a bail at full speed; a wedge 1.3 m
+beside the path lets the board ride past where the box around it (as a
+node was sent before) strikes it; standing off the board on a lift rising
+from the floor to 1.1 m, the skater rides up and stands on its top; and the
+level sent again with a wall across the lane (`halo_skate_reload`, as
+scenery made mid-level is) stops the board there, the state ready all the
+while, and sent again without it, the board rides past. It needs the
+converted data (and the maps for the Warthog), and takes some 14 seconds
 (`--test real_assets_obstacles`).
 
 In CI they run in the `skate-assets` job of `.github/workflows/build.yml`
@@ -575,9 +585,21 @@ its slopes and its top as they are, at any size; the skater walking off the
 board stops at it; and its edges are grind rails, which the rail finder
 (`rails.rs`) takes with the level's. The log says what went
 (`skate: the level's collision: 6908 triangles, 1440 of them 23 pieces
-of scenery` on Blood Gulch). Scenery made later (by a script) is an obstacle instead, as
-below, and a piece destroyed or moved later stays where it was to the engine
-until the next structure BSP.
+of scenery` on Blood Gulch).
+
+Scenery a script makes, destroys, deletes or moves later changes the level:
+`skate_watch_scenery` looks at the scenery twice a second (which pieces,
+where, and which permutation of their collision they show, as a hash), and
+once it has not changed for a second (three at most after the first change,
+so a burst of pieces is one rebuild) sends the level's collision again with
+the scenery as it is then (`halo_skate_reload`, logged as `skate: the level's
+collision again, its scenery changed: ...`). The engine builds it, rails and
+all, on a thread of its own while the skater rides the old one (some 150 to
+170 ms for Blood Gulch's 6,900 triangles: `map rebuilt aside in 171ms`), and
+swaps it in between steps when the skater is neither on a rail nor in the
+air, whose grind selection holds the old rails (`map rebuilt, 6854
+triangles, 461 rails`). The state stays ready throughout. Until then a piece
+made is an obstacle (its own collision, below) and a piece gone stays solid.
 
 The other objects move, and go to the engine each tick, as obstacles:
 `skate_send_obstacles` looks 8 world units (24 m) around the skater's biped
@@ -602,13 +624,17 @@ for collideable objects and sends the 32 nearest through
   `local_box`, grown as drawn). Both move at their unit's velocity, taken up
   to 20 m/s. A skater whose biped lacks those nodes is their pill.
 - **vehicles, devices** (machines and controls: doors, lifts, switches)
-  **and scenery made later**: a box for each node of the object's collision
-  model that has a BSP, the box around that BSP's vertices in its node's
-  space, placed by the node as the object is now: a vehicle's hull, a turret,
-  a door that opens and a lift that rises move with their nodes. Devices and
-  scenery whose box is over 4 world units (12 m) on a side are left out (a
-  box would fill a building's doors and arches, or a bridge's underside);
-  vehicles are taken to the engine's most, 50 m.
+  **and scenery not yet in the level** (above): their own collision, a mesh
+  of triangles. Each node's collision BSP is made into triangles once, as
+  the level's are (`skate_bsp_triangles`, kept until the next structure
+  BSP), and each tick placed by its node as the object is now: a vehicle's
+  hull, a turret, a door that opens and a lift that rises move with their
+  nodes. Only the triangles within 3 world units (9 m) of the skater go
+  (`skate_mesh_triangles`: a node's sphere, then each triangle's), at most
+  4,096 a tick, so a building-sized device costs no more than its near side,
+  and there is no size limit. A device's velocity is how far it moved since
+  the last tick (Halo moves a lift by placing it); a vehicle's turn goes too,
+  so a contact on its nose moves as the nose does.
 
 Each carries on at its velocity (`translational_velocity`) until the next
 tick. On the engine's side (`kinematic_obstacle.rs` in `vendor/skate-core`)
@@ -618,7 +644,11 @@ body the solver treats as fixed (state flags 1: never integrated, no inverse
 mass, as the static world), but with the obstacle's velocity, so a contact's
 relative velocity, and so its response, is the one against a moving object;
 its shape is a capsule or a rounded box, the shapes the skater's own parts
-are made of, and its contacts with the board's parts and the skater's
+are made of, or a mesh: each of its triangles near the board or the skater a
+volume of its one body, made into the native triangle volume the static
+world's are (one-sided, each edge convex or a crease by the face across it,
+so the board slides along a hull's creases and stops at its corners:
+`ObstacleMesh`), and its contacts with the board's parts and the skater's
 world-colliding parts come from the engine's own primitive-pair query
 (`primitive_pair_contacts`, as the board and the skater collide with each
 other; `solve/obstacles.rs` in `vendor/skate-host`). Nothing on Halo's side
@@ -628,13 +658,17 @@ Off the board (walking, jumping from walking: the engine's BipedGround and
 BipedAir), the skater is moved by Skate 3's own walking controller, which
 sweeps lines and spheres through the static world's triangles rather than
 joining the solve. The obstacles go to it as triangles: each one's outside
-(a box's twelve, a capsule as the eight-sided prism around it,
-`KinematicObstacle::triangles_at`) where the game sent it, with the static
+(a box's twelve, a capsule as the eight-sided prism around it, a mesh's
+own, `KinematicObstacle::triangles_at`) where the game sent it, with the static
 triangles to its sweeps and nearby-triangle queries
 (`BoardWorld::set_offboard_obstacles`, `offboard/contact_toolkit/world.rs`
 in `vendor/skate-host`), so a walking skater stops at a person, a vehicle or
-a door as at a wall. Its ground probes do not take them: a skater cannot
-stand on a vehicle's roof.
+a door as at a wall. Its seven ground probes take them too
+(`ground_query/world.rs`), so a walking skater stands on a vehicle's roof, a
+crate or a lift, and rises with a lift as with a slope. The controller has
+no moving ground, though: it does not carry the skater along with a
+platform that slides or a vehicle that drives off under them; they stay
+where they stand and the platform moves away beneath.
 
 What a hit does, riding:
 
@@ -805,14 +839,22 @@ watch on a host, steps its player into the skater's way every five seconds,
 faster than 1.5 m/s): on the skater's machine an obstacle, another machine's
 biped where the host says, for them to ride into. The skating machine logs
 what is near once a second (`skate test: 3 obstacles near (1 bipeds, 0 of
-skaters, 0 vehicle boxes, 2 scenery boxes), the nearest a biped 0.53 world
+skaters, 0 vehicles, 2 scenery and devices; 96 triangles), the nearest a biped 0.53 world
 units away`), and the engine each hit with what followed (above,
 "Obstacles").
 `debug.network_test_skate_duel` (`HALO_NETWORK_TEST_SKATE_DUEL`) puts this
 machine's player on a board that many seconds into the game, standing on it
 (Y stepping back on after a fall); with the block on a host, the five-second
 step into the skater's way is then on the board (`skate_put`: on the board
-again there, facing them), skater into skater.
+again there, facing them), skater into skater. A test player who should be
+on a board and is not (dead, or a J that failed) gets on again every two
+seconds once alive (the log tells of a death: `skate test: this machine's
+player died at ...`), and the watcher is only ever put where nothing of the
+level stands between it and the skater and there is ground under it, so that
+it is never put into a rock or off a ledge to fall and die and miss its turns.
+`debug.network_test_skate_scenery` (`HALO_NETWORK_TEST_SKATE_SCENERY`) deletes
+the piece of scenery nearest this machine's player that many seconds in, and
+makes it again four seconds later.
 
 `tools/test_linux_port.py`'s `test_skate_multiplayer` runs a host and a
 client on Blood Gulch on one machine, the client skating, with a round trip
@@ -824,7 +866,9 @@ had them as an obstacle, and that the skater hit them (a bump or a bail)
 rather than passing through; then that the host's skater stepped in, that
 the client had them as a skater's body and board, and that each machine's
 engine logged a hit on a skater (the client's riding in, the host's ridden
-into); and that each loaded Blood Gulch with its scenery. It needs a build with `--skate`, the converted data and the
+into); that each loaded Blood Gulch with its scenery; and that the client,
+deleting a piece of it 30 seconds in and making it again, built the level
+again with one piece fewer, then as before, each swapped in. It needs a build with `--skate`, the converted data and the
 maps, and skips without them:
 
 ```text
@@ -859,19 +903,12 @@ and damaged or foreign bytes refused.
   on Linux, not built on Windows.
 - A skater model without board meshes leaves the board undrawn (the log says
   why).
-- **Moving objects are boxes and capsules.** Static scenery is part of the
-  level (above, "Obstacles"), but bipeds, other skaters, vehicles and devices
-  are a capsule or a box for each collision node: a vehicle's curves are a
-  box's, its edges and a door's are no rails to grind (the engine's rails
-  are static), devices over 12 m are passed through, and walking off the
-  board the skater stops at them but cannot stand on them. The engine's
-  primitive-pair query takes triangles too, so a moving object's collision
-  BSP could be sent as triangles in place of its boxes; it is not yet. Scenery
-  a script makes later is a box too, and scenery destroyed or moved later
-  stays solid where it was until the next structure BSP. Items (weapons,
-  equipment) and projectiles are passed through: a weapon on the ground is
-  too small to matter, and a grenade or a rocket would be a tick's
-  obstacle at best. The bail speed (`skate_obstacle_bail_speed`) is a first
+- **Moving objects carry no one.** A walking skater stands on a vehicle or a
+  lift (above, "Obstacles") but is not carried along by one that slides or
+  drives off. A vehicle's edges and a door's are no rails to grind (the
+  engine's rails are static; scenery's are rails, rebuilt as it changes).
+  Items (weapons, equipment) and projectiles are passed through, as by a
+  player on foot in Halo. The bail speed (`skate_obstacle_bail_speed`) is a first
   guess.
 - **The sounds are not heard in a game yet.** The events, the sound set and
   the mixer are tested on their own (`cargo test -p halo-skate`), and the
