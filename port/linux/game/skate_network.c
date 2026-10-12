@@ -901,11 +901,22 @@ static long skate_shoot_projectile(long definition_index, long owner_index, long
 {
 	struct object_datum *target = object_get(target_index);
 	struct object_placement_data data;
+	real_point3d at = target->object.bounding_sphere_center;
 
+	/* (a skater lying in a bail, as the host's verdicts often have them: at
+	their root node, low, rather than over them) */
+	if (target->object.node_matrices.size >= (int)sizeof(real_matrix4x3))
+	{
+		real_matrix4x3 const *root = (real_matrix4x3 const *)object_header_block_get(target_index,
+			&target->object.node_matrices);
+
+		if (root->position.z < at.z - 0.2f)
+			at = root->position;
+	}
 	object_placement_data_new(&data, definition_index, owner_index);
-	data.position.x = target->object.bounding_sphere_center.x - direction->i * distance;
-	data.position.y = target->object.bounding_sphere_center.y - direction->j * distance;
-	data.position.z = target->object.bounding_sphere_center.z - direction->k * distance + height;
+	data.position.x = at.x - direction->i * distance;
+	data.position.y = at.y - direction->j * distance;
+	data.position.z = at.z - direction->k * distance + height;
 	data.forward = *direction;
 	return object_new(&data);
 }
