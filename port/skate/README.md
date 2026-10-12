@@ -85,6 +85,7 @@ become the defaults.
 | `skate_board_scale <factor>` | 1.05 | the board grown about its middle, its length, width and thickness alike: Master Chief (about 2.1 m) is larger than the Skate 3 skater (about 1.8 m) the board was made for |
 | `skate_feet_offset <world units>` | 0 | raises Master Chief (lowers, if negative) along the board's up while he rides, past where his soles meet the deck; 0.01 world units is about 3 cm |
 | `skate_camera_speed <world units a second>` | 0.328 (1 m/s) | the following camera turns to the way you travel when faster than this, and holds its heading when slower |
+| `skate_obstacle_bail_speed <world units a second>` | 1.969 (6 m/s) | running into a person or a vehicle faster than this, along the contact, knocks you off the board; slower is a bump (below, "Obstacles") |
 
 For example, `skate_board_scale` prints `skate_board_scale 1.050 (default
 1.050)`, and `skate_feet_offset 0.01` prints `skate_feet_offset 0.0100 world
@@ -411,6 +412,18 @@ HALO_SKATE_TEST_HALO_MAPS=/path/to/halo/maps \
     cargo test --release -p halo-skate --test real_assets_halo_map -- --nocapture
 ```
 
+`halo-skate/tests/real_assets_obstacles.rs` rides into obstacles
+(`halo_skate_set_obstacles`, below, "Obstacles") on the test map's open floor,
+sent every tick as the game sends them: a person (Master Chief's collision
+pill) and a parked vehicle (a Warthog-sized box). After one push (4.8 m/s)
+the board stops at the vehicle's side and the skater stays on; catching up
+with a person walking away (closing at 1.5 m/s) is a bump too; at full speed
+(8.5 m/s) both are a bail, nothing passes through, and the engine puts the
+skater back on the board; and a vehicle driving at 5 m/s into the slowly
+rolling skater (closing at 9.8 m/s) knocks them over. Every frame must be
+finite. It needs only the converted data, and takes some 8 seconds
+(`--test real_assets_obstacles`).
+
 In CI they run in the `skate-assets` job of `.github/workflows/build.yml`
 (every `halo-skate/tests/real_assets*.rs`, and a test that skipped fails it),
 on the owner's self-hosted runner (`opence-k8s`), which has the data, the
@@ -439,6 +452,7 @@ published even when the runner is down.
 | hooks | `source/main/main.c`, `hs/hs.c`, `scenario/scenario.c`, `game/game.c`, `units/bipeds.c`, `game/player_control.c`, `camera/director.c`, `render/render.c` | preload the skater at startup; take the tuning commands before the script compiler; build each structure BSP's collision as it loads; step before the objects update and pose after it; skip a skating biped's own movement; give the pad to the engine; follow the skater with the third-person camera; draw the board after the objects |
 | input | `../linux/src/sdl_platform.c`, `xinput_sdl.c` | J, and the first pad as an Xbox 360 pad |
 | sound | `halo-skate/src/sound.rs`, `sound_set.rs`, `mixer.rs`, `include/halo_skate_sound.h`, `../linux/game/skate_sound.c`, `../linux/src/dsound_sdl.c` | the events and loops from the engine's ticks, the sound set, the voices mixed into the game's output, and the listener, surface and volume from the game (above, "Sound") |
+| obstacles | `../linux/game/skate.c`, `halo-skate/src/obstacles.rs`, `vendor/skate-core/src/physics/kinematic_obstacle.rs`, `vendor/skate-host/src/physics/solve/obstacles.rs` | the bipeds, vehicles, scenery and devices near the skater, solid to the board and the skater each tick (below, "Obstacles") |
 | multiplayer | `../linux/game/skate_network.c`, `../linux/game/network_distributed.c`, `halo-skate/src/board.rs` | each machine's skater's state to the others, and theirs posed and their boards drawn here (below, "Multiplayer") |
 
 ### Loading
@@ -541,6 +555,74 @@ failing that, above the model's origin. The log says what it found once
 measured the first time the feet were on the deck (`halo-skate: feet on the
 deck: the skater's ankles ... above it`).
 
+### Obstacles
+
+The level's structure BSP is the skater's world (above, "Loading"); the
+objects in it move, and go to the engine each tick instead, as obstacles:
+`skate_send_obstacles` in `skate.c` looks 8 world units (24 m) around the
+skater's biped for collideable objects and sends the 32 nearest through
+`halo_skate_set_obstacles`:
+
+- **bipeds**, players and AI, yours and other machines' alike (another
+  machine's where the host says, as for everything else), not dead, not in a
+  vehicle, and not the skater: a capsule standing at the biped, its collision
+  pill (`biped_get_physics_pill` in `bipeds.c`: the biped's collision radius,
+  and its height as it stands or crouches; as tall for AI too, whose pill
+  Halo keeps a sphere). Its velocity is taken up to 10 m/s, past any run:
+  another machine's unit jumps where the host says after a respawn, a
+  teleporter or a correction, and its velocity briefly says so.
+- **vehicles, scenery and devices** (machines and controls: doors, lifts,
+  switches): a box for each node of the object's collision model that has a
+  BSP, the box around that BSP's vertices in its node's space, placed by the
+  node as the object is now: a vehicle's hull, a turret, a door that opens
+  and a lift that rises move with their nodes. Scenery and devices whose box
+  is over 4 world units (12 m) on a side are left out (a box would fill a
+  building's doors and arches, or a bridge's underside); vehicles are taken
+  to the engine's most, 50 m.
+
+Each carries on at its velocity (`translational_velocity`) until the next
+tick. On the engine's side (`kinematic_obstacle.rs` in `vendor/skate-core`)
+they join the one solve the board and the skater's body share, the way
+Skate 3's other assemblies (cars, other skaters) join it: each obstacle is a
+body the solver treats as fixed (state flags 1: never integrated, no inverse
+mass, as the static world), but with the obstacle's velocity, so a contact's
+relative velocity, and so its response, is the one against a moving object;
+its shape is a capsule or a rounded box, the shapes the skater's own parts
+are made of, and its contacts with the board's parts and the skater's
+world-colliding parts come from the engine's own primitive-pair query
+(`primitive_pair_contacts`, as the board and the skater collide with each
+other; `solve/obstacles.rs` in `vendor/skate-host`). Nothing on Halo's side
+is pushed: the obstacle goes where Halo has it.
+
+What a hit does:
+
+- **The board** stops at it, as at a wall: its contacts with an obstacle are
+  reported to the board as the world's (`board_reports.rs`), so its closing
+  speed, ground state and Skate 3's own wall checks see it. Skate 3 itself
+  bails a rider into a wall only past 7 to 9 m/s of closing speed
+  (Wipeout_GroundXZAcceleration, by the state's mode), which riding on the
+  flat hardly reaches (8.5 m/s at most): the board stops and the skater
+  stays on, as `real_assets.rs`'s box ledge shows.
+- **The skater's body** colliding with one counts by Skate 3's own classes
+  (`collision_update.rs`): a person as another skater (group 5, its
+  thresholds 1.5 times the world's), a vehicle as a car (group 8, with its
+  own bail past 9 m/s against the body, Wipeout_GroundVehicleContact),
+  scenery as the world. Riding at 4.8 m/s into a person who stands still is
+  already a bail by those (the board stops at their feet and the body runs
+  into them).
+- **A bail speed**: running into a person or a vehicle faster than
+  `skate_obstacle_bail_speed` (6 m/s at first) along the contact, on the
+  board, knocks the skater over: the wipeout requests a body hit and a
+  closing hit, as Skate 3's checks do, two of them, so a bail rather than a
+  run-out. Slower is the solve's bump alone. Scenery is left to Skate 3's
+  thresholds, as the level's walls are.
+
+The log tells of each hit, riding, with what followed (`obstacles.rs`):
+`halo-skate: hit a biped at 8.3 m/s (PhysicsGround, engine tick 1068):
+bailed 1 engine ticks later`, or `...: rode on (PhysicsGround)`. Walking
+off the board, the skater's own controller (which sweeps the level alone)
+is not given them; and a vehicle's edges are not rails to grind.
+
 ## Multiplayer
 
 In a network game (system link, internet play, co-op) everyone sees
@@ -620,6 +702,13 @@ What it costs and allows:
   `debug.network_latency` holds everything back alike, and the pose and the
   unit stay together.
 
+Other players are solid to a skater, on the skater's machine: their bipeds are
+obstacles there like any other (above, "Obstacles"), where the host has them,
+carried on at their velocities as Halo carries them; riding into one bumps or
+bails as into anyone. Nothing is sent for it, and nothing moves them: on their
+own machines they are hit by nothing, as a skater is solid to no one's board
+but their own. A remote skater's biped is an obstacle too (their board is not).
+
 Machines that cannot skate play on: a build without Skate 3 mode (Android,
 or without `--skate`) still sends and takes the states, poses others' skaters
 and holds the host's bounds; it draws no board. A build older than this one
@@ -644,11 +733,23 @@ how fast, how big its state is, and how far the state's pose rebuilt is from
 the pose: some 0.0007 world units and 0.1 degrees at worst) and every other
 machine's (posed or not, the board, how old the state is, and on the host
 how many of the skater's places it took and refused).
+`debug.network_test_skate_block` (`HALO_NETWORK_TEST_SKATE_BLOCK`), with the
+watch on a host, steps its player into the skater's way every five seconds,
+1.5 world units ahead of where the host has them, the way they go (when
+faster than 1.5 m/s): on the skater's machine an obstacle, another machine's
+biped where the host says, for them to ride into. The skating machine logs
+what is near once a second (`skate test: 3 obstacles near (1 bipeds, 0
+vehicle boxes, 2 scenery boxes), the nearest a biped 0.53 world units away`),
+and the engine each hit with what followed (above, "Obstacles").
 
 `tools/test_linux_port.py`'s `test_skate_multiplayer` runs a host and a
 client on Blood Gulch on one machine, the client skating, with a round trip
-of 150 ms and a tenth of the datagrams lost, and checks those logs (about
-two and a half minutes). It needs a build with `--skate`, the converted data and the
+of 150 ms and a tenth of the datagrams lost, the host's watcher stepping into
+the skater's way, and checks those logs (about two and a half minutes):
+besides the pose, the board and the places, that the watcher stepped in, that
+the client had them as an obstacle, and that the skater hit them (a bump or
+a bail; some twenty times a run, about half of them bails) rather than passing
+through. It needs a build with `--skate`, the converted data and the
 maps, and skips without them:
 
 ```text
@@ -683,8 +784,13 @@ and damaged or foreign bytes refused.
   on Linux, not built on Windows.
 - A skater model without board meshes leaves the board undrawn (the log says
   why).
-- **Only the level's BSP is solid.** Scenery, vehicles and other objects are
-  not part of the skater's collision; they are passed through.
+- **Objects are boxes and capsules.** Bipeds, vehicles, scenery and devices
+  near the skater are solid (above, "Obstacles"), but as a capsule a biped
+  and a box a collision node: a vehicle's curves, a rock's slopes and a
+  crate's top are a box's, its edges are no rails to grind, scenery over
+  12 m is passed through, and walking off the board passes through them all.
+  Items (weapons, equipment) and projectiles are passed through. The bail
+  speed (`skate_obstacle_bail_speed`) is a first guess.
 - **The sounds are not heard in a game yet.** The events, the sound set and
   the mixer are tested on their own (`cargo test -p halo-skate`), and the
   game builds with them, but nobody has skated with them on: their levels
@@ -692,9 +798,11 @@ and damaged or foreign bytes refused.
 - **The node names are assumed.** The retarget expects the cyborg's
   `bip01 pelvis`, `bip01 l thigh` and so on. The game's console prints how many
   nodes follow the skater, and stderr lists the biped's node names.
-- **In a network game, other players are not solid to a skater** (above),
-  and a skater is not solid to them on their machines' boards either. A
-  teleporter does not take a skater (the skate engine puts them back).
+- **In a network game, a skater is solid to no other machine's board**:
+  other players are solid to a skater on the skater's machine (above), but
+  nothing is sent for it, so a skater riding into a player does not move
+  them, and two skaters pass through each other's boards. A teleporter does
+  not take a skater (the skate engine puts them back).
 - **Another machine's board is placed whole**: its wheels and trucks do not
   turn, and a machine without the Skate 3 data draws no board at all (it
   still poses the skater).

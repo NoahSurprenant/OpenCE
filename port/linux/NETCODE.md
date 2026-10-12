@@ -626,8 +626,9 @@ started first), to test that nothing another machine sends can crash the
 game: a host and a client with a third of their datagrams damaged must play
 on, their logs noting what they refused.
 
-`debug.network_test_skate` and `debug.network_test_skate_watch` script a
-Skate 3 skater and a machine watching them (`port/skate/README.md`,
+`debug.network_test_skate`, `debug.network_test_skate_watch` and
+`debug.network_test_skate_block` script a Skate 3 skater and a machine
+watching them, and stepping into their way (`port/skate/README.md`,
 "Testing multiplayer").
 
 The host logs to `debug.txt` when a player on another machine presses the

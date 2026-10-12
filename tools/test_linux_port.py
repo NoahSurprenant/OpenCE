@@ -443,14 +443,16 @@ def test_skate_multiplayer(tmp_path):
     """Skate 3 mode in a network game, two real games on this machine: a host
     and a client on Blood Gulch, the client getting on a board and riding a
     scripted pad (debug.network_test_skate), the host watching
-    (debug.network_test_skate_watch). The host must pose the client's skater
-    from its state and draw their board, and take every place the client
-    gives (but a stray few), and the client's state must rebuild its own pose
-    within a hair; with a round trip of 150 ms and a tenth of the datagrams
-    lost. It needs a Linux build with --skate (HALO_TEST_GAME), the converted
-    Skate 3 data (HALO_SKATE_TEST_ASSETS) and the Halo maps
-    (HALO_SKATE_TEST_HALO_MAPS), and skips without them; about two and a half
-    minutes."""
+    (debug.network_test_skate_watch) and stepping into their way every five
+    seconds (debug.network_test_skate_block). The host must pose the client's
+    skater from its state and draw their board, and take every place the
+    client gives (but a stray few), the client's state must rebuild its own
+    pose within a hair, and the skater must hit the host's player (an
+    obstacle on the client: skate.c) rather than pass through; with a round
+    trip of 150 ms and a tenth of the datagrams lost. It needs a Linux build
+    with --skate (HALO_TEST_GAME), the converted Skate 3 data
+    (HALO_SKATE_TEST_ASSETS) and the Halo maps (HALO_SKATE_TEST_HALO_MAPS),
+    and skips without them; about two and a half minutes."""
     game = os.environ.get("HALO_TEST_GAME")
     assets = os.environ.get("HALO_SKATE_TEST_ASSETS")
     maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
