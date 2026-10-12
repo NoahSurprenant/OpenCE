@@ -101,8 +101,10 @@ impl Session {
     /// the next tick (`kinematic_obstacle.rs`), where they are now and how
     /// they move; they carry on at their velocities until the next call, and
     /// are dropped half a second after it. Those that are not valid are left
-    /// out, and no more than MAXIMUM_OBSTACLES are taken. Returns how many.
-    pub fn set_obstacles(&mut self, obstacles: &[KinematicObstacle]) -> usize {
+    /// out, and no more than MAXIMUM_OBSTACLES are taken. Running into a
+    /// person or vehicle faster than `bail_speed` (m/s) is a bail
+    /// (`kinematic_obstacle::knocks_over`). Returns how many were taken.
+    pub fn set_obstacles(&mut self, obstacles: &[KinematicObstacle], bail_speed: f32) -> usize {
         self.physics.obstacles.clear();
         self.physics.obstacles.extend(
             obstacles
@@ -111,6 +113,9 @@ impl Session {
                 .take(MAXIMUM_OBSTACLES),
         );
         self.physics.obstacle_age = 0.0;
+        if bail_speed.is_finite() && bail_speed >= 0.0 {
+            self.physics.obstacle_bail_speed = bail_speed;
+        }
         self.physics.obstacles.len()
     }
     /// halo-skate: how many contacts the last tick's solve had with the

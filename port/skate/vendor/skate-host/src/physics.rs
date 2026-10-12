@@ -102,6 +102,9 @@ pub(crate) struct GamePhysics {
     /// ... and the obstacle the fastest of them closed on, and how fast
     /// (metres a second along the contact normal).
     pub(crate) obstacle_hit: Option<(skate_core::physics::kinematic_obstacle::ObstacleKind, f32)>,
+    /// ... and how fast (m/s) running into a person or vehicle knocks the
+    /// skater over (`kinematic_obstacle::knocks_over`).
+    pub(crate) obstacle_bail_speed: f32,
     clock: clock::SimulationClock,
     pub board: BoardRuntime,
     pub riding: RidingOutputs,
@@ -339,6 +342,7 @@ impl GamePhysics {
             obstacle_bodies: Vec::new(),
             obstacle_contacts: 0,
             obstacle_hit: None,
+            obstacle_bail_speed: 6.0,
             clock: clock::SimulationClock::default(),
             board,
             riding,

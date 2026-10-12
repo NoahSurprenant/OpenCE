@@ -237,6 +237,19 @@ impl KinematicObstacle {
     }
 }
 
+/// The bail Skate 3 itself gives an obstacle only past its wall threshold
+/// (Wipeout_GroundXZ, 9 m/s of closing speed, which riding on the flat
+/// never reaches: the board stops at the wall) or a car's
+/// (Wipeout_GroundVehicleContact, 9 m/s against the body). A person or a
+/// vehicle run into faster than `bail_speed` (m/s along the contact normal)
+/// knocks the skater over instead: the wipeout requests a body hit (0) and a
+/// closing hit (2) make, two of them, so a wipeout rather than a runout
+/// (`Requests::requests_runout`). Slower is the solve's bump alone. Scenery
+/// is left to Skate 3's own thresholds, as the level's walls are.
+pub fn knocks_over(hit: Option<(ObstacleKind, f32)>, bail_speed: f32) -> bool {
+    matches!(hit, Some((kind, closing)) if kind != ObstacleKind::Scenery && closing > bail_speed)
+}
+
 /// Contacts between the local volumes (the board's and the skater's) and the
 /// obstacles' volumes, in that order (A local, B the obstacle; the normal
 /// points from the obstacle toward the local volume), with the materials

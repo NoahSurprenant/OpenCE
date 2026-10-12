@@ -141,6 +141,10 @@ where they are now (nearest first): they carry on at their velocities until
 the next call. Unknown or invalid ones are left out, and no more than
 HALO_SKATE_MAXIMUM_OBSTACLES are taken; how many were, or -1 */
 int halo_skate_set_obstacles(const struct halo_skate_obstacle *obstacles, int count);
+/* how fast (world units a second, along the contact) running into a person or
+a vehicle knocks the skater over: a bail (6 m/s at first); slower is a bump.
+Returns the speed kept */
+float halo_skate_set_obstacle_bail_speed(float speed);
 
 /* multiplayer (../linux/game/skate_network.c): where the skater's last pose
 has the board, 7 floats (a unit quaternion x, y, z, w, and a position in world

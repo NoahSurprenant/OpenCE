@@ -98,7 +98,7 @@ pub(super) fn check_after_physics(
         grind_locked_to_middle: skater.trajectory.selector.grind_locked_to_middle(),
         grind_normal: skater.trajectory.selector.grind_normal(),
     };
-    match skater.player_state.current() {
+    let checked = match skater.player_state.current() {
         PhysicalStateId::FootPlant | PhysicalStateId::HandPlant => {
             let frame = observations.frame()?;
             if skater.player_state.current() == PhysicalStateId::HandPlant {
@@ -131,5 +131,28 @@ pub(super) fn check_after_physics(
         }
         PhysicalStateId::PhysicsAir => skater.wipeout.check_air(&observations, false),
         _ => Ok(()), //Other concrete states dispatch their own postphysics check.
+    };
+    //halo-skate: riding into a person or a vehicle (solve/obstacles.rs) fast
+    //enough knocks the skater over, through the same requests.
+    let riding = matches!(
+        skater.player_state.current(),
+        PhysicalStateId::PhysicsGround
+            | PhysicalStateId::SlideGround
+            | PhysicalStateId::RevertGround
+            | PhysicalStateId::GroundAnimation
+            | PhysicalStateId::PhysicsAir
+    );
+    if checked.is_ok()
+        && riding
+        && !(skater.wipeout.state.cooldown > 0.0)
+        && skate_core::physics::kinematic_obstacle::knocks_over(
+            physics.obstacle_hit,
+            physics.obstacle_bail_speed,
+        )
+    {
+        let closing = physics.obstacle_hit.map_or(0.0, |(_, closing)| closing);
+        skater.wipeout.state.request(0, closing);
+        skater.wipeout.state.request(2, closing);
     }
+    checked
 }

@@ -102,7 +102,7 @@ enum Job {
     Load { root: PathBuf, triangles: Vec<[Vec3; 3]>, generation: u64 },
     Activate { sequence: u64, spawn: Vec3, yaw: f32 },
     /// The obstacles the next steps collide with (`obstacles.rs`).
-    Obstacles(Vec<skate_host::bridge::KinematicObstacle>),
+    Obstacles { obstacles: Vec<skate_host::bridge::KinematicObstacle>, bail_speed: f32 },
     Step { sequence: u64, pad: HaloSkatePad, dt: f32 },
     Suspend,
 }
@@ -180,6 +180,9 @@ static BOARD_SCALE: Setting = Setting::new(1.05);
 static ANKLE_HEIGHT: Setting = Setting::new(0.0);
 /// Raises the riding biped along the board's up, world units.
 static FEET_OFFSET: Setting = Setting::new(0.0);
+/// How fast (world units a second) running into a person or a vehicle
+/// knocks the skater over (`halo_skate_set_obstacle_bail_speed`): 6 m/s.
+static OBSTACLE_BAIL_SPEED: Setting = Setting::new(6.0 / METRES);
 
 fn with_host<T>(f: impl FnOnce(&mut Host) -> T) -> Option<T> {
     let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
@@ -453,9 +456,9 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 }
                 None => Reply::Error("no map is loaded for skating".into()),
             },
-            Job::Obstacles(obstacles) => {
+            Job::Obstacles { obstacles, bail_speed } => {
                 if let Some((_, s)) = session.as_mut() {
-                    s.set_obstacles(&obstacles);
+                    s.set_obstacles(&obstacles, bail_speed);
                 }
                 continue;
             }
@@ -1070,7 +1073,8 @@ pub unsafe extern "C" fn halo_skate_set_obstacles(obstacles: *const obstacles::H
         .collect();
     let sent = taken.len() as i32;
     with_host(|host| {
-        if host.jobs.send(Job::Obstacles(taken)).is_err() {
+        let bail_speed = OBSTACLE_BAIL_SPEED.get() * METRES;
+        if host.jobs.send(Job::Obstacles { obstacles: taken, bail_speed }).is_err() {
             return -1;
         }
         sent
@@ -1164,6 +1168,17 @@ pub extern "C" fn halo_skate_set_board_scale(scale: f32) -> f32 {
         BOARD_SCALE.set(scale);
     }
     BOARD_SCALE.get()
+}
+
+/// How fast (world units a second, along the contact) running into a person
+/// or a vehicle knocks the skater over (6 m/s at first; slower is a bump),
+/// for this session. Returns the speed kept: the last that made sense.
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_set_obstacle_bail_speed(speed: f32) -> f32 {
+    if speed.is_finite() && speed >= 0.0 {
+        OBSTACLE_BAIL_SPEED.set(speed);
+    }
+    OBSTACLE_BAIL_SPEED.get()
 }
 
 /// How the riding biped stands on the deck: its ankle node `ankle_height`
