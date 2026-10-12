@@ -677,3 +677,49 @@ fn scenery_made_and_gone_is_built_into_the_level_and_out() {
     assert!(open_furthest > 27.0, "past where the wall was, once it is gone: {open_furthest:.2} m");
     engine.hold(Pad::NEUTRAL, 30);
 }
+
+/// A teleporter takes the skater riding at speed along +X: put on the board
+/// at its exit 40 m on (skate.c's `skate_follow_teleport` sends
+/// `halo_skate_teleport`), turned a quarter left as the exit faces, moving as
+/// fast as before, now along +Y. Half a second on they are still riding,
+/// that way, near that fast.
+#[test]
+fn a_teleporter_keeps_the_skaters_speed_turned_with_the_exit() {
+    let Some(assets) = assets("a teleporter") else { return };
+    let mut engine = Engine::start(&assets);
+    assert_eq!(set(&[]), 0);
+    engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+    for _ in 0..3 {
+        push(&mut engine, 12);
+    }
+    let before = engine.history.last().unwrap().clone();
+    let v = before.velocity;
+    let speed = before.ground_speed();
+    assert!(speed > 5.0, "riding fast: {speed:.2} m/s");
+    let yaw = before.forward[1].atan2(before.forward[0]) + std::f32::consts::FRAC_PI_2;
+    // (the velocity turned a quarter left, as the unit was)
+    let turned = [-v[1], v[0], v[2]];
+    let exit = metres([before.at()[0] + 40.0, TestMap::OPEN, 0.0]);
+    let code = unsafe { halo_skate_teleport(exit.as_ptr(), yaw, turned.as_ptr(), &mut engine.frame) };
+    assert_eq!(code, 0, "halo_skate_teleport: {}", error());
+    let at = Snapshot::of(code, &engine.frame);
+    let first = engine.history.len();
+    engine.hold(Pad::NEUTRAL, 15);
+    let after = engine.history.last().unwrap().clone();
+    engine.trace(first, 3);
+    let moved = [after.at()[0] - at.at()[0], after.at()[1] - at.at()[1]];
+    eprintln!(
+        "teleported at {speed:.2} m/s: put at ({:.2}, {:.2}) m, half a second on {:.2} m/s, moved ({:.2}, {:.2}) m, {}",
+        at.at()[0],
+        at.at()[1],
+        after.ground_speed(),
+        moved[0],
+        moved[1],
+        after.state
+    );
+    assert!((at.at()[0] - exit[0] * METRES).abs() < 1.0 && (at.at()[1] - exit[1] * METRES).abs() < 1.0, "at the exit");
+    assert!(engine.since(first).iter().all(Snapshot::is_finite), "every frame is finite");
+    assert!(!after.state.starts_with("Wipeout") && !after.off_board(), "still riding: {}", after.state);
+    assert!(after.ground_speed() > 0.6 * speed, "near as fast: {:.2} of {speed:.2} m/s", after.ground_speed());
+    assert!(moved[1] > 2.0 && moved[1] > 3.0 * moved[0].abs(), "going the exit's way, +Y: {moved:?}");
+}

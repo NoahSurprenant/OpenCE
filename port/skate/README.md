@@ -438,7 +438,8 @@ from the floor to 1.1 m, the skater rides up and stands on its top; and the
 level sent again with a wall across the lane (`halo_skate_reload`, as
 scenery made mid-level is) stops the board there, the state ready all the
 while, and sent again without it, the board rides past. It needs the
-converted data (and the maps for the Warthog), and takes some 14 seconds
+A teleporter (`halo_skate_teleport`) taking the skater riding at 8.1 m/s puts
+them at its exit turned a quarter, riding on that way at 7.7 m/s. converted data (and the maps for the Warthog), and takes some 24 seconds
 (`--test real_assets_obstacles`).
 
 In CI they run in the `skate-assets` job of `.github/workflows/build.yml`
@@ -809,6 +810,34 @@ the vehicle as an obstacle and bumps or bails off it; projectiles hit its
 collision model as posed (the last tick's pose), and a skater killed falls
 off the board.
 
+Projectiles and blasts meet a skater as they meet anyone on foot in Halo: a
+round hits the posed body and damages it, head and all, on the skater's own
+machine and on the others (the host's projectiles hit its copy of another
+machine's skater where it poses them, and the damage is the host's as for
+anyone); a grenade thrown at a skater bounces off their body as off a
+standing player's, and its blast damages them. Neither moves them: Halo's
+push (`biped_accelerate`, a blast's or a vehicle's) goes into the biped's
+velocity, which the skate engine's replaces the next tick, as it places the
+biped (`skate_apply_frame`, which logs a push it undoes: `skate: a push of
+4.3 m/s on the skater undone`). Weapons lying about and grenades are no
+obstacles to the skater, as they are none to a player on foot.
+
+A teleporter takes a skater: Halo's teleporter (`game_engine.c`'s
+`game_engine_update_teleporter`, at a netgame flag's entrance) puts their
+unit at its exit, turned by the exit's facing less the entrance's, as for
+anyone; the next tick `skate_follow_teleport` (`skate.c`) finds the biped
+more than a world unit from where it put it and puts the skate engine's
+skater there (`halo_skate_teleport`): on the board, turned as the unit was,
+moving as fast as before, now the same way round from the exit as they went
+into the entrance (`skate: teleported 42.88 world units to (82.83 -114.53
+0.70), turned 86 degrees, at 8.1 m/s`). The camera turns with them and the
+board is drawn there at once, not slid across the map. A script's
+`object_teleport`, or anything else that moves the unit, is followed the
+same way. Each machine runs the teleporter for its own players, as for
+players on foot; a client's skater the host puts more than 4 world units
+from where the client has them is moved there too (`network_distributed.c`),
+and followed. The other machines see the skater jump as the host has them.
+
 Machines that cannot skate play on: a build without Skate 3 mode (Android,
 or without `--skate`) still sends and takes the states, poses others' skaters
 and holds the host's bounds; it draws no board. A build older than this one
@@ -855,6 +884,17 @@ it is never put into a rock or off a ledge to fall and die and miss its turns.
 `debug.network_test_skate_scenery` (`HALO_NETWORK_TEST_SKATE_SCENERY`) deletes
 the piece of scenery nearest this machine's player that many seconds in, and
 makes it again four seconds later.
+`debug.network_test_skate_shoot` (`HALO_NETWORK_TEST_SKATE_SHOOT`), with the watch on a host,
+shoots skaters at set times with real projectiles, as weapons fire them: a
+burst of three rounds of its weapon from 1.5 world units off, and a grenade
+thrown at their chest, at another machine's skater and, once the host skates
+(the duel), at its own; the log tells the damage (`skate test: a burst at a
+skater (another machine's): shield 1.00 to 0.57, ...`), whether the grenade
+bounced off them, and the skater after its blast. A grenade kills a skater,
+and the watcher near, as it would anyone, so the shots are few.
+`debug.network_test_skate_teleport` (`HALO_NETWORK_TEST_SKATE_TELEPORT`) puts a
+host's own skater on a teleporter's entrance that many seconds in, for Halo's
+teleporter to take.
 
 `tools/test_linux_port.py`'s `test_skate_multiplayer` runs a host and a
 client on Blood Gulch on one machine, the client skating, with a round trip
@@ -868,7 +908,10 @@ the client had them as a skater's body and board, and that each machine's
 engine logged a hit on a skater (the client's riding in, the host's ridden
 into); that each loaded Blood Gulch with its scenery; and that the client,
 deleting a piece of it 30 seconds in and making it again, built the level
-again with one piece fewer, then as before, each swapped in. It needs a build with `--skate`, the converted data and the
+again with one piece fewer, then as before, each swapped in. The host also
+shoots: a burst must damage a skater on each machine, a grenade must bounce
+off one, and one must go off at the host's own; and it puts its own skater on
+Blood Gulch's teleporter, which must take them to its exit. It needs a build with `--skate`, the converted data and the
 maps, and skips without them:
 
 ```text
@@ -920,8 +963,7 @@ and damaged or foreign bytes refused.
 - **In a network game, each machine decides its own skater's hits**: a
   skater riding into a player does not move them, and two skaters running
   into each other each bump or bail by what their own machine saw, which
-  latency may make one-sided. A teleporter does not take a skater (the skate
-  engine puts them back).
+  latency may make one-sided.
 - **Another machine's board is placed whole**: its wheels and trucks do not
   turn, and a machine without the Skate 3 data draws no board at all (it
   still poses the skater).

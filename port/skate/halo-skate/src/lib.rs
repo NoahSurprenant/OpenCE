@@ -103,7 +103,9 @@ enum Job {
     /// The same level's collision again (scenery made or gone): built aside,
     /// the skater riding the old meanwhile (`halo_skate_reload`).
     Reload { root: PathBuf, triangles: Vec<[Vec3; 3]>, generation: u64 },
-    Activate { sequence: u64, spawn: Vec3, yaw: f32 },
+    /// On the board at `spawn`; with `velocity` (world units a second) moving
+    /// so from the start, as a teleporter leaves a skater.
+    Activate { sequence: u64, spawn: Vec3, yaw: f32, velocity: Option<Vec3> },
     /// The obstacles the next steps collide with (`obstacles.rs`).
     Obstacles { obstacles: Vec<skate_host::bridge::KinematicObstacle>, bail_speed: f32 },
     Step { sequence: u64, pad: HaloSkatePad, dt: f32 },
@@ -455,13 +457,19 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 sequence,
                 spawn,
                 yaw,
+                velocity,
             } => match session.as_mut() {
                 Some((_, s)) => {
                     accumulated = 0.0;
                     recovery.reset();
                     hits.reset();
                     // Skate's board faces its local +Z; a yaw of zero faces +X.
-                    match s.activate(to_skate(spawn).to_array(), yaw + std::f32::consts::FRAC_PI_2) {
+                    let heading = yaw + std::f32::consts::FRAC_PI_2;
+                    let placed = match velocity {
+                        Some(v) => s.teleport(to_skate(spawn).to_array(), heading, to_skate(v).to_array()),
+                        None => s.activate(to_skate(spawn).to_array(), heading),
+                    };
+                    match placed {
                         Ok(pose) => {
                             last = Some(Last::of(&pose));
                             sound::reset(s);
@@ -1070,6 +1078,35 @@ pub extern "C" fn halo_skate_error() -> *const c_char {
 /// `position` holds 3 floats; `out` is writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn halo_skate_activate(position: *const f32, yaw: f32, out: *mut HaloSkateFrame) -> i32 {
+    unsafe { activate(position, yaw, None, out) }
+}
+
+/// A teleporter took the skater: on the board at `position` (world units, on
+/// the ground) facing `yaw` radians from +X, as `halo_skate_activate`, and
+/// moving at `velocity` (3 floats, world units a second) from the start.
+/// Returns 0 with `out` filled, or -1.
+///
+/// # Safety
+/// `position` and `velocity` hold 3 floats; `out` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_teleport(
+    position: *const f32,
+    yaw: f32,
+    velocity: *const f32,
+    out: *mut HaloSkateFrame,
+) -> i32 {
+    if velocity.is_null() {
+        return -1;
+    }
+    let v = unsafe { std::slice::from_raw_parts(velocity, 3) };
+    let v = Vec3::new(v[0], v[1], v[2]);
+    if !v.is_finite() {
+        return -1;
+    }
+    unsafe { activate(position, yaw, Some(v), out) }
+}
+
+unsafe fn activate(position: *const f32, yaw: f32, velocity: Option<Vec3>, out: *mut HaloSkateFrame) -> i32 {
     if position.is_null() || out.is_null() {
         return -1;
     }
@@ -1083,7 +1120,7 @@ pub unsafe extern "C" fn halo_skate_activate(position: *const f32, yaw: f32, out
         host.sequence += 1;
         host.recovered = false;
         let sequence = host.sequence;
-        if !host.request(Job::Activate { sequence, spawn, yaw }, sequence, ACTIVATE_WAIT) {
+        if !host.request(Job::Activate { sequence, spawn, yaw, velocity }, sequence, ACTIVATE_WAIT) {
             return -1;
         }
         match host.pose.as_ref() {

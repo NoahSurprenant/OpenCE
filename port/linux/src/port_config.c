@@ -450,6 +450,16 @@ static const struct config_setting config_settings[] =
 		"on a Skate 3 board and stands on it; with debug.network_test_skate_block on\n"
 		"a host, it is put on the board in another skater's way every five seconds,\n"
 		"facing them (port/skate/README.md); 0 never." },
+	{ "debug.network_test_skate_shoot", _config_boolean, "false", "HALO_NETWORK_TEST_SKATE_SHOOT",
+		_environment_set_is_true, _platform_all,
+		"With debug.network_test_skate_watch on a host, its player shoots skaters now\n"
+		"and then with real projectiles, a round of its weapon and a grenade, and\n"
+		"logs what they did (port/skate/README.md)." },
+	{ "debug.network_test_skate_teleport", _config_real, "0.0", "HALO_NETWORK_TEST_SKATE_TELEPORT", _environment_value,
+		_platform_all,
+		"This many seconds into an automated test game a host skating itself puts its\n"
+		"skater on the first teleporter's entrance, for Halo's teleporter to take\n"
+		"(port/skate/README.md); 0 never." },
 	{ "debug.network_test_skate_scenery", _config_real, "0.0", "HALO_NETWORK_TEST_SKATE_SCENERY", _environment_value,
 		_platform_all,
 		"This many seconds into an automated test game this machine deletes the piece\n"

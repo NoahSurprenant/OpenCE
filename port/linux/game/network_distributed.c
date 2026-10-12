@@ -251,6 +251,10 @@ host has it (no further than that: between the two they would disagree for
 good, the host's player somewhere its own is not) */
 #define HOST_ACCEPT_TOLERANCE 3.5f
 #define LOCAL_CORRECTION_TOLERANCE 3.0f
+/* port: a client's own skater the host puts further than this from where the
+client has them (world units: past any latency's error at a board's speed)
+was teleported, and is moved there (distributed_correct_own_unit) */
+#define SKATE_HOST_TELEPORT_DISTANCE 4.0f
 /* how fast a client's own player's unit moves at most (world units a tick) */
 #define MAXIMUM_PREDICTED_SPEED 2.0f
 /* ... on foot: this many times as fast as a player runs and jumps, or as
@@ -1654,9 +1658,16 @@ static void distributed_correct_own_unit(
 	real_point3d position = state->position;
 
 	/* port: a skater is where the skate engine has them (skate.c puts the
-	biped there each tick): moved, they would be put back at once */
-	if (skate_unit_is_skating(unit_index))
+	biped there each tick): moved, they would be put back at once. But for
+	the host putting them far off, past any latency's error (a teleporter,
+	which moves a client's player on the host): moved there, the skate engine's
+	skater follows (skate.c's skate_follow_teleport) */
+	if (skate_unit_is_skating(unit_index) &&
+		distance_squared3d(&state->position, &object_get(unit_index)->object.position) <=
+		SKATE_HOST_TELEPORT_DISTANCE * SKATE_HOST_TELEPORT_DISTANCE)
+	{
 		return;
+	}
 
 	/* (co-op: the host has its player in a BSP this machine hasn't loaded
 	yet, the switch still on its way. Moved there, it would fall with no

@@ -55,6 +55,10 @@ int halo_skate_reload(const char *assets, const float *triangles, int count);
 int halo_skate_state(void);
 const char *halo_skate_error(void);
 int halo_skate_activate(const float *position, float yaw, struct halo_skate_frame *out);
+/* a teleporter took the skater: on the board at position facing yaw, as
+halo_skate_activate, and moving at velocity (3 floats, world units a second)
+from the start. 0, or -1 */
+int halo_skate_teleport(const float *position, float yaw, const float *velocity, struct halo_skate_frame *out);
 /* 0: the new pose; 1: the engine did not answer in time (the last pose); 2: a
 step failed and the skater was put back on the board where it last was; -1:
 failed (halo_skate_error) */
