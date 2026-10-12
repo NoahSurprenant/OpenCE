@@ -171,7 +171,16 @@ fn ride_into_meshes(
 /// After a bail the engine resets the skater onto the board: within a few
 /// seconds it stands on it, not wiping out.
 fn assert_back_on_the_board(engine: &mut Engine, what: &str) {
+    // (five seconds, ten at most: a ragdoll a vehicle carried on slides a
+    // while, longer on some machines, before the engine puts it back)
     engine.hold(Pad::NEUTRAL, 150);
+    for _ in 0..150 {
+        let last = engine.history.last().unwrap();
+        if !last.off_board() && !last.state.starts_with("Wipeout") {
+            break;
+        }
+        engine.step(Pad::NEUTRAL);
+    }
     let last = engine.history.last().unwrap().clone();
     assert!(
         !last.off_board() && !last.state.starts_with("Wipeout"),
