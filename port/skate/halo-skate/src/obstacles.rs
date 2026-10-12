@@ -96,18 +96,30 @@ pub fn kind_name(kind: ObstacleKind) -> &'static str {
     }
 }
 
-/// Tells the log when the skater runs into an obstacle (the first tick of a
-/// run of ticks touching one), and whether a bail followed within a second.
+/// Tells the log of each time the skater runs into an obstacle, riding (not
+/// already bailing), once it is told what followed: a bail within a second,
+/// or riding on. One line a hit, with the fastest closing speed (m/s) of its
+/// contacts: "halo-skate: hit a biped at 6.3 m/s (PhysicsGround, engine tick
+/// 80): bailed 5 engine ticks later".
 #[derive(Default)]
 pub struct HitLog {
-    touching: bool,
-    /// the engine tick of the last hit and what was hit, until a bail or a
-    /// second on
-    pending: Option<(u64, ObstacleKind)>,
+    /// the engine tick of the last contact with any obstacle
+    last_contact: Option<u64>,
+    pending: Option<Hit>,
+}
+
+struct Hit {
+    tick: u64,
+    kind: ObstacleKind,
+    fastest: f32,
+    state: String,
 }
 
 /// Engine ticks (60 a second) after a hit that a bail still counts as its.
 const BAIL_AFTER: u64 = 60;
+/// Engine ticks without a contact that part two hits (the board pushed off
+/// an obstacle touches it again a tick or two later: the same hit).
+const APART: u64 = 30;
 
 impl HitLog {
     /// After each engine tick: how many contacts with obstacles it had, the
@@ -121,37 +133,56 @@ impl HitLog {
         tick: u64,
     ) -> Vec<String> {
         let mut lines = Vec::new();
-        let touching = contacts > 0;
-        if touching && !self.touching {
+        let bailing = state.starts_with("Wipeout");
+        if contacts > 0 {
+            let apart = self.last_contact.is_none_or(|last| tick.saturating_sub(last) > APART);
+            self.last_contact = Some(tick);
             let (kind, speed) = hit.unwrap_or((ObstacleKind::Scenery, 0.0));
-            lines.push(format!(
-                "halo-skate: hit a {} at {:.1} m/s ({state}, engine tick {tick})",
-                kind_name(kind),
-                speed.max(0.0)
-            ));
-            self.pending = Some((tick, kind));
+            match &mut self.pending {
+                Some(pending) => {
+                    if speed > pending.fastest {
+                        pending.fastest = speed;
+                        pending.kind = kind;
+                    }
+                }
+                None if apart && !bailing => {
+                    self.pending = Some(Hit {
+                        tick,
+                        kind,
+                        fastest: speed.max(0.0),
+                        state: state.to_string(),
+                    });
+                }
+                None => {}
+            }
         }
-        self.touching = touching;
-        if let Some((at, kind)) = self.pending {
-            if state.starts_with("Wipeout") {
+        if let Some(pending) = &self.pending {
+            let since = tick.saturating_sub(pending.tick);
+            let what = if bailing {
+                Some(format!("bailed {since} engine ticks later"))
+            } else if since > BAIL_AFTER {
+                Some(format!("rode on ({state})"))
+            } else {
+                None
+            };
+            if let Some(what) = what {
                 lines.push(format!(
-                    "halo-skate: bailed {} engine ticks after hitting a {}",
-                    tick.saturating_sub(at),
-                    kind_name(kind)
+                    "halo-skate: hit a {} at {:.1} m/s ({}, engine tick {}): {what}",
+                    kind_name(pending.kind),
+                    pending.fastest,
+                    pending.state,
+                    pending.tick
                 ));
-                self.pending = None;
-            } else if tick.saturating_sub(at) > BAIL_AFTER {
-                lines.push(format!("halo-skate: rode on after hitting a {} ({state})", kind_name(kind)));
                 self.pending = None;
             }
         }
         lines
     }
 
-    /// Whether `observe` has anything to tell with no contact: a hit
-    /// last tick, or one waiting to be told what followed.
+    /// Whether `observe` has anything to tell with no contact: a hit waiting
+    /// to be told what followed.
     pub fn listening(&self) -> bool {
-        self.touching || self.pending.is_some()
+        self.pending.is_some()
     }
 
     pub fn reset(&mut self) {
@@ -240,24 +271,30 @@ mod tests {
         let flat = HaloSkateObstacle { half_extents: [0.3, 0.0, 0.3], ..good };
         assert!(flat.to_engine().and_then(|o| o.validated()).is_none());
     }
-
     #[test]
-    fn the_hit_log_tells_each_hit_once_and_what_followed() {
+    fn the_hit_log_tells_each_hit_once_with_what_followed() {
         let mut log = HitLog::default();
         assert!(log.observe(0, None, "PhysicsGround", 1).is_empty());
-        let hit = log.observe(3, Some((ObstacleKind::Biped, 6.3)), "PhysicsGround", 2);
-        assert_eq!(hit, vec!["halo-skate: hit a biped at 6.3 m/s (PhysicsGround, engine tick 2)".to_string()]);
-        assert!(log.observe(2, Some((ObstacleKind::Biped, 1.0)), "PhysicsGround", 3).is_empty(), "the same hit");
+        assert!(log.observe(3, Some((ObstacleKind::Biped, 2.0)), "PhysicsGround", 2).is_empty(), "told later");
+        assert!(log.observe(0, None, "PhysicsGround", 3).is_empty());
+        assert!(log.observe(2, Some((ObstacleKind::Biped, 6.3)), "PhysicsGround", 4).is_empty(), "the same hit");
         assert_eq!(
             log.observe(0, None, "WipeoutGround", 10),
-            vec!["halo-skate: bailed 8 engine ticks after hitting a biped".to_string()]
+            vec!["halo-skate: hit a biped at 6.3 m/s (PhysicsGround, engine tick 2): bailed 8 engine ticks later"
+                .to_string()]
         );
-        assert!(log.observe(0, None, "WipeoutGround", 11).is_empty());
+        // touching it again while bailing, or lying against it, is no hit
+        assert!(log.observe(1, Some((ObstacleKind::Biped, 3.0)), "WipeoutGround", 20).is_empty());
+        assert!(!log.listening());
+        assert!(log.observe(1, Some((ObstacleKind::Biped, 3.0)), "PhysicsGround", 40).is_empty(), "too soon");
+        assert!(!log.listening());
         log.observe(1, Some((ObstacleKind::Vehicle, 1.0)), "PhysicsGround", 100);
+        assert!(log.listening());
         assert!(log.observe(0, None, "PhysicsGround", 150).is_empty());
         assert_eq!(
             log.observe(0, None, "PhysicsGround", 161),
-            vec!["halo-skate: rode on after hitting a vehicle (PhysicsGround)".to_string()]
+            vec!["halo-skate: hit a vehicle at 1.0 m/s (PhysicsGround, engine tick 100): rode on (PhysicsGround)"
+                .to_string()]
         );
     }
 }

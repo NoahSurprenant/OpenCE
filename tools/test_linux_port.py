@@ -462,7 +462,7 @@ def test_skate_multiplayer(tmp_path):
               "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75", "HALO_NETWORK_LOSS": "10"}
     machines = {"host": {"HALO_NET_ADDRESS": "127.0.0.210", "HALO_NET_BROADCAST": "127.0.0.211",
                          "HALO_NETWORK_TEST": "host:bloodgulch", "HALO_NETWORK_TEST_START": "12",
-                         "HALO_NETWORK_TEST_SKATE_WATCH": "1"},
+                         "HALO_NETWORK_TEST_SKATE_WATCH": "1", "HALO_NETWORK_TEST_SKATE_BLOCK": "1"},
                 "join": {"HALO_NET_ADDRESS": "127.0.0.211", "HALO_NET_BROADCAST": "127.0.0.210",
                          "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15"}}
     games = {}
@@ -506,3 +506,16 @@ def test_skate_multiplayer(tmp_path):
     assert len(posed) >= 0.9 * len(remote), f"posed with the board {len(posed)} of {len(remote)} seconds"
     taken, refused = int(remote[-1][3]), int(remote[-1][4])
     assert refused <= max(3, taken // 50), f"the host refused {refused} of the skater's places, took {taken}"
+    # the watcher steps into the skater's way every five seconds
+    # (debug.network_test_skate_block): on the client it is another machine's
+    # biped, an obstacle (skate.c), which the skater must hit - bump or bail -
+    # rather than pass through
+    blocks = re.findall(r"the watcher steps into the skater's way", host)
+    near = [int(n) for n in re.findall(r"skate test: (\d+) obstacles near", join)]
+    hits = re.findall(r"halo-skate: hit a biped at ([\d.]+) m/s", join)
+    outcomes = re.findall(r"halo-skate: hit a biped at [\d.]+ m/s [^\n]*: (bailed|rode on)", join)
+    print(f"{len(blocks)} blocks; obstacles near in {len(near)} logged seconds; {len(hits)} hits at {hits} m/s: "
+          f"{outcomes}")
+    assert len(blocks) >= 3, f"the watcher stepped in {len(blocks)} times:\n{host[-4000:]}"
+    assert near, f"the client never had the watcher as an obstacle:\n{join[-4000:]}"
+    assert hits, f"the skater never hit the watcher:\n{join[-4000:]}"

@@ -79,6 +79,14 @@ are further than SKATE_NETWORK_WATCH_DISTANCE (world units; the host's own
 player only, which is the host's to place) */
 #define SKATE_NETWORK_WATCH_DISTANCE 8.0f
 #define SKATE_NETWORK_WATCH_NEAR 3.0f
+/* debug.network_test_skate_block: every this many ticks (5 seconds) the
+watcher steps into the way of a skater going faster than
+SKATE_NETWORK_BLOCK_SPEED (world units a second, 1.5 m/s), this far ahead of
+where the host has them (world units, 4.6 m: well under a second at any
+pushed speed, so the carve does not take them round it) */
+#define SKATE_NETWORK_BLOCK_TICKS (5 * TICKS_PER_SECOND)
+#define SKATE_NETWORK_BLOCK_SPEED 0.5f
+#define SKATE_NETWORK_BLOCK_AHEAD 1.5f
 /* the skeletons rebuilt from their model, by definition */
 #define SKATE_NETWORK_SKELETONS 4
 
@@ -479,6 +487,9 @@ static struct
 	/* a network test logs what arrives once a second (debug.network_test) */
 	boolean log;
 	boolean watch;
+	/* debug.network_test_skate_block, and when the watcher last stepped in */
+	boolean block;
+	long blocked_time;
 	long logged_time;
 } skate_network_globals;
 
@@ -494,6 +505,8 @@ void skate_network_new_game(void)
 	}
 	skate_network_globals.log = config_string("debug.network_test") && *config_string("debug.network_test");
 	skate_network_globals.watch = config_boolean("debug.network_test_skate_watch");
+	skate_network_globals.block = config_boolean("debug.network_test_skate_block");
+	skate_network_globals.blocked_time = NONE;
 	skate_network_globals.logged_time = NONE;
 }
 
@@ -948,6 +961,32 @@ where the watcher was, a little above the ground to fall onto it) */
 		position.z = at->z + 0.3f;
 		object_set_position(unit_index, &position, &object->object.forward, &object->object.up);
 		*pitch = (real)atan2(-0.3f, SKATE_NETWORK_WATCH_NEAR);
+	}
+	/* debug.network_test_skate_block: now and then the watcher steps into the
+	skater's way, ahead of them the way they go, for the skater to ride into
+	(skate.c's obstacles: on the skater's machine the watcher is another
+	machine's biped, where the host says) */
+	if (found && skate_network_globals.block && game_connection() != _game_connection_network_client &&
+		(skate_network_globals.blocked_time == NONE ||
+		game_time_get() - skate_network_globals.blocked_time >= SKATE_NETWORK_BLOCK_TICKS))
+	{
+		struct object_datum *skater = object_get(nearest_index);
+		real_vector3d const *velocity = &skater->object.translational_velocity;
+		real speed = (real)sqrt(velocity->i * velocity->i + velocity->j * velocity->j);
+
+		if (speed * TICKS_PER_SECOND > SKATE_NETWORK_BLOCK_SPEED)
+		{
+			real_point3d position;
+
+			position.x = skater->object.position.x + velocity->i / speed * SKATE_NETWORK_BLOCK_AHEAD;
+			position.y = skater->object.position.y + velocity->j / speed * SKATE_NETWORK_BLOCK_AHEAD;
+			position.z = skater->object.position.z + 0.3f;
+			object_set_position(unit_index, &position, &object->object.forward, &object->object.up);
+			skate_network_globals.blocked_time = game_time_get();
+			platform_log("skate network: the watcher steps into the skater's way at (%.2f %.2f %.2f), "
+				"the skater going %.1f m/s", position.x, position.y, position.z,
+				speed * TICKS_PER_SECOND * 3.048f);
+		}
 	}
 	return found && *yaw >= 0.f && *yaw < 2.f * _pi;
 }

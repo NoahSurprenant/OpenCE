@@ -440,6 +440,10 @@ static const struct config_setting config_settings[] =
 		_environment_set_is_true, _platform_all,
 		"In an automated test game this machine's player turns to watch another\n"
 		"machine's Skate 3 skater (port/skate/README.md)." },
+	{ "debug.network_test_skate_block", _config_boolean, "false", "HALO_NETWORK_TEST_SKATE_BLOCK",
+		_environment_set_is_true, _platform_all,
+		"With debug.network_test_skate_watch on a host, its player steps into the\n"
+		"skater's way every five seconds, for them to ride into (port/skate/README.md)." },
 	{ "debug.telnet_console", _config_boolean, "false", "HALO_TELNET_CONSOLE", _environment_set_is_true, _platform_all,
 		"Listen on 127.0.0.1 (port telnet_console_port) for a script console that\n"
 		"runs what it is sent as the game's console does, with no password; false\n"
