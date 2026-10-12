@@ -869,6 +869,8 @@ thrown from */
 #define SKATE_THROW_DISTANCE 0.8f
 /* ticks a set time's shot waits for its skater to ride (five seconds) */
 #define SKATE_SHOOT_WAIT_TICKS (5 * TICKS_PER_SECOND)
+/* world units no other skater may be within for a grenade at the host's own */
+#define SKATE_SHOOT_ALONE 6.f
 
 static struct
 {
@@ -910,6 +912,27 @@ static long skate_shoot_projectile(long definition_index, long owner_index, long
 	data.position.z = target->object.bounding_sphere_center.z - direction->k * distance + height;
 	data.forward = *direction;
 	return object_new(&data);
+}
+
+/* whether no other machine's skater is within SKATE_SHOOT_ALONE of the unit
+(the push of a grenade thrown at the host's own skater is measured, which a
+skater riding into them would spoil) */
+static boolean skate_network_test_alone(long unit_index)
+{
+	real_point3d const *at = &object_get(unit_index)->object.position;
+	short index;
+
+	for (index = 0; index < SKATE_NETWORK_PLAYERS; index++)
+	{
+		long skater_index = skate_network_player_skating(index) ? skate_network_player_unit(index) : NONE;
+
+		if (skater_index != NONE && skater_index != unit_index &&
+			distance_squared3d(&object_get(skater_index)->object.position, at) < SKATE_SHOOT_ALONE * SKATE_SHOOT_ALONE)
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
 }
 
 static void skate_network_test_shoot(void)
@@ -1040,7 +1063,7 @@ static void skate_network_test_shoot(void)
 			now <= SKATE_OWN_GRENADES_UNTIL * TICKS_PER_SECOND &&
 			now % TICKS_PER_SECOND == 0 && skate_shoot.grenade_index == NONE && skate_shoot.detonated_time == NONE &&
 			skate_unit_is_skating(watcher_index) && !TEST_FLAG(watcher->object.damage_flags, _object_dead_bit) &&
-			watcher->object.shield_vitality >= 1.f)
+			watcher->object.shield_vitality >= 1.f && skate_network_test_alone(watcher_index))
 		{
 			skate_shoot.shots = TRUE;
 			grenade = TRUE;
