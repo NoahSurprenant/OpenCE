@@ -419,6 +419,8 @@ static struct skate_local_hit
 	machine's skater over */
 	boolean resolved;
 	boolean bails;
+	/* the verdict's number (0: none came in time) */
+	word verdict;
 } skate_local_hits[SKATE_AUTHORITY_HITS];
 
 /* (the host) the hits it decided: the verdict, sent until a tick, and the
@@ -607,7 +609,6 @@ engine held let go; their hit on the other is decided, and no new report
 reopens it (one their engine never saw is noted as decided). Once a hit */
 static void skate_authority_settle(struct skate_verdict const *verdict)
 {
-	long skater_index = skate_local_skater_unit();
 	short party;
 
 	for (party = 0; party < 2; party++)
@@ -616,15 +617,25 @@ static void skate_authority_settle(struct skate_verdict const *verdict)
 		boolean bails = TEST_FLAG(verdict->flags, party ? _skate_verdict_second_bails_bit :
 			_skate_verdict_first_bails_bit);
 		struct skate_local_hit *hit;
+		long skater_index = verdict->object_indices[party];
+		byte player_index = skate_authority_player_of(skater_index);
 
-		if (skater_index == NONE || verdict->object_indices[party] != skater_index)
+		/* (this machine's player's skater, on the board still or not) */
+		if ((party && !TEST_FLAG(verdict->flags, _skate_verdict_second_skater_bit)) ||
+			player_index == SKATE_AUTHORITY_NO_PLAYER || !distributed_player(player_index) ||
+			distributed_player(player_index)->local_player_index == NONE ||
+			distributed_living_unit(distributed_player(player_index)) != skater_index)
+		{
 			continue;
+		}
 		hit = skate_authority_local_hit(other_index);
 		if (!hit)
 			hit = skate_authority_new_local_hit(other_index);
-		if (hit->resolved)
+		/* (each verdict once; a newer one on the same hit is the host's still) */
+		if (hit->resolved && hit->verdict == verdict->number)
 			continue;
 		hit->resolved = TRUE;
+		hit->verdict = verdict->number;
 		hit->bails = bails;
 		hit->send_until = NONE;
 		if (bails)
