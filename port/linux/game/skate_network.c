@@ -889,6 +889,8 @@ static struct
 	real grenade_shield;
 	real grenade_body;
 	real_vector3d detonated_velocity;
+	/* (when the grenade was thrown) */
+	long grenade_time;
 } skate_shoot = { NONE, FALSE, NONE, 0.f, 0.f, NONE, { 0.f, 0.f, 0.f }, FALSE, NONE, { 0.f, 0.f, 0.f }, 0 };
 
 /* a projectile of definition_index aimed at target_index's middle (raised
@@ -961,7 +963,10 @@ static void skate_network_test_shoot(void)
 				skate_shoot.detonated_time = now;
 				skate_shoot.detonated_at = target->object.position;
 				skate_shoot.detonated_velocity = target->object.translational_velocity;
+				/* (and on its fuse: one that went off at once, on something in its
+				way, is tried again) */
 				if (skate_shoot.local && target->object.body_vitality > 0.f &&
+					now - skate_shoot.grenade_time >= TICKS_PER_SECOND &&
 					(target->object.shield_vitality < skate_shoot.grenade_shield ||
 					target->object.body_vitality < skate_shoot.grenade_body))
 				{
@@ -1107,6 +1112,7 @@ static void skate_network_test_shoot(void)
 			}
 			skate_shoot.bounced = FALSE;
 			skate_shoot.grenade_direction = direction;
+			skate_shoot.grenade_time = now;
 			skate_shoot.grenade_index = grenade && grenade_definition != NONE ?
 				skate_shoot_projectile(grenade_definition, local ? NONE : watcher_index, target_index, &direction,
 					SKATE_THROW_DISTANCE, 0.f) : NONE;
