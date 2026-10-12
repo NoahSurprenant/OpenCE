@@ -552,13 +552,17 @@ def test_skate_multiplayer(tmp_path):
     bails = {n: (text.count("bails"), heard.get(n, "").count("bails")) for n, text in decided.items()}
     print(f"verdicts decided {decided}; heard {heard}; bails on the host and the client {bails}")
     assert any("on foot" in text for text in decided.values()), f"no hit on the watcher on foot decided: {decided}"
-    assert any("player 0's skater" in text for text in decided.values()), f"no skater on skater decided: {decided}"
+    assert any(re.search(r"; player \d+'s skater", text) for text in decided.values()), \
+        f"no skater on skater decided: {decided}"
     missing = [n for n in decided if n not in heard and n != max(decided)]
     assert not missing, f"the client never heard verdicts {missing}: {decided}, {heard}"
     assert all(heard[n] == decided.get(n) for n in heard), f"the machines' verdicts differ: {decided}, {heard}"
     assert all(h == c for n, (h, c) in bails.items() if n in heard), f"bails differ: {bails}"
+    # (each machine's own player, whichever index the game gave it)
+    players = {name: set(re.findall(r"skate network: player (\d+) skates here", log)) for name, log in
+               (("host", host), ("join", join))}
     for n, text in decided.items():
-        for player, own in (("1", join), ("0", host)):
+        for player, own in [(p, join) for p in players["join"]] + [(p, host) for p in players["host"]]:
             if f"player {player}'s skater bails" in text and n in heard:
                 assert f"skate verdict {n}: this machine's skater bails" in own, f"verdict {n} not applied: {text}"
     seen = len(re.findall(r"skate network: player \d+ bails on another machine", host + join))

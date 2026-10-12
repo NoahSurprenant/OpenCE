@@ -870,7 +870,7 @@ thrown from */
 /* ticks a set time's shot waits for its skater to ride (five seconds) */
 #define SKATE_SHOOT_WAIT_TICKS (5 * TICKS_PER_SECOND)
 /* world units no other skater may be within for a grenade at the host's own */
-#define SKATE_SHOOT_ALONE 6.f
+#define SKATE_SHOOT_ALONE 4.f
 
 static struct
 {
@@ -935,12 +935,30 @@ static boolean skate_network_test_alone(long unit_index)
 	return TRUE;
 }
 
+static boolean skate_shoot_fired[8];
+
+/* whether every set time due is shot or past waiting for (a grenade alone at the host's own
+skater waits for them) */
+static boolean skate_network_test_shots_done(long now)
+{
+	short which;
+
+	for (which = 0; which < (short)NUMBEROF(skate_shoot_seconds) && which < (short)NUMBEROF(skate_shoot_fired); which++)
+	{
+		long since = now - skate_shoot_seconds[which].seconds * TICKS_PER_SECOND;
+
+		if (!skate_shoot_fired[which] && since >= 0 && since <= SKATE_SHOOT_WAIT_TICKS)
+			return FALSE;
+	}
+	return TRUE;
+}
+
 static void skate_network_test_shoot(void)
 {
 	static int enabled = -1;
-	/* (the set times shot, each once: one whose skater bails or walks then is
-	shot at as soon as they ride, within SKATE_SHOOT_WAIT_TICKS) */
-	static boolean fired[8];
+	/* (the set times shot, each once, skate_shoot_fired: one whose skater bails
+	or walks then is shot at as soon as they ride, within SKATE_SHOOT_WAIT_TICKS) */
+	boolean *fired = skate_shoot_fired;
 	short scheduled = -1;
 	long watcher_index = player_control_get_unit_index(0);
 	struct object_datum *watcher = watcher_index != NONE ? object_try_and_get(watcher_index) : NULL;
@@ -1046,7 +1064,7 @@ static void skate_network_test_shoot(void)
 		{
 			long since = now - skate_shoot_seconds[which].seconds * TICKS_PER_SECOND;
 
-			if (which < (short)NUMBEROF(fired) && !fired[which] && since >= 0 && since <= SKATE_SHOOT_WAIT_TICKS &&
+			if (which < (short)NUMBEROF(skate_shoot_fired) && !fired[which] && since >= 0 && since <= SKATE_SHOOT_WAIT_TICKS &&
 				since % TICKS_PER_SECOND == 0)
 			{
 				break;
@@ -1063,7 +1081,8 @@ static void skate_network_test_shoot(void)
 			now <= SKATE_OWN_GRENADES_UNTIL * TICKS_PER_SECOND &&
 			now % TICKS_PER_SECOND == 0 && skate_shoot.grenade_index == NONE && skate_shoot.detonated_time == NONE &&
 			skate_unit_is_skating(watcher_index) && !TEST_FLAG(watcher->object.damage_flags, _object_dead_bit) &&
-			watcher->object.shield_vitality >= 1.f && skate_network_test_alone(watcher_index))
+			watcher->object.shield_vitality >= 1.f && skate_local_skater_riding() && skate_network_test_alone(watcher_index) &&
+			skate_network_test_shots_done(now))
 		{
 			skate_shoot.shots = TRUE;
 			grenade = TRUE;
@@ -1107,8 +1126,12 @@ static void skate_network_test_shoot(void)
 			boolean riding = local ? skate_local_skater_riding() : skater->unit.player_index != NONE &&
 				skate_network_player_riding((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(skater->unit.player_index));
 
-			if (!riding && now < skate_shoot_seconds[scheduled].seconds * TICKS_PER_SECOND + SKATE_SHOOT_WAIT_TICKS)
+			/* (nor while a grenade thrown before is about: its log would be lost) */
+			if ((!riding || skate_shoot.grenade_index != NONE || skate_shoot.detonated_time != NONE) &&
+				now < skate_shoot_seconds[scheduled].seconds * TICKS_PER_SECOND + SKATE_SHOOT_WAIT_TICKS)
+			{
 				return;
+			}
 			fired[scheduled] = TRUE;
 		}
 		{
