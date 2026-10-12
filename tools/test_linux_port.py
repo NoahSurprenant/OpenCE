@@ -449,7 +449,8 @@ def test_skate_multiplayer(tmp_path):
     within a hair; with a round trip of 150 ms and a tenth of the datagrams
     lost. It needs a Linux build with --skate (HALO_TEST_GAME), the converted
     Skate 3 data (HALO_SKATE_TEST_ASSETS) and the Halo maps
-    (HALO_SKATE_TEST_HALO_MAPS), and skips without them; about two minutes."""
+    (HALO_SKATE_TEST_HALO_MAPS), and skips without them; about two and a half
+    minutes."""
     game = os.environ.get("HALO_TEST_GAME")
     assets = os.environ.get("HALO_SKATE_TEST_ASSETS")
     maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
@@ -476,11 +477,14 @@ def test_skate_multiplayer(tmp_path):
                                        stderr=subprocess.STDOUT)
         if name == "host":
             time.sleep(4)
+    # (each exits after its seconds, debug.exit_after; one that has not by then is stopped)
+    deadline = time.monotonic() + seconds + 30
     for process in games.values():
         try:
-            process.wait(timeout=seconds + 90)
+            process.wait(timeout=max(1.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             process.kill()
+            process.wait()
     host = (tmp_path / "host" / "run.log").read_text(errors="replace")
     join = (tmp_path / "join" / "run.log").read_text(errors="replace")
     remote = re.findall(r"skate network: player \d+ skates on another machine at .*?: (posed|not posed,) (\d+) nodes, "

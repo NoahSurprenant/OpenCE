@@ -648,7 +648,7 @@ how many of the skater's places it took and refused).
 `tools/test_linux_port.py`'s `test_skate_multiplayer` runs a host and a
 client on Blood Gulch on one machine, the client skating, with a round trip
 of 150 ms and a tenth of the datagrams lost, and checks those logs (about
-two minutes). It needs a build with `--skate`, the converted data and the
+two and a half minutes). It needs a build with `--skate`, the converted data and the
 maps, and skips without them:
 
 ```text
