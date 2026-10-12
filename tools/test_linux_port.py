@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -436,3 +437,60 @@ def test_long_nose_chief_geometry(tmp_path):
     result = subprocess.run([str(program)], capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout[-6000:]
     assert "PASS" in result.stdout
+
+
+def test_skate_multiplayer(tmp_path):
+    """Skate 3 mode in a network game, two real games on this machine: a host
+    and a client on Blood Gulch, the client getting on a board and riding a
+    scripted pad (debug.network_test_skate), the host watching
+    (debug.network_test_skate_watch). The host must pose the client's skater
+    from its state and draw their board, and take every place the client
+    gives (but a stray few), and the client's state must rebuild its own pose
+    within a hair; with a round trip of 150 ms and a tenth of the datagrams
+    lost. It needs a Linux build with --skate (HALO_TEST_GAME), the converted
+    Skate 3 data (HALO_SKATE_TEST_ASSETS) and the Halo maps
+    (HALO_SKATE_TEST_HALO_MAPS), and skips without them; about two minutes."""
+    game = os.environ.get("HALO_TEST_GAME")
+    assets = os.environ.get("HALO_SKATE_TEST_ASSETS")
+    maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
+    if not (game and assets and maps and Path(game).is_file() and Path(maps, "bloodgulch.map").is_file()):
+        pytest.skip("needs HALO_TEST_GAME, HALO_SKATE_TEST_ASSETS and HALO_SKATE_TEST_HALO_MAPS")
+    seconds = int(os.environ.get("HALO_TEST_SKATE_SECONDS", "110"))
+    common = {"HALO_FULLSCREEN": "0", "HALO_NO_AUDIO": "1", "HALO_EXIT_AFTER": str(seconds),
+              "HALO_UPDATE_ANSWER": "never", "HALO_NULL_RENDERER": "1", "HALO_HIDDEN_WINDOW": "1",
+              "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75", "HALO_NETWORK_LOSS": "10"}
+    machines = {"host": {"HALO_NET_ADDRESS": "127.0.0.210", "HALO_NET_BROADCAST": "127.0.0.211",
+                         "HALO_NETWORK_TEST": "host:bloodgulch", "HALO_NETWORK_TEST_START": "12",
+                         "HALO_NETWORK_TEST_SKATE_WATCH": "1"},
+                "join": {"HALO_NET_ADDRESS": "127.0.0.211", "HALO_NET_BROADCAST": "127.0.0.210",
+                         "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15"}}
+    games = {}
+    for name, settings in machines.items():
+        folder = tmp_path / name
+        (folder / "data").mkdir(parents=True)
+        (folder / "saves").mkdir()
+        (folder / "data" / "maps").symlink_to(maps)
+        env = dict(os.environ, **common, **settings, HALO_DATA_ROOT=str(folder / "data"),
+                   HALO_SAVE_ROOT=str(folder / "saves"))
+        games[name] = subprocess.Popen([game], cwd=folder, env=env, stdout=open(folder / "run.log", "w"),
+                                       stderr=subprocess.STDOUT)
+        if name == "host":
+            time.sleep(4)
+    for process in games.values():
+        try:
+            process.wait(timeout=seconds + 90)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    host = (tmp_path / "host" / "run.log").read_text(errors="replace")
+    join = (tmp_path / "join" / "run.log").read_text(errors="replace")
+    remote = re.findall(r"skate network: player \d+ skates on another machine at .*?: (posed|not posed,) (\d+) nodes, "
+                        r"(the board drawn|no board), .*?host took (\d+) of its places, refused (\d+)", host)
+    local = [float(m) for m in re.findall(r"skates here at .*? rebuilt within ([\d.]+) world units", join)]
+    assert "skate test: on the board" in join, join[-4000:]
+    assert len(local) >= 20, f"the client skated {len(local)} seconds:\n{join[-4000:]}"
+    assert max(local) < 0.01, f"the client's state rebuilt its pose {max(local)} world units off"
+    assert len(remote) >= 20, f"the host saw the skater {len(remote)} seconds:\n{host[-4000:]}"
+    posed = [r for r in remote if r[0] == "posed" and r[2] == "the board drawn"]
+    assert len(posed) >= 0.9 * len(remote), f"posed with the board {len(posed)} of {len(remote)} seconds"
+    taken, refused = int(remote[-1][3]), int(remote[-1][4])
+    assert refused <= max(3, taken // 50), f"the host refused {refused} of the skater's places, took {taken}"

@@ -74,6 +74,11 @@ tick a far player is sent at, through a few datagrams lost */
 #define SKATE_NETWORK_MAXIMUM_CARRY 1.0f
 /* world units the board may move in a tick before it is drawn there at once */
 #define SKATE_NETWORK_BOARD_SNAP 1.0f
+/* the network test's watcher stands this near another's skater when they
+are further than SKATE_NETWORK_WATCH_DISTANCE (world units; the host's own
+player only, which is the host's to place) */
+#define SKATE_NETWORK_WATCH_DISTANCE 8.0f
+#define SKATE_NETWORK_WATCH_NEAR 3.0f
 /* the skeletons rebuilt from their model, by definition */
 #define SKATE_NETWORK_SKELETONS 4
 
@@ -589,8 +594,8 @@ void skate_network_handle_entries(long machine_index, byte const *data, byte con
 		if (!size)
 			break;
 		/* a machine speaks for its own players, and hears of the others' */
-		if (player_index < SKATE_NETWORK_PLAYERS &&
-			(machine_index == NONE ? !distributed_player_is_local(player_index) :
+		if (player_index < SKATE_NETWORK_PLAYERS && (machine_index == NONE ?
+			!(distributed_player(player_index) && distributed_player(player_index)->local_player_index != NONE) :
 			distributed_machine_has_player(machine_index, player_index)))
 		{
 			player = &skate_network_players[player_index];
@@ -725,11 +730,12 @@ void skate_network_note_local(long player_index, long unit_index, boolean off_bo
 		skate_network_pose_error(unit_index, (real_matrix4x3 const *)object_header_block_get(unit_index,
 			&object->object.node_matrices), state.node_count, player->entry, player->size, &distance, &degrees);
 		platform_log("skate network: player %d skates here at (%.2f %.2f %.2f) %.1f m/s%s, its state %d bytes "
-			"(%d nodes%s), rebuilt within %.4f world units and %.2f degrees", absolute_index,
+			"(%d nodes%s, %.2f %.2f %.2f from it), rebuilt within %.4f world units and %.2f degrees", absolute_index,
 			object->object.position.x, object->object.position.y, object->object.position.z,
 			sqrt(velocity->i * velocity->i + velocity->j * velocity->j + velocity->k * velocity->k) *
 			TICKS_PER_SECOND * 3.048f, off_board ? " off the board" : "", player->size, player->entry[2],
-			TEST_FLAG(player->entry[1], _skate_state_board_bit) ? ", the board" : "", distance, degrees);
+			TEST_FLAG(player->entry[1], _skate_state_board_bit) ? ", the board" : "", state.board_offset.i,
+			state.board_offset.j, state.board_offset.k, distance, degrees);
 	}
 }
 
@@ -901,6 +907,8 @@ boolean skate_local_player_watching(short local_player_index, real *yaw, real *p
 	boolean found = FALSE;
 	short index;
 
+	long nearest_index = NONE;
+
 	if (!skate_network_globals.watch || !object)
 		return FALSE;
 	for (index = 0; index < SKATE_NETWORK_PLAYERS; index++)
@@ -920,11 +928,26 @@ boolean skate_local_player_watching(short local_player_index, real *yaw, real *p
 		{
 			found = TRUE;
 			nearest = distance;
+			nearest_index = skater_index;
 			*yaw = (real)atan2(dy, dx);
 			if (*yaw < 0.f)
 				*yaw += 2.f * _pi;
 			*pitch = (real)atan2(dz, sqrt(dx * dx + dy * dy));
 		}
+	}
+	/* (further than it is seen well from: stood nearer, a way off it toward
+where the watcher was, a little above the ground to fall onto it) */
+	if (found && nearest > SKATE_NETWORK_WATCH_DISTANCE * SKATE_NETWORK_WATCH_DISTANCE &&
+		game_connection() != _game_connection_network_client)
+	{
+		real_point3d const *at = &object_get(nearest_index)->object.position;
+		real_point3d position;
+
+		position.x = at->x - (real)cos(*yaw) * SKATE_NETWORK_WATCH_NEAR;
+		position.y = at->y - (real)sin(*yaw) * SKATE_NETWORK_WATCH_NEAR;
+		position.z = at->z + 0.3f;
+		object_set_position(unit_index, &position, &object->object.forward, &object->object.up);
+		*pitch = (real)atan2(-0.3f, SKATE_NETWORK_WATCH_NEAR);
 	}
 	return found && *yaw >= 0.f && *yaw < 2.f * _pi;
 }

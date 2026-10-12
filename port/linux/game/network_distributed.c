@@ -1759,11 +1759,15 @@ static void distributed_client_send_skate(
 	distributed_packer_begin(&distributed_packer, HOST_SENDER, _distributed_message_skate_up, NULL, 0);
 	for (player_index = 0; player_index < MAXIMUM_TRACKED_PLAYERS; player_index++)
 	{
+		struct player_datum *player = distributed_player(player_index);
 		byte entry[SKATE_STATE_MAXIMUM_SIZE];
 		short size;
 
-		if (distributed_player_is_local(player_index) && (size = skate_network_entry(player_index, entry, NULL)) > 0)
+		if (player && player->local_player_index != NONE &&
+			(size = skate_network_entry(player_index, entry, NULL)) > 0)
+		{
 			distributed_packer_add(&distributed_packer, entry, (word)size);
+		}
 	}
 	distributed_packer_flush(&distributed_packer);
 }

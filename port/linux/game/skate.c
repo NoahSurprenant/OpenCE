@@ -835,8 +835,9 @@ static void skate_start(long unit_index)
 /* ---------- the network test's skater
 debug.network_test_skate: that many seconds into a game this machine's
 player gets on a board and rides a scripted pad (port/linux/NETCODE.md,
-"Testing"): pushes, a slow carve and an ollie every four seconds; off the
-board SKATE_TEST_OFF_SECONDS on, and on again five seconds later. */
+"Testing"): pushes, a slow carve and an ollie every four seconds, and Y
+to step back on whenever a fall left them walking; off the board
+SKATE_TEST_OFF_SECONDS on, and on again five seconds later. */
 #define SKATE_TEST_CYCLE_TICKS 120
 #define SKATE_TEST_OFF_SECONDS 40
 #define SKATE_TEST_BACK_SECONDS 45
@@ -874,6 +875,12 @@ static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
 	stick pulled down and flicked up: real_assets.rs's push and ollie) */
 	cycle = tick % SKATE_TEST_CYCLE_TICKS;
 	memset(pad, 0, sizeof(*pad));
+	if (skate_globals.frame.off_board)
+	{
+		if (cycle % 30 < 4)
+			pad->buttons = 0x8000;
+		return;
+	}
 	if (cycle < 90 && cycle % 30 < 15)
 		pad->buttons = 0x1000;
 	pad->left[0] = (short)(SKATE_TEST_CARVE * sin(tick * 2.f * _pi / (2 * SKATE_TEST_CYCLE_TICKS)));
