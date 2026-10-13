@@ -111,6 +111,9 @@ enum Job {
     /// A blast's push (metres a second) on the skater, before the next step
     /// (`halo_skate_apply_impulse`).
     Impulse { velocity: Vec3 },
+    /// A bail the game's host decided (`halo_skate_force_bail`): its hit's
+    /// closing speed, metres a second.
+    ForceBail { closing: f32 },
     Step { sequence: u64, pad: HaloSkatePad, dt: f32 },
     Suspend,
 }
@@ -129,6 +132,8 @@ enum Reply {
         sequence: u64,
         pose: Pose,
         recovered: bool,
+        /// hits on held obstacles since the last pose (`Session::take_held`)
+        held: skate_host::bridge::HeldReport,
     },
     Error(String),
 }
@@ -161,6 +166,9 @@ struct Host {
     board_warned: bool,
     /// The board skinned for posing the biped on its deck, kept for its room.
     deck: Vec<f32>,
+    /// Hits on held obstacles the game has not taken yet
+    /// (`halo_skate_take_held_hit`): the fastest, and whether a bail was held.
+    held: skate_host::bridge::HeldReport,
 }
 
 static HOST: Mutex<Option<Host>> = Mutex::new(None);
@@ -226,6 +234,7 @@ impl Host {
             board_generation: 0,
             board_warned: false,
             deck: Vec::new(),
+            held: Default::default(),
         })
     }
 
@@ -266,12 +275,24 @@ impl Host {
                 self.board_generation = BOARD_GENERATIONS.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1);
                 self.board_warned = false;
             }
-            Reply::Pose { pose, recovered, .. } => {
+            Reply::Pose { pose, recovered, held, .. } => {
                 self.pose = Some(pose);
                 self.recovered |= recovered;
+                self.note_held(held);
             }
             Reply::Error(message) => self.fail(message),
         }
+    }
+
+    /// Adds a pose's hits on held obstacles to those not yet taken: the
+    /// fastest hit, and any bail held.
+    fn note_held(&mut self, held: skate_host::bridge::HeldReport) {
+        if let Some(hit) = held.hit
+            && self.held.hit.is_none_or(|h| hit.closing > h.closing)
+        {
+            self.held.hit = Some(hit);
+        }
+        self.held.bail_held |= held.bail_held;
     }
 
     fn drain(&mut self) {
@@ -309,9 +330,11 @@ impl Host {
                     sequence: answer,
                     pose,
                     recovered,
+                    held,
                 }) => {
                     self.pose = Some(pose);
                     self.recovered |= recovered;
+                    self.note_held(held);
                     if answer == sequence {
                         return true;
                     }
@@ -480,6 +503,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                                 sequence,
                                 pose,
                                 recovered: false,
+                                held: Default::default(),
                             }
                         }
                         Err(e) => Reply::Error(e),
@@ -513,6 +537,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                         }
                         accumulated -= period;
                     }
+                    let held = take_held(s);
                     let failure = match result {
                         Ok(()) => {
                             let pose = s.pose();
@@ -531,6 +556,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                             sequence,
                             pose,
                             recovered: false,
+                            held,
                         },
                         Err(e) => {
                             accumulated = 0.0;
@@ -542,6 +568,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                                         sequence,
                                         pose,
                                         recovered: true,
+                                        held,
                                     }
                                 }
                                 None => Reply::Error(e),
@@ -560,6 +587,12 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
             Job::Impulse { velocity } => {
                 if let Some((_, s)) = session.as_mut() {
                     s.apply_impulse(velocity.to_array());
+                }
+                continue;
+            }
+            Job::ForceBail { closing } => {
+                if let Some((_, s)) = session.as_mut() {
+                    s.force_bail(closing);
                 }
                 continue;
             }
@@ -590,6 +623,26 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
 
 /// A level's collision being built again aside: its build, triangles and rails.
 type Rebuild = std::thread::JoinHandle<(Result<skate_host::bridge::PreparedCollision, String>, usize, usize)>;
+
+/// What a step had to tell of hits on held obstacles (`obstacles.rs`), for
+/// the game's host to decide (`halo_skate_take_held_hit`); and the log of a
+/// bail held, and of the host's bail requested or given up.
+fn take_held(s: &mut Session) -> skate_host::bridge::HeldReport {
+    let held = s.take_held();
+    if held.bail_held {
+        let hit = held.hit.map_or(String::new(), |h| {
+            format!(" (hit a {} at {:.1} m/s)", obstacles::kind_name(h.kind), h.closing)
+        });
+        eprintln!("halo-skate: a bail held for the host's verdict{hit}, engine tick {}", held.bail_held_tick);
+    }
+    if let Some(tick) = held.forced {
+        eprintln!("halo-skate: bailed by the host's verdict, engine tick {tick}");
+    }
+    if let Some(state) = &held.dropped {
+        eprintln!("halo-skate: the host's bail given up, the skater did not ride in time ({state})");
+    }
+    held
+}
 
 /// Whether a rebuilt collision may be swapped in with the skater in `state`:
 /// not on a rail, nor in the air (where the grind selector holds the old
@@ -1128,6 +1181,7 @@ unsafe fn activate(position: *const f32, yaw: f32, velocity: Option<Vec3>, out: 
         }
         host.sequence += 1;
         host.recovered = false;
+        host.held = Default::default();
         let sequence = host.sequence;
         if !host.request(Job::Activate { sequence, spawn, yaw, velocity }, sequence, ACTIVATE_WAIT) {
             return -1;
@@ -1405,6 +1459,67 @@ pub extern "C" fn halo_skate_apply_impulse(x: f32, y: f32, z: f32) -> i32 {
         return -1;
     };
     with_host(|host| if host.jobs.send(Job::Impulse { velocity }).is_ok() { 0 } else { -1 }).unwrap_or(-1)
+}
+
+/// `halo_skate_held_hit` (include/halo_skate.h).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HaloSkateHeldHit {
+    pub tag: i32,
+    pub kind: i32,
+    pub closing: f32,
+    pub normal: [f32; 3],
+    pub touched: i32,
+    pub bail_held: i32,
+}
+
+/// What the steps since the last call had to tell of hits on held obstacles
+/// (`HaloSkateObstacle::held`: in a network game another player, their
+/// vehicle, another skater, whose hits the host decides): the fastest
+/// contact with one (`touched`; its tag, kind, closing speed in world units
+/// a second, and the normal from it toward the skater, Z up) and whether the
+/// engine held a bail it would have had (`bail_held`). Returns 1 with `out`
+/// filled, 0 with nothing to tell, -1 on failure.
+///
+/// # Safety
+/// `out` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_take_held_hit(out: *mut HaloSkateHeldHit) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    with_host(|host| {
+        host.drain();
+        let held = std::mem::take(&mut host.held);
+        if held.hit.is_none() && !held.bail_held {
+            return 0;
+        }
+        let mut told = HaloSkateHeldHit {
+            bail_held: i32::from(held.bail_held),
+            ..Default::default()
+        };
+        if let Some(hit) = held.hit {
+            told.tag = hit.tag as i32;
+            told.kind = obstacles::kind_number(hit.kind);
+            told.closing = hit.closing / METRES;
+            told.normal = direction_from_skate(Vec3::new(hit.normal.x, hit.normal.y, hit.normal.z)).to_array();
+            told.touched = 1;
+        }
+        unsafe { *out = told };
+        1
+    })
+    .unwrap_or(-1)
+}
+
+/// The game's host decided the skater bails (a hit on a held obstacle, here
+/// or on another machine): the engine knocks them over on the next step they
+/// ride, as running into a person at `closing` world units a second does,
+/// whether it wanted to or not (given up after half a second of not riding).
+/// Returns 0, or -1.
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_force_bail(closing: f32) -> i32 {
+    let closing = if closing.is_finite() { closing.max(0.0) * METRES } else { 0.0 };
+    with_host(|host| if host.jobs.send(Job::ForceBail { closing }).is_ok() { 0 } else { -1 }).unwrap_or(-1)
 }
 
 /// How the riding biped stands on the deck: its ankle node `ankle_height`

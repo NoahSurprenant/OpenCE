@@ -73,9 +73,10 @@ boolean skate_network_player_skating(short player_index);
 boolean skate_network_unit_skating(long unit_index);
 
 /* skate.c, each tick: this machine's skater (unit NONE: none, or not
-skating), its pose already in the unit's nodes, and where the engine has the
-board (NULL: nowhere) */
-void skate_network_note_local(long player_index, long unit_index, boolean off_board, real const *board_placement);
+skating), its pose already in the unit's nodes, whether it walks off the
+board or bails, and where the engine has the board (NULL: nowhere) */
+void skate_network_note_local(long player_index, long unit_index, boolean off_board, boolean bailing,
+	real const *board_placement);
 /* before the objects update: another machine's skater carried on at its
 velocity (its biped's own movement is off); after it: posed */
 void skate_network_update_before_objects(void);
@@ -95,6 +96,56 @@ them the way they go, and the yaw (if asked) that faces them; FALSE when it is
 not time, or no skater goes fast enough. on_board: the unit skates (skate.c
 puts it on the board there) */
 boolean skate_network_block_spot(long unit_index, boolean on_board, union real_point3d *spot, real *yaw);
+
+/* ---------- the host's verdicts on skaters' hits (skate_authority.c)
+In a network game whether a skater's hit on another player, their vehicle
+or another skater knocks the skater over, and the push it gives a player on
+foot, are decided once by the host and applied alike on every machine
+(port/skate/README.md, "Multiplayer"). */
+
+/* a client's report of its skater's hit, and the host's verdict, on the
+wire (skate_report_write, skate_verdict_write); an entry of another format
+is skipped */
+#define SKATE_REPORT_FORMAT 1
+#define SKATE_REPORT_SIZE 20
+#define SKATE_VERDICT_FORMAT 1
+#define SKATE_VERDICT_SIZE 24
+
+/* skate_network_new_game: nothing known of any hit */
+void skate_authority_new_game(void);
+/* whether this machine's skater's hits on other players, their vehicles and
+other skaters are the host's to decide: on the host in a network game, and
+on a client whose host said lately that it decides (an older host does not:
+its clients' skaters decide their own hits) */
+boolean skate_authority_holds(void);
+/* skate.c, after a step: what the skate engine told of its skater's hits on
+held obstacles (halo_skate_take_held_hit): the fastest contact this tick
+(touched; target_index the object hit, closing world units a second, normal
+from it toward the skater), and whether it held a bail */
+void skate_authority_engine_hit(long skater_index, long target_index, real closing, union real_vector3d const *normal,
+	boolean touched, boolean bail_held);
+/* network_distributed.c: (a client) its reports this tick, (the host) its
+verdicts this tick, the same to every client, into out (capacity entries
+of their size): how many; and the entries of each, as they come */
+short skate_authority_reports(byte *out, short capacity);
+short skate_authority_verdicts(byte *out, short capacity);
+void skate_authority_handle_reports(long machine_index, byte const *data, byte const *end, short count);
+void skate_authority_handle_verdicts(byte const *data, byte const *end, short count);
+/* skate_network_update_after_objects, each tick: the host's velocities,
+bails held too long, pushes measured */
+void skate_authority_update(void);
+/* skate_network.c: whether another machine's skater rides (on the board,
+not bailing), as their latest state says */
+boolean skate_network_player_riding(short player_index);
+/* skate.c: this machine's skater's unit (NONE: none skates), whether they
+ride (on the board, not bailing); a bail the host decided for them, through
+the engine (FALSE: they do not skate); and the obstacle bail speed (world
+units a second) */
+long skate_local_skater_unit(void);
+boolean skate_local_skater_riding(void);
+boolean skate_force_bail(long unit_index, real closing);
+real skate_obstacle_bail_speed(void);
+
 /* skate.c: a unit's weapon holstered on its posed nodes */
 struct real_matrix4x3;
 void skate_holster_weapon(long unit_index, struct real_matrix4x3 const *node_matrices, int node_count);

@@ -232,6 +232,46 @@ fn riding_into_a_person_bumps_slow_and_bails_fast() {
     assert_back_on_the_board(&mut engine, "person, fast");
 }
 
+/// A person whose hits the game's host decides (held, as another machine's
+/// player is in a network game): riding straight into them at full speed is
+/// no bail of the engine's own; the board still stops at them, and the
+/// engine tells of the hit (their tag, its speed, whether it held a bail). The
+/// host's bail (`halo_skate_force_bail`) then knocks the skater over, and
+/// the engine puts them back on the board.
+#[test]
+fn a_held_hit_is_told_not_bailed_by_and_the_hosts_bail_bails() {
+    let Some(assets) = assets("a held hit") else { return };
+    let mut engine = Engine::start(&assets);
+    let mut told = HaloSkateHeldHit::default();
+    unsafe { halo_skate_take_held_hit(&mut told) };
+    let held = |x: f32, y: f32| vec![HaloSkateObstacle { tag: 77, held: 1, ..person(x, y) }];
+    let fast = ride_into(&mut engine, TestMap::OPEN, 4, 12, &held, 0.0);
+    let closing = report("held person, fast", &fast, "biped");
+    assert_eq!(unsafe { halo_skate_take_held_hit(&mut told) }, 1, "the hit is told");
+    eprintln!("told: {told:?}");
+    assert!(closing > 6.0, "at speed: {closing:.2} m/s");
+    assert!(!fast.bailed, "no bail of the engine's own ({closing:.2} m/s)");
+    assert!(fast.past < 0.0, "not through the person: {:.2} m past", fast.past);
+    // (Skate 3's own thresholds may want no bail at this speed: the bail
+    // speed, which the host has, does)
+    assert_eq!((told.tag, told.kind, told.touched), (77, KIND_BIPED, 1), "{told:?}");
+    assert!((told.closing * METRES - closing).abs() < 0.5, "its speed, world units a second: {told:?}");
+    // (the normal from the person toward the skater: back along the ride, -X)
+    assert!(told.normal[0] < -0.5, "the normal points back at the skater: {told:?}");
+    assert_eq!(unsafe { halo_skate_take_held_hit(&mut told) }, 0, "told once");
+    // the host's verdict: a bail
+    assert_eq!(halo_skate_force_bail(closing / METRES), 0);
+    let first = engine.history.len();
+    engine.hold(Pad::NEUTRAL, 15);
+    let log = take_log();
+    assert!(
+        engine.since(first).iter().any(|s| s.state.starts_with("Wipeout")),
+        "the host's bail knocks them over: {log:?}"
+    );
+    assert!(log.iter().any(|l| l.contains("bailed by the host's verdict")), "{log:?}");
+    assert_back_on_the_board(&mut engine, "held person");
+}
+
 /// Riding into a parked vehicle after one push (4.8 m/s): a bump, the board
 /// stopped at its side. At full speed: a bail, not through it, then back on
 /// the board.

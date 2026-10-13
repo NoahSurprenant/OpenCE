@@ -699,6 +699,20 @@ What a hit does, riding:
   closing hit, as Skate 3's checks do, two of them, so a bail rather than a
   run-out. Slower is the solve's bump alone. Scenery is left to Skate 3's
   thresholds, as the level's walls are.
+- **In a network game** people, vehicles and other skaters are *held*
+  obstacles (`held` in `halo_skate_obstacle`, `KinematicObstacle::held`):
+  the board stops at them as above, but neither the bail speed nor Skate 3's
+  own thresholds knock the skater over by them. For a fifth of a second after
+  touching one, any wipeout request the tick made is held (cleared before
+  the next tick's state selection, so the pose never starts a fall), and the
+  engine tells the game of the hit instead (`halo_skate_take_held_hit`: what
+  was hit, the closing speed, the contact's normal, whether a bail was held).
+  The host decides (below, "Multiplayer"); its bail comes back through
+  `halo_skate_force_bail`, the same wipeout requests on the next tick the
+  skater rides (given up after half a second of not riding). The log:
+  `halo-skate: a bail held for the host's verdict (hit a biped at 8.6 m/s),
+  engine tick 685` and `halo-skate: bailed by the host's verdict, engine tick
+  693`.
 
 The log tells of each hit, riding, with what followed (`obstacles.rs`):
 `halo-skate: hit a biped at 8.3 m/s (PhysicsGround, engine tick 1068):
@@ -796,23 +810,103 @@ What it costs and allows:
 
 Other players are solid to a skater, on the skater's machine: their bipeds are
 obstacles there like any other (above, "Obstacles"), where the host has them,
-carried on at their velocities as Halo carries them; riding into one bumps or
-bails as into anyone. Nothing is sent for it, and nothing moves them.
+carried on at their velocities as Halo carries them. Two skaters are solid to
+each other, each on their own machine: each machine has the other machine's
+skater as their posed body and their board, from the state it already gets.
+Each machine sees the others a one-way trip late (the host) or a round trip
+late (another client), so two machines' engines would see a hit differently.
 
-Two skaters are solid to each other, each on their own machine: each machine
-has the other machine's skater as their posed body and their board (above,
-"Obstacles"), from the state it already gets, so riding into each other
-bumps or bails both, each by their own engine (`hit a skater`), as each
-sees the other: a one-way trip late on the host and a round trip late on
-another client, as everything of another player's. Nothing more is sent.
+**The host decides hits between players** (`../linux/game/skate_authority.c`):
+whether a skater's hit on another player on foot, a vehicle or another skater
+knocks anyone over, and how it pushes a player on foot, is decided once, by
+the host, and every machine applies that verdict:
+
+1. The skater's engine holds the bail and tells of the hit (above,
+   "Obstacles"). The board's bump stays local, at once: only the outcome
+   waits.
+2. A client reports it to the host (`_distributed_message_skate_report`, 92)
+   for five ticks over (against a lost datagram), again if its engine holds a
+   bail later in the same hit. The host's own skater's hits are decided at
+   once, on the host.
+3. The host decides from its own copies (`skate_verdict_decide`): the hit is
+   believed if it has the two within 1.5 world units, and as much more as they
+   go in half a second; the speed is the one told, but no faster than the
+   host's copies of the two closed on each other in the last half second, and
+   1.5 m/s more; each skater who rides (on the board, not bailing, as their
+   state says) bails past `skate_obstacle_bail_speed` (6 m/s), or at 2 m/s or
+   more when their own engine held a bail (Skate 3's thresholds, as solo play
+   has them); a player on foot is pushed away from the skater along the
+   ground, by Halo's acceleration of the closing speed (so half of it, as
+   `biped_accelerate` gives a living biped; 4 m/s at most), lifted a quarter
+   as much, and takes no damage. A later report of the same two within a
+   second is the same hit: the same verdict is sent again, never a new one.
+4. The host sends every client the verdict
+   (`_distributed_message_skate_verdict`, 93), for five ticks over, and
+   applies it itself. A skater's own machine knocks them over through the
+   engine, or lets the held bail go; the host pushes the player on foot (its
+   copy; their own machine pushes theirs, as it replays a blast's knockback);
+   everyone sees the bail in the skater's state (it says so: the bailing
+   flag) and the push in the unit the host sends.
+
+| message | bytes | what |
+| --- | --- | --- |
+| report (92), client to host | 1 | the format, 1: an entry of another format is skipped |
+| | 1 | the skater (their player's absolute index) |
+| | 1 | flags: the engine held a bail |
+| | 1 | the client's count of its skater's hits |
+| | 4 | what was hit (its object, as the netcode sends objects) |
+| | 2 | the closing speed, 1/1024 world units a second |
+| | 6 | the contact's normal, from what was hit toward the skater, 1/32767 a part |
+| | 4 | the client's tick of the first contact |
+| verdict (93), host to clients | 1 | the format, 1 |
+| | 1 | flags: the skater bails; what they hit, a skater, bails; it is pushed; it is a skater, a person on foot, a vehicle; or no verdict, only that the host decides |
+| | 2 | the skater's player, and the other's (255 for an AI or none) |
+| | 2 | the verdict's number |
+| | 2 | the closing speed decided by, 1/1024 world units a second |
+| | 8 | the two objects |
+| | 6 | the push, Halo's acceleration, 1/1024 world units a tick a part |
+| | 1 | the report's number it answers |
+| | 1 | (none) |
+
+Every machine logs each verdict in the same words (`skate verdict 7
+decided: player 0's skater bails; player 1's skater bails; at 8.2 m/s` on the
+host, `... heard: ...` on a client), what it did with it (`skate verdict 7:
+this machine's skater bails`), and half a second after a push how far
+the person went along it.
+
+What it costs and allows:
+
+- **Latency**: a bail against another player comes a round trip after the
+  hit on a client (the report there, the verdict back: some 150 to 200 ms
+  at a 150 ms round trip, 10 engine ticks in the network test), a tick on the
+  host; the bump is at once on every machine, as is a bail against the level
+  or its scenery, which every machine has alike. A push on a player on foot
+  comes a one-way trip after the hit is reported. A verdict that never comes
+  (the host lost) leaves the engine's own bail after a second.
+- **Bandwidth**: 20 bytes for five ticks a hit, 24 bytes to each client for
+  five ticks a verdict, and a 24-byte entry every half second from the host
+  saying it decides.
+- **Cheating**: a client cannot spare its skater (the host knocks them over
+  past the bail speed whatever it says), nor make another skater bail or a
+  player fly by telling of a hit that did not happen (the host has the two
+  near, closing that fast) or a faster one (held to the host's bound). It
+  can hold back a bail its engine wanted at a slow speed; the host does not
+  run its engine.
+- **Older builds** drop both messages as kinds they do not know. A client
+  holds bails only while its host has said, in the last two seconds, that it
+  decides (every verdict message says so, and an otherwise empty one every
+  half second), so against an older host a newer client's skater decides its
+  own hits as before; an older client's skater does too, and only the newer
+  machines apply a verdict about it.
 
 Halo's side of a skating biped, on every machine, is as for any player's,
 but that Halo never moves it (its own physics are off, `bipeds.c`): a player
 on foot meets its pill where the skate engine has it, as Halo tests any
 biped's (players pass through each other only where Halo lets them, a co-op game's
 no-collisions setting); a vehicle that hits it damages it as it would any
-biped, and the push it gives goes nowhere, as the skater's own machine has
-the vehicle as an obstacle and bumps or bails off it; projectiles hit its
+biped, and the push it gives goes nowhere: the skater's own machine has
+the vehicle as an obstacle, bumps off it and tells the host, whose verdict
+says whether they bail; projectiles hit its
 collision model as posed (the last tick's pose), and a skater killed falls
 off the board.
 
@@ -932,7 +1026,11 @@ had them as an obstacle, and that the skater hit them (a bump or a bail)
 rather than passing through; then that the host's skater stepped in, that
 the client had them as a skater's body and board, and that each machine's
 engine logged a hit on a skater (the client's riding in, the host's ridden
-into); that each loaded Blood Gulch with its scenery; and that the client,
+into); that the host decided those hits (the watcher on foot and the
+skaters), the client heard every verdict in the same words, each skater's
+own machine applied each bail and the other saw it, and the watcher was
+seen pushed on both machines; that each loaded Blood Gulch with its
+scenery; and that the client,
 deleting a piece of it 30 seconds in and making it again, built the level
 again with one piece fewer, then as before, each swapped in. The host also
 shoots: a burst must damage a skater on each machine, a grenade must bounce
@@ -991,10 +1089,10 @@ and damaged or foreign bytes refused.
 - **The node names are assumed.** The retarget expects the cyborg's
   `bip01 pelvis`, `bip01 l thigh` and so on. The game's console prints how many
   nodes follow the skater, and stderr lists the biped's node names.
-- **In a network game, each machine decides its own skater's hits**: a
-  skater riding into a player does not move them, and two skaters running
-  into each other each bump or bail by what their own machine saw, which
-  latency may make one-sided.
+- **A bail against another player waits for the host**: on a client a round
+  trip (above, "Multiplayer"); the bump is at once. The push on a player on
+  foot is a first guess (half the closing speed, no damage), and a vehicle is
+  never pushed by a skater.
 - **Another machine's board is placed whole**: its wheels and trucks do not
   turn, and a machine without the Skate 3 data draws no board at all (it
   still poses the skater).

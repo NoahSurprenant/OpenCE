@@ -1518,6 +1518,10 @@ static struct skate_bsp_triangles const *skate_bsp_triangles(struct collision_bs
 
 /* the obstacles kept so far, nearest first, how far each is, and for a mesh
 the object it is (its triangles made once the nearest are known) */
+/* this tick's obstacles of other players, their vehicles and other skaters
+are held: their hits the host decides (skate_send_obstacles) */
+static boolean skate_obstacles_held;
+
 struct skate_obstacles
 {
 	struct halo_skate_obstacle obstacles[HALO_SKATE_MAXIMUM_OBSTACLES];
@@ -1592,6 +1596,8 @@ static void skate_biped_obstacle(long object_index, real_point3d const *skater, 
 	memset(&obstacle, 0, sizeof(obstacle));
 	obstacle.kind = HALO_SKATE_OBSTACLE_BIPED;
 	obstacle.shape = HALO_SKATE_OBSTACLE_CAPSULE;
+	obstacle.tag = object_index;
+	obstacle.held = skate_obstacles_held;
 	obstacle.center[0] = base.x;
 	obstacle.center[1] = base.y;
 	obstacle.center[2] = base.z + segment / 2.f;
@@ -1670,6 +1676,8 @@ static void skate_mesh_obstacle(long object_index, real_point3d const *skater, s
 	obstacle.kind = object->object.type == _object_type_vehicle ? HALO_SKATE_OBSTACLE_VEHICLE :
 		HALO_SKATE_OBSTACLE_SCENERY;
 	obstacle.shape = HALO_SKATE_OBSTACLE_MESH;
+	obstacle.tag = object_index;
+	obstacle.held = skate_obstacles_held && object->object.type == _object_type_vehicle;
 	obstacle.center[0] = object->object.bounding_sphere_center.x;
 	obstacle.center[1] = object->object.bounding_sphere_center.y;
 	obstacle.center[2] = object->object.bounding_sphere_center.z;
@@ -1832,6 +1840,8 @@ static boolean skate_skater_obstacles(long object_index, real_point3d const *ska
 	memset(&obstacle, 0, sizeof(obstacle));
 	obstacle.kind = HALO_SKATE_OBSTACLE_SKATER;
 	obstacle.shape = HALO_SKATE_OBSTACLE_CAPSULE;
+	obstacle.tag = object_index;
+	obstacle.held = skate_obstacles_held;
 	obstacle.center[0] = (head.x + feet.x) / 2.f;
 	obstacle.center[1] = (head.y + feet.y) / 2.f;
 	obstacle.center[2] = (head.z + feet.z) / 2.f;
@@ -1852,6 +1862,8 @@ static boolean skate_skater_obstacles(long object_index, real_point3d const *ska
 	{
 		real largest = MAX(obstacle.half_extents[0], MAX(obstacle.half_extents[1], obstacle.half_extents[2]));
 
+		obstacle.tag = object_index;
+		obstacle.held = skate_obstacles_held;
 		skate_obstacle_velocity(object, &obstacle);
 		skate_obstacle_speed_limit(&obstacle, SKATE_MAXIMUM_SKATER_OBSTACLE_SPEED);
 		skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - largest, NONE);
@@ -1873,6 +1885,9 @@ static void skate_send_obstacles(long unit_index)
 	short index;
 
 	kept.count = 0;
+	/* (in a network game the host decides hits on other players, their
+	vehicles and other skaters: skate_authority.c) */
+	skate_obstacles_held = skate_authority_holds();
 	object_get_origin(unit_index, &skater);
 	/* (collideable objects only: class bit 0) */
 	count = objects_in_sphere(FLAG(0),
@@ -1940,6 +1955,22 @@ static void skate_send_obstacles(long unit_index)
 		else
 			platform_log("skate test: no obstacles near");
 	}
+}
+
+/* what the engine told of its skater's hits on held obstacles since the last
+step, to the host's verdicts (skate_authority.c) */
+static void skate_take_held_hit(void)
+{
+	struct halo_skate_held_hit held;
+	real_vector3d normal;
+
+	if (halo_skate_take_held_hit(&held) != 1)
+		return;
+	normal.i = held.normal[0];
+	normal.j = held.normal[1];
+	normal.k = held.normal[2];
+	skate_authority_engine_hit(skate_globals.unit_index, held.tag, held.closing, &normal, held.touched != 0,
+		held.bail_held != 0);
 }
 
 void skate_update_before_objects(void)
@@ -2039,6 +2070,9 @@ void skate_update_before_objects(void)
 		skate_apply_frame(skate_globals.unit_index, FALSE);
 	else if (halo_skate_state() == -1)
 		skate_engine_failed();
+	/* (its hits on held obstacles, for the host to decide: skate_authority.c) */
+	if (skate_globals.skating)
+		skate_take_held_hit();
 }
 
 #endif
@@ -2295,7 +2329,7 @@ void skate_update_after_objects(void)
 	}
 	if (!skate_globals.skating || !skate_unit_can_skate(skate_globals.unit_index))
 	{
-		skate_network_note_local(local_player_get_player_index(0), NONE, FALSE, NULL);
+		skate_network_note_local(local_player_get_player_index(0), NONE, FALSE, FALSE, NULL);
 		skate_board_forget();
 		return;
 	}
@@ -2328,7 +2362,7 @@ void skate_update_after_objects(void)
 		float placement[7];
 
 		skate_network_note_local(local_player_get_player_index(0), skate_globals.unit_index,
-			(boolean)(skate_globals.frame.off_board != 0),
+			(boolean)(skate_globals.frame.off_board != 0), !strncmp(skate_globals.frame.state, "Wipeout", 7),
 			halo_skate_board_placement(placement) == 0 ? placement : NULL);
 	}
 }
@@ -2357,6 +2391,29 @@ boolean skate_unit_is_skating(long unit_index)
 {
 	return (skate_globals.skating && unit_index != NONE && unit_index == skate_globals.unit_index) ||
 		skate_network_unit_skating(unit_index);
+}
+
+long skate_local_skater_unit(void)
+{
+	return skate_globals.skating && skate_unit_can_skate(skate_globals.unit_index) ? skate_globals.unit_index : NONE;
+}
+
+boolean skate_local_skater_riding(void)
+{
+	return skate_local_skater_unit() != NONE && !skate_globals.frame.off_board &&
+		strncmp(skate_globals.frame.state, "Wipeout", 7) != 0;
+}
+
+boolean skate_force_bail(long unit_index, real closing)
+{
+	if (unit_index == NONE || unit_index != skate_local_skater_unit())
+		return FALSE;
+	return halo_skate_force_bail(closing) == 0;
+}
+
+real skate_obstacle_bail_speed(void)
+{
+	return skate_settings.obstacle_bail_speed;
 }
 
 boolean skate_local_player_skating(short local_player_index, real *yaw)
@@ -2518,6 +2575,28 @@ boolean skate_unit_is_skating(long unit_index)
 boolean skate_local_player_skating(short local_player_index, real *yaw)
 {
 	return FALSE;
+}
+
+/* (nobody skates here; it hosts skaters, though, and decides their hits:
+skate_authority.c) */
+long skate_local_skater_unit(void)
+{
+	return NONE;
+}
+
+boolean skate_local_skater_riding(void)
+{
+	return FALSE;
+}
+
+boolean skate_force_bail(long unit_index, real closing)
+{
+	return FALSE;
+}
+
+real skate_obstacle_bail_speed(void)
+{
+	return 6.f / 3.048f;
 }
 
 #endif

@@ -77,7 +77,7 @@ impl Wipeout {
 ///Player postphysics82BD83E0 follows contact/error publication with the
 ///selected state's check, before FootIK sees that tick's wipeout request.
 pub(super) fn check_after_physics(
-    physics: &super::GamePhysics,
+    physics: &mut super::GamePhysics,
     skater: &mut super::SkaterRuntime,
 ) -> Result<(), String> {
     use skate_core::player::state::PhysicalStateId;
@@ -143,23 +143,66 @@ pub(super) fn check_after_physics(
             | PhysicalStateId::GroundAnimation
             | PhysicalStateId::PhysicsAir
     );
+    //halo-skate: touching a held obstacle (another player, their vehicle,
+    //another skater in a network game), or lately, any request this tick
+    //made is held rather than consumed by the next tick's state selection:
+    //the host decides the bail (Session::force_bail), and is told
+    //(Session::take_held).
+    let holding = physics
+        .held_contact_tick
+        .is_some_and(|tick| physics.ticks.saturating_sub(tick) <= HOLD_TICKS);
+    if checked.is_ok()
+        && holding
+        && skater.player_state.current() != PhysicalStateId::WipeoutGround
+        && (skater.wipeout.state.count != 0 || skater.wipeout.state.reasons.iter().any(|&r| r))
+    {
+        skater.wipeout.state.clear_after_selection();
+        if !physics.held.bail_held {
+            physics.held.bail_held = true;
+            physics.held.bail_held_tick = physics.ticks;
+        }
+    }
     if checked.is_ok()
         && riding
         && !(skater.wipeout.state.cooldown > 0.0)
         && (skate_core::physics::kinematic_obstacle::knocks_over(
-            physics.obstacle_hit,
+            physics.obstacle_bail_hit,
             physics.obstacle_bail_speed,
         ) || blast_knocks_over(physics.blast_speed, physics.obstacle_bail_speed))
     {
         let closing = physics
-            .obstacle_hit
+            .obstacle_bail_hit
             .map_or(0.0, |(_, closing)| closing)
             .max(physics.blast_speed);
         skater.wipeout.state.request(0, closing);
         skater.wipeout.state.request(2, closing);
     }
+    //halo-skate: the host's bail, as running into a person fast: on the
+    //first tick the skater rides (not already bailing, walking or on a rail),
+    //given up after FORCE_TICKS
+    if let Some((closing, until)) = physics.forced_bail
+        && checked.is_ok()
+    {
+        if riding && !(skater.wipeout.state.cooldown > 0.0) {
+            skater.wipeout.state.request(0, closing);
+            skater.wipeout.state.request(2, closing);
+            physics.forced_bail = None;
+            physics.held.forced = Some(physics.ticks);
+        } else if physics.ticks > until {
+            physics.forced_bail = None;
+            physics.held.dropped = Some(format!("{:?}", skater.player_state.current()));
+        }
+    }
     checked
 }
+
+///halo-skate: engine ticks (60 a second) after the last contact with a held
+///obstacle that wipeout requests are still held (a fifth of a second: the
+///body that hit it falls over a few ticks later).
+pub(crate) const HOLD_TICKS: u64 = 12;
+///halo-skate: engine ticks a bail the host decided waits for the skater to
+///ride (half a second).
+pub(crate) const FORCE_TICKS: u64 = 30;
 
 ///halo-skate: a blast's push of `speed` (m/s) knocks a riding skater over
 ///past `bail_speed`, as running into a person or a vehicle that fast does.

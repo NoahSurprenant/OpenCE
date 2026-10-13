@@ -102,6 +102,20 @@ pub(crate) struct GamePhysics {
     /// ... and the obstacle the fastest of them closed on, and how fast
     /// (metres a second along the contact normal).
     pub(crate) obstacle_hit: Option<(skate_core::physics::kinematic_obstacle::ObstacleKind, f32)>,
+    /// ... and the fastest of those with obstacles that are not held, which
+    /// alone may knock the skater over by `obstacle_bail_speed`.
+    pub(crate) obstacle_bail_hit: Option<(skate_core::physics::kinematic_obstacle::ObstacleKind, f32)>,
+    /// halo-skate: the fastest contact this tick had with a held obstacle
+    /// (`KinematicObstacle::held`), and the last tick that had one: the
+    /// wipeout requests are held for `wipeout::HOLD_TICKS` after it.
+    pub(crate) held_hit: Option<skate_core::physics::kinematic_obstacle::HeldHit>,
+    pub(crate) held_contact_tick: Option<u64>,
+    /// ... what the game has not taken yet (`Session::take_held`).
+    pub(crate) held: crate::physics::bridge::HeldReport,
+    /// halo-skate: a bail the game's host decided (`Session::force_bail`):
+    /// its closing speed (m/s), requested on the first tick the skater rides,
+    /// given up past the tick it holds until.
+    pub(crate) forced_bail: Option<(f32, u64)>,
     /// ... and how fast (m/s) running into a person or vehicle knocks the
     /// skater over (`kinematic_obstacle::knocks_over`).
     pub(crate) obstacle_bail_speed: f32,
@@ -346,6 +360,11 @@ impl GamePhysics {
             obstacle_bodies: Vec::new(),
             obstacle_contacts: 0,
             obstacle_hit: None,
+            obstacle_bail_hit: None,
+            held_hit: None,
+            held_contact_tick: None,
+            held: Default::default(),
+            forced_bail: None,
             obstacle_bail_speed: 6.0,
             blast_speed: 0.0,
             clock: clock::SimulationClock::default(),

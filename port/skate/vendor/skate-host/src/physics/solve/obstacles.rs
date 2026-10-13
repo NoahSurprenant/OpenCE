@@ -4,7 +4,7 @@ use super::super::GamePhysics;
 use skate_core::physics::{
     board_step::{BoardCollision, CollisionBody},
     board_world::BoardWorldVolume,
-    kinematic_obstacle::{ObstacleKind, enclosing_sphere, obstacle_contacts},
+    kinematic_obstacle::{HeldHit, ObstacleKind, enclosing_sphere, obstacle_contacts},
 };
 
 /// Obstacles not sent again for this long (seconds of simulation) are
@@ -59,6 +59,8 @@ pub(super) fn append(
     obstacle_contacts(skeleton, &volumes, PADDING, contacts);
     physics.obstacle_contacts = contacts.len() - first;
     physics.obstacle_hit = None;
+    physics.obstacle_bail_hit = None;
+    physics.held_hit = None;
     for c in &contacts[first..] {
         let CollisionBody::Attached(index) = c.body_b else {
             continue;
@@ -79,6 +81,20 @@ pub(super) fn append(
         let closing = -((local.x - v.x) * n.x + (local.y - v.y) * n.y + (local.z - v.z) * n.z);
         if physics.obstacle_hit.is_none_or(|(_, fastest)| closing > fastest) {
             physics.obstacle_hit = Some((obstacle.kind, closing));
+        }
+        // (a held obstacle's hit is the host's to decide: told, not bailed by)
+        if obstacle.held {
+            if physics.held_hit.is_none_or(|h| closing > h.closing) {
+                physics.held_hit = Some(HeldHit { tag: obstacle.tag, kind: obstacle.kind, closing, normal: n });
+            }
+        } else if physics.obstacle_bail_hit.is_none_or(|(_, fastest)| closing > fastest) {
+            physics.obstacle_bail_hit = Some((obstacle.kind, closing));
+        }
+    }
+    if let Some(hit) = physics.held_hit {
+        physics.held_contact_tick = Some(physics.ticks);
+        if physics.held.hit.is_none_or(|h| hit.closing > h.closing) {
+            physics.held.hit = Some(hit);
         }
     }
 }
