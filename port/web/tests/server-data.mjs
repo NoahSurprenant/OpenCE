@@ -184,7 +184,7 @@ async function testStandIn(site) {
     }
     const skate = await page.textContent('#skate-status');
     console.log('skate: ' + skate);
-    if (!/2 files of skate data .*with 1 sound files, ready/.test(skate)) fail('the skate data was not downloaded');
+    if (!/3 files of skate data .*with 1 sound files, ready/.test(skate)) fail('the skate data was not downloaded');
     const stored = await storedFiles(page);
     for (const [name, digest] of Object.entries(expected())) {
       if (stored[name] !== digest) fail(`${name} in the browser's storage is not the server's`);
