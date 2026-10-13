@@ -21,7 +21,8 @@ the site. Nothing is uploaded.
   may not (the page says so), and iPhones are untried.
 - About 3 GB of the browser's storage: the maps (about 2 GB), and the
   game's copies of the maps it played (up to about 800 MB, as on the Xbox's
-  hard disk), and the disc image (`.iso` or `.xiso`) on the computer.
+  hard disk), and the disc image (`.iso` or `.xiso`) on the computer. Skate 3
+  mode's data, if you import it, takes about 200 MB more.
 - The site over https (or `localhost`): the game's threads need
   `SharedArrayBuffer`, and so a cross-origin isolated page. GitHub Pages
   cannot send the headers for that; the site's service worker adds them, so
@@ -47,6 +48,40 @@ storage belongs to the site's address: `halocombatevolved.com` and
 `noahsurprenant.github.io` do not share it. (A `github.io` address is shared by
 all of its owner's project sites, so the browser keeps one storage for all
 of them.)
+
+## Skate 3 mode
+
+This fork's web build has Skate 3 mode, as its Linux and Windows builds do
+([port/skate/README.md](../skate/README.md)): **J**, or both sticks clicked
+in, drops Master Chief onto a skateboard driven by Skate 3's own physics. It
+needs the `skate-data` folder converted from your own copy of Skate 3
+("Skate 3 mode" in the [README](../../README.md#skate-3-mode)); the site
+serves none of it.
+
+1. Under **Skate 3 data (optional)**, choose **Choose a skate-data
+   folder…** and select the `skate-data` folder (the one with `assets` in
+   it, and `sounds` if you extracted Skate 3's own sounds). The page copies
+   `assets/` and `sounds/` into the browser's storage for the site, beside the
+   maps, at `skate-data/` (about 200 MB, 20 seconds or so), and says how many
+   files, how large, and ready. Nothing is uploaded; anything else in the
+   folder (the converter's log) stays where it is.
+2. Play, load a level and press **J**. The skater loads in the background
+   as the game starts, slower than on the desktop (about 20 seconds in a
+   software renderer; less on a computer with graphics acceleration): a J
+   before it is ready gets on the board when it is.
+
+The data is optional: without it the game plays as usual, and J says in the
+console that there is no Skate 3 data, as on the desktop. **Delete the skate
+data** (there once it is imported) removes it; choosing a folder again
+replaces it. The game finds it through `HALO_SKATE_ASSETS`, which
+`port/web/src/web_main.c` sets to `/data/skate-data/assets` (the storage is
+mounted at `/data`), and the sounds beside it, as the desktop builds do.
+
+The controls are the desktop builds' (port/skate/README.md, "Controls"): the
+keyboard through the page, and a controller through the browser's Gamepad
+API, whose standard mapping SDL's Emscripten port gives the stick clicks of
+(buttons 10 and 11). The tuning commands work at the console. The skater's
+sounds play with the game's (the page's AudioWorklet).
 
 ## Playing
 
@@ -182,7 +217,55 @@ and no caching; `--as-github-pages` leaves the headers out, so that the
 service worker isolates the page as on GitHub Pages; a folder argument
 serves another site (a `halo-web-*.zip` from a release, say).
 `python tools/ci_build.py web release` makes the site in
-`dist/halo-web-release/`, as CI does.
+`dist/halo-web-release/`, as CI does (with Skate 3 mode, below).
+
+### Skate 3 mode
+
+`configure.py --skate` builds Skate 3 mode into the web build too, as into
+the native ones: `ninja web` runs cargo for the skate engine
+(`port/skate`) for Emscripten's target, `wasm32-unknown-emscripten`, links
+`libhalo_skate.a` into `halo.wasm` and compiles the game with `HALO_SKATE`
+(the board's shaders as OpenGL ES 3.0 for WebGL 2: `d3d8_gl.c`). This fork's
+CI builds it so (`tools/ci_build.py`), so its site and its
+`halo-web-*.zip` have it; they hold no Skate 3 data, which each player
+imports.
+
+The game's threads share one WebAssembly memory, so the engine and Rust's
+standard library must be compiled with atomics. Stable Rust's standard
+library for the target has none (a program linked with `-pthread` refuses
+it), and does not build there with panics unwinding; so a **pinned nightly**
+builds the standard library from its source (`-Zbuild-std=std,panic_abort`),
+with `-C panic=abort -C target-feature=+atomics,+bulk-memory`
+(`port/skate/.cargo/config.toml`), and the engine's bits of C (zstd, blake3)
+with emcc and `-pthread`. No debug information (`profile.release.debug=0`):
+with it the library is 190 MB. Install the nightly that `tools/web_build.py`
+names (`SKATE_WEB_TOOLCHAIN`, `nightly-2026-10-01`) with its source:
+
+```sh
+rustup toolchain install nightly-2026-10-01 --profile minimal --component rust-src
+python configure.py --skate    # --web-rust-toolchain NAME for another
+ninja web
+```
+
+The engine builds into `build/web/skate/` (a few minutes the first time),
+apart from the native builds' `port/skate/target/`. Move the pin forward
+only to a nightly that builds it and passes the browser test below; CI
+installs whichever is pinned.
+
+Skate 3 mode adds about 5 MB to `halo.wasm` (19.9 MB instead of 14.8 MB in a
+release build; 13.1 MB instead of 10.5 MB compressed, as a first visit
+downloads it): the engine (3.2 MB of code), the built-in sounds (1.2 MB) and
+tables. It is always in this fork's site rather than a second one: a
+player without the data pays the 2.6 MB once (the service worker keeps it),
+and nothing while playing. Memory does not grow: the game's memory is the
+same 2.1 GB, the engine's allocations come out of its C heap, and the
+browser test measured no difference beyond its run-to-run spread (about
+1.3 to 1.4 GB in all, on foot and skating). The engine's own thread (and,
+while a level loads, one that prepares its collision) fits the 16 workers
+Emscripten keeps ready (`PTHREAD_POOL_SIZE`; a debug build says when it runs
+out, and the test checks). Each game tick waits up to 250 ms for the
+engine's pose (`halo_skate_step`); with `PROXY_TO_PTHREAD` that wait is on
+the game's worker, never the page's thread.
 
 ### Tests
 
@@ -194,11 +277,29 @@ node port/web/tests/rooms.mjs dist/halo-web-release  # two browsers in a room (a
 node port/web/tests/webrtc_native.mjs chromium firefox  # the native builds' WebRTC with browsers
 node port/web/tests/internet.mjs build/web/site <maps folder>  # internet play with the Linux build
 node port/web/tests/dedicated.mjs build/web/site <maps folder>  # a browser joining a dedicated server
+node port/web/tests/skate.mjs build/web/site <maps folder> <skate-data folder> [shot.png]  # Skate 3 mode
+node port/web/tests/skate.mjs build/web/site <maps folder> none  # J without skate data
 ```
 
-The CI `web` job runs all but the last two, which need the maps. The
-`web-dedicated` job runs the dedicated server test on the owner's runner,
-which has the maps (port/linux/README.md, "Dedicated server").
+The CI `web` job runs all but the last four, which need the maps (and the
+Skate 3 data). The `web-dedicated` job runs the dedicated server test on the
+owner's runner, which has the maps (port/linux/README.md, "Dedicated
+server"), and the `web-skate` job the Skate 3 tests, there too.
+
+The Skate 3 test (a site built with `--skate`) imports `ui.map`,
+`bloodgulch.map` and the converted Skate 3 data through the page's two
+importers into a throwaway browser profile, hosts a game on Blood Gulch
+alone, presses J and checks the game's log: the skater preloaded from
+`/data/skate-data/assets`, the level sent to the engine and its rails, then
+each second (`debug.skate_status`) the player on the board, posed, the pose
+finite and the board drawn, and sounds loaded from the imported
+`sounds/`. It pushes, carves and steps off (Y), and gets off with both
+sticks clicked in on a stand-in controller (a Gamepad API one, the
+standard mapping). With a path it saves screenshots on the board, rolling,
+carving and stepped off. With `none` it imports no skate data: J must say
+there is none, and the game play on. It prints the frames shown a second
+and the browser's memory (its processes' proportional set size) before and
+after J. Its game is offline (`network.online` off).
 
 The smoke test serves the site as GitHub Pages does, checks that the page
 isolates itself and passes its checks, and starts the game with an empty
@@ -249,7 +350,9 @@ multiply-adds). `tools/web_build.py` writes the graph.
 - **Threads.** Emscripten's pthreads, with `PROXY_TO_PTHREAD`: the game's
   `main` runs on a Web Worker, where it may block; the page's own thread only
   passes events. The game's canvas is moved to that worker
-  (`OFFSCREENCANVASES_TO_PTHREAD`).
+  (`OFFSCREENCANVASES_TO_PTHREAD`). Skate 3 mode's engine runs on a thread
+  of its own, which the game waits on for each tick's pose (at most 250 ms),
+  on its worker ("Skate 3 mode" under "Building").
 - **Frames.** A worker's canvas shows what was drawn when the worker returns
   to its event loop, so `main.c` runs one iteration of the game's loop for
   each of the browser's frames (`emscripten_set_main_loop`) instead of its
@@ -427,7 +530,7 @@ a first visit downloads about 10 MB, compressed).
 | `port/web/src/web_stubs.c` | UPnP and an MSVC intrinsic |
 | `port/web/src/web_shared.h`, `web_touch.c` | The words of memory the page reads and writes: frames shown, the touch controls' state |
 | `port/web/src/web_library.js`, `web_pre.js` | The JavaScript halves: messages to the page, the brokers' WebSockets, the workers' errors |
-| `port/web/site/` | The page (`index.html`, `app.js`, `style.css`), the touch controls (`touch.js`), rooms (`net.js`), internet play's WebRTC (`p2p.js`), its service worker (`sw.js`), the importer (`xiso-worker.js`), the web app's manifest and icons |
+| `port/web/site/` | The page (`index.html`, `app.js`, `style.css`), the touch controls (`touch.js`), rooms (`net.js`), internet play's WebRTC (`p2p.js`), its service worker (`sw.js`), the importer of the maps and of Skate 3 mode's data (`xiso-worker.js`), the web app's manifest and icons |
 | `port/web/stamp_version.py`, `licenses.py` | `version.json` and `licenses.txt` |
 | `port/web/tests/` | The tests above |
 | `tools/web_serve.py` | A local server for the site |

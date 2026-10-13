@@ -12,8 +12,9 @@ own copy of Skate 3, and none of the game's files are included here.
 
 ## What you need
 
-- A Linux or Windows build made with `--skate` (below). Android builds
-  compile the hooks but never skate.
+- A Linux or Windows build made with `--skate` (below), or this fork's web
+  build in a browser (below, "In a browser"). Android builds compile the
+  hooks but never skate.
 - **Skate 3 for Xbox 360, extracted** (`default.xex` with its `data` folder),
   converted once into the folder the engine reads. Use the mashup's converter,
   `iw4l-skate-convert.exe` from its Windows release, or its
@@ -25,7 +26,8 @@ own copy of Skate 3, and none of the game's files are included here.
   ```
 
   The result is `skate-data/assets`. The game reads `HALO_SKATE_ASSETS`, or
-  `skate-data/assets` in the folder it starts in.
+  `skate-data/assets` in the folder it starts in. In a browser, the page
+  copies the folder into its storage.
 - A controller, or the keyboard (below).
 
 ## Controls
@@ -353,6 +355,44 @@ On Windows the engine is built with the static C runtime, as the game is
 (`.cargo/config.toml`), and its own XInput polling is left out (the
 `xinput` feature of `skate-host`): the game hands it the pad, and defines
 `XInputGetState` itself.
+
+**The web build** ([requirements](../web/README.md#building)) needs a
+pinned nightly Rust with its standard library's source, which it builds for
+Emscripten's target with atomics (the game's threads share one memory) and
+panics aborting ("Skate 3 mode" under "Building" in
+[port/web/README.md](../web/README.md#skate-3-mode-1)):
+
+```text
+rustup toolchain install nightly-2026-10-01 --profile minimal --component rust-src
+python configure.py --skate
+ninja web
+```
+
+### In a browser
+
+This fork's web build (<https://noahsurprenant.github.io/OpenCE/>, and its
+`halo-web-*.zip`) has Skate 3 mode. The page has a second importer beside
+the maps', **Skate 3 data (optional)**: choose your `skate-data` folder and
+it copies `assets/` and `sounds/` into the browser's storage for the site
+(`skate-data/` beside `maps/`, where `web_main.c` points
+`HALO_SKATE_ASSETS`). Nothing is uploaded, and the site serves none of it.
+Then J, or both sticks clicked in on a controller (the browser's Gamepad
+API, its standard mapping), works as on the desktop, with the skater's
+sounds; without the data, J says there is none
+([port/web/README.md](../web/README.md#skate-3-mode)).
+
+It is the same engine and game code as the desktop builds', compiled to
+WebAssembly. The engine's thread is a Web Worker of Emscripten's, and the
+250 ms the game waits at most for each tick's pose are spent on the game's
+own worker, never the page's thread. Loading the skater takes longer than
+on the desktop (about 20 seconds in headless Chromium's software renderer),
+in the background as the game starts.
+
+`port/web/tests/skate.mjs` checks it in a headless Chromium with your own
+maps and data (the CI job `web-skate`, on the owner's runner); it reads
+the status line `debug.skate_status` (`HALO_SKATE_STATUS`: every so many
+seconds while skating, where, how fast, whether the pose is finite and how
+many frames drew the board) that any build with Skate 3 mode can log.
 
 ### Tests with your own Skate 3 data
 
@@ -1149,6 +1189,10 @@ and damaged or foreign bytes refused.
   still poses the skater).
 - The camera cannot be turned by hand while skating; it follows the way you
   travel.
+- **In a browser**, Skate 3 mode is tested in headless Chromium only (a
+  software renderer, with a stand-in controller): Firefox, Safari, a real
+  controller and a computer's graphics are untried. The skater loads more
+  slowly than on the desktop.
 
 ## Licence
 

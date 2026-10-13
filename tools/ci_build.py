@@ -18,9 +18,10 @@ number (HALO_BUILD_NUMBER), which its release is named after and the
 self-updater compares (and the web site's version.json names).
 
 The web build (port/web/README.md) needs Emscripten (emcc on the PATH, as
-emsdk_env.sh puts it); dist/halo-web-<config>/ is the whole site, which a
-static host serves as it is: the workflow publishes the release build's to
-GitHub Pages.
+emsdk_env.sh puts it), and for its Skate 3 mode rustup with the nightly
+tools/web_build.py pins (SKATE_WEB_TOOLCHAIN, with its rust-src
+component); dist/halo-web-<config>/ is the whole site, which a static host
+serves as it is: the workflow publishes the release build's to GitHub Pages.
 """
 
 import argparse
@@ -59,8 +60,9 @@ def main() -> int:
     args = parser.parse_args()
 
     configure = [sys.executable, "configure.py", "--portable"]
-    # Skate 3 mode (port/skate) in the Linux and Windows builds
-    if args.platform in ("linux", "windows"):
+    # Skate 3 mode (port/skate) in the Linux, Windows and web builds (the
+    # web build's with the nightly Rust tools/web_build.py pins)
+    if args.platform in ("linux", "windows", "web"):
         configure.append("--skate")
     if args.config == "release":
         configure.append("--release")
