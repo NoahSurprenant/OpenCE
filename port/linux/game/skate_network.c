@@ -870,7 +870,9 @@ static struct
 	{ 96, FALSE, TRUE, TRUE } };
 /* and a grenade alone at its own skater (any push on them till it goes off
 is its bounce's), from that many seconds in to that many, on a second when
-they skate, alive, nothing else shot is about and the line to them is clear,
+they skate, alive, alone, free (skate_shoot_free), nothing else shot is
+about, the line to them is clear and there is room to push them
+(skate_shoot_room),
 till that many have gone off hurting them without killing them. Each is
 thrown with them healed, a health pack's body and a full shield (a frag at
 their feet then hurts them without killing them), and one that went off away
@@ -890,6 +892,16 @@ thrown from */
 many ticks before it (where they really went, not their velocity, which a
 skater pressed against something keeps while going nowhere) */
 #define SKATE_COURSE_TICKS 6
+/* world units open beyond the host's own skater, the way a grenade at them
+is thrown (and the way its blast pushes them, back from where it lands): a
+skater pushed into a wall goes nowhere, as anyone would */
+#define SKATE_PUSH_ROOM 1.5f
+/* and no other skater within that many world units of them */
+#define SKATE_OWN_GRENADE_ALONE 3.f
+/* and free (skate_shoot_free): their speed over that many ticks within so
+many metres a second of their velocity */
+#define SKATE_FREE_TICKS 10
+#define SKATE_FREE_SPEED 0.4f
 
 static struct
 {
@@ -927,7 +939,29 @@ static struct
 	real_point3d course[SKATE_COURSE_TICKS];
 	long course_time[SKATE_COURSE_TICKS];
 	short course_count;
+	/* (where the host's own skater was the last ticks they skated) */
+	real_point3d own_places[SKATE_FREE_TICKS];
+	short own_place_count;
 } skate_shoot;
+
+/* whether the host's own skater goes as fast as their velocity says, over
+the last SKATE_FREE_TICKS ticks (still, or riding freely): not pinned, their
+engine's board going on against something while they go nowhere, as a
+skater put down by a teleporter or the duel can be. A pinned skater a blast
+pushes goes nowhere either */
+static boolean skate_shoot_free(struct object_datum const *watcher)
+{
+	real_point3d const *first = &skate_shoot.own_places[0];
+	real went, speed;
+
+	if (skate_shoot.own_place_count < SKATE_FREE_TICKS)
+		return FALSE;
+	went = (real)sqrt((watcher->object.position.x - first->x) * (watcher->object.position.x - first->x) +
+		(watcher->object.position.y - first->y) * (watcher->object.position.y - first->y)) / (SKATE_FREE_TICKS - 1);
+	speed = (real)sqrt(watcher->object.translational_velocity.i * watcher->object.translational_velocity.i +
+		watcher->object.translational_velocity.j * watcher->object.translational_velocity.j);
+	return fabs(went - speed) * TICKS_PER_SECOND * 3.048f < SKATE_FREE_SPEED;
+}
 
 static boolean skate_shoot_alive(long object_index)
 {
@@ -982,14 +1016,76 @@ static void skate_shoot_aim(long target_index, real_point3d *at)
 	}
 }
 
+/* the level's ground straight under point (within 2 world units, not water):
+whether there is any, its height and how level it is */
+static boolean skate_shoot_ground(long target_index, real_point3d const *point, real *height, real *level)
+{
+	struct collision_result collision;
+	real_vector3d down;
+
+	down.i = 0.f;
+	down.j = 0.f;
+	down.k = -2.f;
+	if (!collision_test_vector(_collision_test_environment_flags, point, &down, target_index, &collision) ||
+		collision.type == _collision_result_media)
+	{
+		return FALSE;
+	}
+	*height = collision.point.z;
+	*level = collision.plane.n.k;
+	return TRUE;
+}
+
+/* room for target_index to be pushed beyond world units along direction
+from at (their middle): nothing in the way at their middle or just over their
+feet, and level ground under them, half way and at the end, all at one height
+(not a slope, a ledge, a creek's bank or its water). A skater pushed into a
+wall, or sliding down a slope, does not go away from a blast as the test
+measures it */
+static boolean skate_shoot_room(long target_index, real_point3d const *at, real_vector3d const *direction,
+	real beyond)
+{
+	struct collision_result collision;
+	real_point3d feet = object_get(target_index)->object.position;
+	real_vector3d past;
+	real height0, height, level;
+	short step;
+
+	feet.z += 0.15f;
+	past.i = direction->i * beyond;
+	past.j = direction->j * beyond;
+	past.k = 0.f;
+	if (collision_test_vector(_collision_test_environment_flags, at, &past, target_index, &collision) ||
+		collision_test_vector(_collision_test_environment_flags, &feet, &past, target_index, &collision) ||
+		!skate_shoot_ground(target_index, at, &height0, &level) || level < 0.97f)
+	{
+		return FALSE;
+	}
+	for (step = 1; step <= 2; step++)
+	{
+		real_point3d point = *at;
+
+		point.x += past.i * step / 2.f;
+		point.y += past.j * step / 2.f;
+		if (!skate_shoot_ground(target_index, &point, &height, &level) || level < 0.97f ||
+			fabs(height - height0) > 0.25f)
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
 /* a clear line to target_index from distance world units off, level: the
 way they face first, then turning round them 45 degrees at a time, either
 side, to their back. Clear is nothing between their middle and where the
 shot starts (not another skater, the watcher, a rock: a start inside a rock
 does not hit it from within), and a projectile's test from there (Halo's
-own, ignoring the shot's owner) meeting the skater first. Its direction is
-from the start to the skater */
-static boolean skate_shoot_clear(long target_index, long owner_index, real distance, real_vector3d *direction)
+own, ignoring the shot's owner) meeting the skater first; with beyond, room
+beyond them for that many world units too (skate_shoot_room). Its direction
+is from the start to the skater */
+static boolean skate_shoot_clear(long target_index, long owner_index, real distance, real beyond,
+	real_vector3d *direction)
 {
 	struct object_datum *target = object_get(target_index);
 	real_point3d at;
@@ -1019,7 +1115,8 @@ static boolean skate_shoot_clear(long target_index, long owner_index, real dista
 		along.k = 0.f;
 		if (!collision_test_vector(_collision_test_for_projectiles_flags, &at, &back, target_index, &collision) &&
 			collision_test_vector(_collision_test_for_projectiles_flags, &start, &along, owner_index, &collision) &&
-			collision.type == _collision_result_object && collision.object_index == target_index)
+			collision.type == _collision_result_object && collision.object_index == target_index &&
+			(!(beyond > 0.f) || skate_shoot_room(target_index, &at, direction, beyond)))
 		{
 			return TRUE;
 		}
@@ -1081,7 +1178,7 @@ static boolean skate_shoot_burst(long watcher_index, long now)
 	short shot;
 
 	if (target_index == NONE || definition_index == NONE ||
-		!skate_shoot_clear(target_index, owner_index, SKATE_SHOOT_DISTANCE, &direction))
+		!skate_shoot_clear(target_index, owner_index, SKATE_SHOOT_DISTANCE, 0.f, &direction))
 	{
 		return FALSE;
 	}
@@ -1139,6 +1236,19 @@ static void skate_network_test_shoot(void)
 	}
 	if (!enabled || !watcher || game_connection() == _game_connection_network_client || !game_in_progress())
 		return;
+	/* (the host's own skater's last places) */
+	if (!skate_unit_is_skating(watcher_index))
+		skate_shoot.own_place_count = 0;
+	else
+	{
+		if (skate_shoot.own_place_count == SKATE_FREE_TICKS)
+		{
+			memmove(&skate_shoot.own_places[0], &skate_shoot.own_places[1],
+				sizeof(skate_shoot.own_places[0]) * (SKATE_FREE_TICKS - 1));
+			skate_shoot.own_place_count--;
+		}
+		skate_shoot.own_places[skate_shoot.own_place_count++] = watcher->object.position;
+	}
 	/* (what the last shots did) */
 	if (skate_shoot.target_index != NONE && !object_try_and_get(skate_shoot.target_index))
 	{
@@ -1310,7 +1420,8 @@ static void skate_network_test_shoot(void)
 		at another machine's whom there is none of waits too) */
 		if (target_index == NONE)
 			return;
-		clear = skate_shoot_clear(target_index, local ? NONE : watcher_index, SKATE_THROW_DISTANCE, &direction);
+		clear = skate_shoot_clear(target_index, local ? NONE : watcher_index, SKATE_THROW_DISTANCE, 0.f,
+			&direction);
 		skate_shoot.next++;
 		skate_shoot.bursts = 0;
 		skate_shoot.bullet_time = NONE;
@@ -1349,9 +1460,17 @@ static void skate_network_test_shoot(void)
 		skate_shoot_target(watcher_index, TRUE) == watcher_index)
 	{
 		real_vector3d direction;
+		long other_index = skate_shoot_target(watcher_index, FALSE);
 
-		if (!skate_shoot_clear(watcher_index, NONE, SKATE_THROW_DISTANCE, &direction))
+		/* (no other skater near, to be hurt too or ride into them while the
+		push is measured) */
+		if ((other_index != NONE && distance_squared3d(&object_get(other_index)->object.position,
+			&watcher->object.position) < SKATE_OWN_GRENADE_ALONE * SKATE_OWN_GRENADE_ALONE) ||
+			!skate_shoot_free(watcher) ||
+			!skate_shoot_clear(watcher_index, NONE, SKATE_THROW_DISTANCE, SKATE_PUSH_ROOM, &direction))
+		{
 			return;
+		}
 		/* (healed, as by a health pack, and a full shield: the frag hurts
 		them, and does not kill them) */
 		object_restore_body(watcher_index);
