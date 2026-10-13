@@ -37,6 +37,9 @@ the site. Nothing is uploaded.
    `maps/` folder that an earlier extraction made (a desktop build's).
 3. Choose **Play**.
 
+A private server of your own copy can provide the maps itself, so that
+nobody imports anything: "Serving the game data privately" below.
+
 Every map is checked as the game checks it before it is copied (its `head`
 and `foot` signatures, the Xbox cache version and the build of a retail disc,
 `01.10.12.2276`, or of the decompilation, `01.01.14.2342`). A disc image is
@@ -275,6 +278,8 @@ node --test "port/web/tests/*.test.js"   # the disc image reader, the service wo
 python -m pytest -q tools/test_web_build.py  # the build's graph, version.json, the sockets, the menus
 node port/web/tests/smoke.mjs dist/halo-web-release  # the site in a headless Chromium (Playwright)
 node port/web/tests/rooms.mjs dist/halo-web-release  # two browsers in a room (and mosquitto)
+node port/web/tests/server-data.mjs dist/halo-web-release  # the game data from the site's own server (placeholders)
+node port/web/tests/server-data.mjs --url https://<your server>/ [--shot shot.png]  # a private server with the real data
 node port/web/tests/webrtc_native.mjs chromium firefox  # the native builds' WebRTC with browsers
 node port/web/tests/internet.mjs build/web/site <maps folder>  # internet play with the Linux build
 node port/web/tests/dedicated.mjs build/web/site <maps folder>  # a browser joining a dedicated server
@@ -282,10 +287,10 @@ node port/web/tests/skate.mjs build/web/site <maps folder> <skate-data folder> [
 node port/web/tests/skate.mjs build/web/site <maps folder> none  # J without skate data
 ```
 
-The CI `web` job runs all but the last four, which need the maps (and the
-Skate 3 data). The `web-dedicated` job runs the dedicated server test on the
-owner's runner, which has the maps (port/linux/README.md, "Dedicated
-server"), and the `web-skate` job the Skate 3 tests, there too.
+The CI `web` job runs all but the last four and the server data test's
+`--url` form, which need the maps (and the Skate 3 data). The
+`web-dedicated` job runs the dedicated server test on the owner's runner,
+which has the maps (port/linux/README.md, "Dedicated server"), and the `web-skate` job the Skate 3 tests, there too.
 
 The Skate 3 test (a site built with `--skate`) imports `ui.map`,
 `bloodgulch.map` and the converted Skate 3 data through the page's two
@@ -517,6 +522,86 @@ response header rule adding `Cross-Origin-Opener-Policy: same-origin`,
 reload, and Cloudflare's cache takes GitHub Pages' bandwidth (100 GB a month;
 a first visit downloads about 10 MB, compressed).
 
+## Serving the game data privately
+
+> **Only on a private network, and only your own copy.** The maps and
+> Skate 3's data are copyrighted: serving them to the public is not
+> allowed. This mode is for a server on your own LAN (behind an IP allowlist,
+> a VPN, or both) that you and your household play from, so that each
+> browser need not import anything. The public site and the release zips
+> never use it.
+
+A server of the site can provide the game data itself. It is opt-in, by a
+file beside `index.html` that only such a server has: `server-data.json`.
+
+- **Without it** (GitHub Pages, the release zips: `tools/web_build.py`
+  never copies a `server-data.json` or a `game-data/` folder into the
+  site, and `.gitignore` keeps them out of the repository), the page asks
+  for it, gets a 404, and nothing changes.
+- **With it**, the page fetches the manifest it names, downloads the files
+  the manifest lists into the browser's storage where the importers put them
+  (`maps/`, and `skate-data/assets` and `skate-data/sounds`), checks each
+  one's size and SHA-256, and hides the import buttons; progress shows under
+  **Game data**. A later visit downloads only the files whose hash changed
+  (and removes those the manifest no longer lists): the hashes of what it
+  downloaded are kept beside them (`.server-files`). A server-data.json
+  that cannot be followed is reported there, and the imports stay.
+
+The page follows only addresses of its own origin: a config or manifest that
+names another (or a redirect to one) is refused. A manifest's paths are
+checked as the importers check a folder: plain names, `.map` files and
+`loading.tga` in the maps folder, skate data under `assets/` and
+`sounds/`.
+
+`tools/web_server_data_manifest.py` writes both files:
+
+```sh
+python tools/web_server_data_manifest.py --maps /srv/game-data/maps \
+    --skate-data /srv/game-data/skate-data --output /srv/site/game-data/manifest.json \
+    --config /srv/site/server-data.json --manifest-url game-data/manifest.json
+```
+
+`server-data.json` (format version 1):
+
+```json
+{"format": "opence-server-data", "version": 1, "manifest": "game-data/manifest.json"}
+```
+
+The manifest:
+
+```json
+{"format": "opence-server-data-manifest", "version": 1,
+ "maps": {"base": "maps/", "files": [{"path": "ui.map", "size": 23810048, "sha256": "…"}]},
+ "skate": {"base": "skate-data/", "files": [{"path": "assets/board.json", "size": 1234, "sha256": "…"}]}}
+```
+
+The manifest's address is relative to the page, each `base` to the
+manifest and each `path` to its base; `skate` is optional (and ignored by
+a build without Skate 3 mode). Hashing 2 GB of maps takes about a minute;
+run the script again whenever the data changes.
+
+What the server must send:
+
+- **HTTPS** (or `localhost`): the page needs a secure context. On a LAN
+  name, a certificate from a DNS challenge works without exposing anything.
+- `Cross-Origin-Opener-Policy: same-origin`,
+  `Cross-Origin-Embedder-Policy: require-corp` and
+  `Cross-Origin-Resource-Policy: same-origin` on every response (the game's
+  threads; without them the service worker adds them, after a reload).
+- `application/wasm` for `halo.wasm`; `Cache-Control: no-cache` (or
+  revalidation) for the site's files, and `no-store` for
+  `server-data.json` and the manifest.
+- Only the data folders and the manifest: no directory listings, and
+  nothing else of the disk they live on.
+
+`docker/web` (the `ghcr.io/noahsurprenant/opence-web` image: nginx and
+the site, code only) sends all of that, and `charts/opence-web` deploys it
+on Kubernetes with an optional read-only game-data volume, from which an
+init container writes the manifest and `server-data.json` (see its
+README). To try it on your computer, put a `server-data.json` and a
+`game-data/` folder in a copy of the site and serve it with
+`tools/web_serve.py`.
+
 ## Files
 
 | File | What it is |
@@ -535,3 +620,4 @@ a first visit downloads about 10 MB, compressed).
 | `port/web/stamp_version.py`, `licenses.py` | `version.json` and `licenses.txt` |
 | `port/web/tests/` | The tests above |
 | `tools/web_serve.py` | A local server for the site |
+| `port/web/site/server-data.js`, `tools/web_server_data_manifest.py` | The game data from the site's own server (opt-in): its config and manifest, and the script that writes them |
