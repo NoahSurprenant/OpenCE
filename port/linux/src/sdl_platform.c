@@ -20,14 +20,17 @@ and the debug keyboard that the game's console reads.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if !defined(_WIN32) && !defined(HALO_ANDROID)
 #include <signal.h>
+#ifndef _WIN32
+#include <unistd.h>
 #endif
 
 static SDL_Window *platform_window;
 static SDL_GLContext platform_gl_context;
 static SDL_ThreadID platform_event_thread;
 static BOOL platform_sdl_started = FALSE;
+/* SDL could not start even with its dummy drivers: not tried again */
+static BOOL platform_sdl_failed = FALSE;
 
 static struct platform_input_state input_state;
 /* J was pressed since the game last asked (halo_skate_platform_toggle_pressed) */
@@ -100,10 +103,43 @@ void updater_start(void);
 void updater_poll(SDL_Window *window);
 #endif
 
+/* ---------- quitting by signal */
+
+/* SIGTERM or SIGINT arrived (a service manager stopping a server, Ctrl+C at
+its terminal): the game quits at its next frame, telling the players first
+(port/linux/game/dedicated_server.c), and a second one quits at once */
+static volatile sig_atomic_t platform_quit_signal;
+
+#ifndef HALO_ANDROID
+static void platform_quit_signalled(int signal_number)
+{
+	if (platform_quit_signal)
+		_exit(128 + signal_number);
+	platform_quit_signal = signal_number;
+}
+#endif
+
+static void platform_quit_signals_install(void)
+{
+#ifndef HALO_ANDROID
+	static BOOL installed;
+
+	if (installed)
+		return;
+	installed = TRUE;
+	/* (before SDL_Init, which then leaves them: SDL's own would only push
+	a quit event that a game without a window never reads) */
+	signal(SIGTERM, platform_quit_signalled);
+	signal(SIGINT, platform_quit_signalled);
+#endif
+}
+
 BOOL platform_sdl_initialize(void)
 {
 	if (platform_sdl_started)
 		return TRUE;
+	if (platform_sdl_failed)
+		return FALSE;
 #if !defined(_WIN32) && !defined(HALO_ANDROID)
 	/* a write to a connection the other end closed fails instead of ending
 	the game (the game's sockets and Discord's pass MSG_NOSIGNAL, but UPnP's
@@ -124,10 +160,32 @@ BOOL platform_sdl_initialize(void)
 	controller emulation in xinput_sdl.c) */
 	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 #endif
+	platform_quit_signals_install();
+	/* port: a dedicated server has no display or sound device to look for */
+	if (config_boolean("server.dedicated"))
+	{
+		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+		SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+	}
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
 	{
-		platform_log("SDL_Init failed: %s", SDL_GetError());
-		return FALSE;
+		/* no sound device, or no display either (a server, a container
+		without X or Wayland): SDL's dummy drivers, which have no window but
+		still the events and the gamepads' code the game asks for. Tried
+		once, as every frame asks again (XInputGetState) */
+		platform_log("SDL_Init failed: %s; trying without a sound device", SDL_GetError());
+		SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+		if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
+		{
+			platform_log("SDL_Init failed: %s; trying without a display (no window)", SDL_GetError());
+			SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+			if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
+			{
+				platform_log("SDL_Init failed: %s; going on without SDL", SDL_GetError());
+				platform_sdl_failed = TRUE;
+				return FALSE;
+			}
+		}
 	}
 	platform_sdl_started = TRUE;
 #ifndef HALO_ANDROID
@@ -313,6 +371,7 @@ BOOL platform_offer_game_data(const char *destination)
 
 	/* not for runs nobody is watching */
 	if (config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0 ||
+		config_boolean("debug.null_renderer") ||
 		!SDL_Init(SDL_INIT_VIDEO))
 	{
 		return FALSE;
@@ -358,7 +417,9 @@ int halo_interpolation_enabled(void)
 	if (read_at != config_changes())
 	{
 		read_at = config_changes();
-		enabled = config_boolean("display.interpolation");
+		/* (without a window there is no display to draw each refresh of: the
+		game's 30 frames a second, which main.c's throttle sleeps between) */
+		enabled = config_boolean("display.interpolation") && !config_boolean("debug.null_renderer");
 	}
 	return enabled;
 }
@@ -1306,28 +1367,54 @@ void platform_scoreboard_scroll(int open, long *notches, long *pages)
 	pthread_mutex_unlock(&input_lock);
 }
 
-void platform_pump_events(void)
+/* debug.exit_after (seconds) ends the game that long after the window
+opens, as closing it does (tools/pgo_train.py); without a window, that long
+after the game starts, as SIGTERM does (platform_quit_requested) */
+static void platform_exit_after_check(BOOL windowed)
 {
-	/* debug.exit_after (seconds) ends the game that long after the window
-	opens, as closing it does (tools/pgo_train.py) */
 	static Uint64 exit_ticks = (Uint64)-1;
-	SDL_Event event;
-	static BOOL looked_at_clipboard;
-	BOOL look_at_clipboard = !looked_at_clipboard;
 
-	if (!platform_window || SDL_GetCurrentThreadID() != platform_event_thread)
-		return;
 	if (exit_ticks == (Uint64)-1)
 	{
 		double seconds = config_real("debug.exit_after");
 
 		exit_ticks = seconds > 0.0 ? SDL_GetTicks() + (Uint64)(seconds * 1000.0) : 0;
 	}
-	if (exit_ticks && SDL_GetTicks() >= exit_ticks)
+	if (!exit_ticks || SDL_GetTicks() < exit_ticks)
+		return;
+	if (windowed)
 	{
 		platform_log("exiting after debug.exit_after");
 		exit(EXIT_SUCCESS);
 	}
+	if (!platform_quit_signal)
+		platform_quit_signal = -1;
+}
+
+/* the signal that asked the game to quit (SIGTERM, SIGINT), or 0; -1 for
+debug.exit_after's time come without a window (dedicated_server.c) */
+int platform_quit_requested(void)
+{
+	if (!platform_window)
+		platform_exit_after_check(FALSE);
+	return platform_quit_signal;
+}
+
+void platform_pump_events(void)
+{
+	SDL_Event event;
+	static BOOL looked_at_clipboard;
+	BOOL look_at_clipboard = !looked_at_clipboard;
+
+	/* (without a window nothing comes to read, but the time to go) */
+	if (!platform_window)
+	{
+		platform_exit_after_check(FALSE);
+		return;
+	}
+	if (SDL_GetCurrentThreadID() != platform_event_thread)
+		return;
+	platform_exit_after_check(TRUE);
 	platform_show_pending_message();
 #ifndef HALO_ANDROID
 	updater_poll(platform_window);

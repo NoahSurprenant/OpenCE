@@ -122,6 +122,8 @@ enum
 	PROXY_IDLE_TIME = 60000,
 	STUN_RETRY_INTERVAL = 500,
 	STUN_REFRESH_INTERVAL = 25000,
+	/* network.public_address looked up again (a dynamic DNS name) */
+	PUBLIC_ADDRESS_LOOKUP_INTERVAL = 300000,
 	STUN_ATTEMPTS = 6,
 	/* a joiner asks its router to forward the tunnel's port when it has not
 	reached a peer in this long; a forwarding is renewed this often (its
@@ -308,6 +310,13 @@ static struct
 	/* from the first time a game is hosted or joined */
 	int stun_started;
 	int reported_symmetric;
+	/* network.public_address: its host and port (network order), and the
+	address last looked up for it (none yet: 0) */
+	char public_host[256];
+	unsigned short public_port;
+	struct p2p_candidate public_candidate;
+	int public_looked_up;
+	unsigned long public_looked_up_time;
 
 	/* hosting: while the game listens on hosting_socket, and its game may be
 	joined from the internet (p2p_set_hosting_allowed) */
@@ -1288,13 +1297,91 @@ static void stun_received(const unsigned char *packet, int size, const struct so
 	}
 }
 
+/* ---------- the forwarded address (network.public_address) */
+
+/* the address a router forwards the tunnel's port at (a server's, where
+STUN's is of no use: a NAT that gives each destination its own port), set
+up from network.public_address once the tunnel's port is known */
+static void public_address_setup(void)
+{
+	const char *text = config_string("network.public_address");
+	const char *colon;
+	size_t length;
+
+	while (*text == ' ')
+		text++;
+	length = strlen(text);
+	while (length > 0 && text[length - 1] == ' ')
+		length--;
+	if (!length)
+		return;
+	if (length >= sizeof(p2p.public_host))
+	{
+		platform_log("Internet play: network.public_address is too long; not offering it");
+		return;
+	}
+	memcpy(p2p.public_host, text, length);
+	p2p.public_host[length] = 0;
+	p2p.public_port = p2p.tunnel_port;
+	colon = strchr(p2p.public_host, ':');
+	if (colon)
+	{
+		long port = atol(colon + 1);
+
+		p2p.public_host[colon - p2p.public_host] = 0;
+		if (port > 0 && port <= 65535)
+			p2p.public_port = network_short((unsigned short)port);
+		else
+			platform_log("Internet play: network.public_address's port is not a port; offering tunnel_port's");
+	}
+	if (!config_integer("network.tunnel_port") && !colon)
+	{
+		platform_log("Internet play: network.public_address without a port and network.tunnel_port 0: "
+			"the router forwards a port this run picked (set tunnel_port)");
+	}
+}
+
+/* looked up on the p2p thread at first, and again every few minutes: a
+dynamic DNS name follows the router's address as it changes */
+static void public_address_update(void)
+{
+	unsigned long address;
+
+	if (!p2p.public_host[0] ||
+		(p2p.public_looked_up && !elapsed(p2p.public_looked_up_time, PUBLIC_ADDRESS_LOOKUP_INTERVAL)))
+	{
+		return;
+	}
+	p2p.public_looked_up = 1;
+	p2p.public_looked_up_time = p2p_now();
+	address = p2p_resolve(p2p.public_host);
+	if (!address)
+	{
+		platform_log("Internet play: cannot look up network.public_address %s", p2p.public_host);
+		return;
+	}
+	if (address != p2p.public_candidate.address || p2p.public_port != p2p.public_candidate.port)
+	{
+		char text[32];
+
+		p2p.public_candidate.address = address;
+		p2p.public_candidate.port = p2p.public_port;
+		platform_log("Internet play: offering the forwarded address %s (network.public_address %s) first",
+			address_text(address, p2p.public_port, text), p2p.public_host);
+	}
+}
+
 int p2p_local_candidates(struct p2p_candidate *candidates, int maximum_count)
 {
 	unsigned long lan = posix_local_ipv4_address();
 	int count = 0;
 	int index;
 
-	if (lan && count < maximum_count)
+	/* (the address the router forwards here, network.public_address: first,
+	so that joining machines try it first) */
+	if (p2p.public_candidate.address && count < maximum_count)
+		candidates[count++] = p2p.public_candidate;
+	if (lan && count < maximum_count && lan != p2p.public_candidate.address)
 	{
 		candidates[count].address = lan;
 		candidates[count++].port = p2p.tunnel_port;
@@ -2974,6 +3061,7 @@ static void *p2p_thread(void *unused)
 		}
 		update_peers();
 		expire_proxies();
+		public_address_update();
 		stun_update();
 		update_hosting();
 		/* the server browser (p2p_lobby.c): signalling while browsing too */
@@ -3051,6 +3139,7 @@ void p2p_initialize(unsigned long local_address)
 		p2p.handoff_socket = open_socket(SOCK_DGRAM, network_long(0x7F000001), network_short(HANDOFF_PORT), NULL);
 #endif
 	stun_setup();
+	public_address_setup();
 	if (pthread_create(&thread, NULL, p2p_thread, NULL) != 0)
 	{
 		close_socket(&p2p.tunnel_socket);

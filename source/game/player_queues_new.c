@@ -750,7 +750,9 @@ boolean update_client_dequeue(
 	update = update_client_get_update(update_client_globals.next_update_number_to_dequeue);
 	if (!update ||
 		update_client_globals.next_update_number_to_dequeue>update_client_globals.latest_update_number_received ||
-		update->update.action_count<=0 ||
+		/* port: (none on the host is a game with nobody in it: a dedicated
+		server's, whose updates it builds itself, network_test.c) */
+		(update->update.action_count<=0 && game_connection()!=_game_connection_network_server) ||
 		update->update.action_count>MAXIMUM_NUMBER_OF_PLAYERS)
 	{
 		return FALSE;
@@ -824,7 +826,8 @@ long update_client_get_maximum_possible_server_time(
 		struct update *update = update_client_get_update(update_number);
 
 		if (!update ||
-			update->update.action_count<=0 ||
+			/* port: (as update_client_dequeue) */
+			(update->update.action_count<=0 && game_connection()!=_game_connection_network_server) ||
 			update->update.action_count>MAXIMUM_NUMBER_OF_PLAYERS)
 		{
 			break;

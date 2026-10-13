@@ -93,6 +93,9 @@ static struct
 {
 	boolean checked;
 	short mode;
+	/* server.dedicated: a host with no player of its own, listed as a server
+	(dedicated_server.c logs the games instead of every second's units) */
+	boolean dedicated;
 	/* the maps to rotate, ";" between them, each "map[:variant,variant...]"
 	(debug.network_test's value past "host:"), and which one is current */
 	char spec[2048];
@@ -221,6 +224,7 @@ static void network_test_read_settings(
 	char const *setting = config_string("debug.network_test");
 
 	network_test.checked = TRUE;
+	network_test.dedicated = config_boolean("server.dedicated") ? TRUE : FALSE;
 	if (!strncmp(setting, "host:", 5) && setting[5])
 	{
 		network_test.mode = _network_test_host;
@@ -811,7 +815,8 @@ void network_test_update(
 	if (game_in_progress() && !main_menu_loaded && game_time_get() - network_test.logged_time >= TICKS_PER_SECOND)
 	{
 		network_test.logged_time = game_time_get();
-		network_test_log_players();
+		if (!network_test.dedicated)
+			network_test_log_players();
 		if (network_test.shoot_interval > 0.0f &&
 			game_time_get() % MAX(1, (long)(network_test.shoot_interval * TICKS_PER_SECOND)) < TICKS_PER_SECOND)
 		{
@@ -1036,8 +1041,15 @@ void network_test_update(
 					/* (0: the most players the build holds, as the menus leave it) */
 					network_game_server_port_set_settings(wide, 0);
 				}
-				p2p_set_hosting_allowed(online);
-				p2p_set_hosting_public(online && config_boolean("network.host_public"));
+				/* port: (a dedicated server only: the tests' hosts stay unlisted) */
+				if (network_test.dedicated)
+				{
+					p2p_set_hosting_allowed(online);
+					p2p_set_hosting_public(online && config_boolean("network.host_public"));
+					/* (nobody of its own: its games start empty, for players
+					to join in progress) */
+					network_game_server_port_set_playerless(TRUE);
+				}
 			}
 			platform_log("network test: hosting %s", network_test.map_name);
 		}
@@ -1100,7 +1112,8 @@ void network_test_update(
 				}
 				network_test.map_set = TRUE;
 			}
-			if (!network_test.player_added && network_test.setup_seconds >= 2.0f && global_network_game_client_get())
+			if (!network_test.player_added && network_test.setup_seconds >= 2.0f && global_network_game_client_get() &&
+				!network_test.dedicated)
 				network_test.player_added = network_game_client_add_player(global_network_game_client_get(), 0);
 			if (network_test.setup_seconds >= network_test.start_delay)
 			{

@@ -3027,6 +3027,10 @@ boolean server_needs_more_teams(
 	return needs_more_teams;
 }
 
+/* port: a dedicated server (network_test.c): the host's machine has no
+player of its own, and its games start, and go on, with nobody on them */
+static boolean network_game_server_port_playerless = FALSE;
+
 boolean server_has_a_player_on_each_machine(
 	struct network_game_server *server)
 {
@@ -3040,7 +3044,9 @@ boolean server_has_a_player_on_each_machine(
 			&server->client_machines[client_machine_index];
 
 		/* (the machines in the game: not a connection that has not joined) */
-		if (network_game_server_client_machine_is_joined_to_game(server, client_machine))
+		if (network_game_server_client_machine_is_joined_to_game(server, client_machine) &&
+			/* port: (but a dedicated server's own, which has none) */
+			!(network_game_server_port_playerless && network_game_server_client_machine_is_local(server, client_machine)))
 		{
 			boolean has_a_player = FALSE;
 			long player_index;
@@ -3098,7 +3104,9 @@ a system link or internet game's host, or split screen's first player */
 static boolean server_alone(
 	struct network_game_server *server)
 {
-	return server->game.player_count == 1;
+	return server->game.player_count == 1 ||
+		/* (or none, on a dedicated server) */
+		(network_game_server_port_playerless && server->game.player_count == 0);
 }
 
 boolean server_ok_to_countdown(
@@ -4118,6 +4126,12 @@ void network_game_server_port_set_minimum_players(
 {
 	if (server)
 		server->game.minimum_players = (char)PIN(minimum_players, 1, MAXIMUM_NETWORK_PLAYER_COUNT);
+}
+
+void network_game_server_port_set_playerless(
+	boolean playerless)
+{
+	network_game_server_port_playerless = playerless;
 }
 
 /* port: a game a host runs afresh. A machine that asked to join as the last

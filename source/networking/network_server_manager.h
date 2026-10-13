@@ -52,6 +52,10 @@ given a map list asks for one, so it starts with nobody on it */
 void network_game_server_port_set_minimum_players(
 	struct network_game_server *server,
 	long minimum_players);
+/* port: a dedicated server (network_test.c): its own machine has no player,
+and its games start with nobody on them, for players to join in progress */
+void network_game_server_port_set_playerless(
+	boolean playerless);
 /* port: drop the joins a finished game left waiting, so the next one
 starts with none (network_test.c's host) */
 void network_game_server_port_clear_queued_players(
