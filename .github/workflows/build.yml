@@ -11,7 +11,8 @@ name: Build
 #   a commit only recompiles what it changed; downloads (SDL, musl, Gradle)
 #   are cached too;
 # - a newer push to the same branch cancels a run still going;
-# - pushes that only change documentation do not build;
+# - pushes that only change documentation, or the dedicated server's chart
+#   and image, do not build;
 # - Windows, whose minutes cost twice Linux's, builds only Windows;
 # - artifacts are kept for three days.
 #
@@ -23,6 +24,12 @@ on:
   push:
     paths-ignore:
       - "**.md"
+      # The dedicated server's chart and image have workflows of their own (helm-chart.yml,
+      # server-image.yml), which build the game in the image.
+      - "charts/**"
+      - "docker/**"
+      - ".github/workflows/helm-chart.yml"
+      - ".github/workflows/server-image.yml"
   workflow_dispatch:
 
 concurrency:

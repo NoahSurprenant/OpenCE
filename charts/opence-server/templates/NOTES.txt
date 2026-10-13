@@ -1,0 +1,31 @@
+OpenCE dedicated server {{ .Chart.Version }}: {{ include "opence-server.fullname" . }} in namespace {{ .Release.Namespace }}.
+
+Hosting: {{ join ", " .Values.server.maps }} ({{ join ", " .Values.server.gameTypes }}), {{ .Values.server.timeLimit }} minutes a game{{ if .Values.server.scoreLimit }}, to {{ .Values.server.scoreLimit }}{{ end }}.
+{{- if .Values.network.hostPublic }}
+Listed in the server browser{{ with .Values.network.serverName }} as "{{ . }}"{{ end }}.
+{{- else }}
+Invite-only (network.hostPublic false): players join with the invite link from the log.
+{{- end }}
+
+The log shows the invite link, the players who join and leave, and each game's start, end and scores:
+
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "opence-server.fullname" . }} | grep -E 'Invite players|server:'
+
+The invite changes at each start{{ if not .Values.persistence.enabled }} (the key is in the emptyDir at /state; persistence.enabled keeps it){{ end }}.
+
+Players reach UDP port {{ .Values.service.port }} through Service {{ include "opence-server.fullname" . }} ({{ .Values.service.type }}).
+{{- if eq .Values.service.type "ClusterIP" }}
+A ClusterIP Service is not reachable from outside the cluster: set service.type to LoadBalancer or
+NodePort for internet play.
+{{- end }}
+{{- if .Values.network.publicAddress }}
+Joining machines try {{ .Values.network.publicAddress }} first: forward that port on the router to the Service.
+{{- else }}
+network.publicAddress is empty: behind a NAT that gives each destination its own port, players
+cannot reach the server through its STUN address. Forward the port and set network.publicAddress.
+{{- end }}
+{{- if .Values.telnetConsole.enabled }}
+
+The console (no password, 127.0.0.1 only):
+  kubectl -n {{ .Release.Namespace }} exec -it deploy/{{ include "opence-server.fullname" . }} -- bash -c 'exec 3<>/dev/tcp/127.0.0.1/{{ .Values.telnetConsole.port }}; cat <&3 & cat >&3'
+{{- end }}

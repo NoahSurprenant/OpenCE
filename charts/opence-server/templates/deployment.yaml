@@ -1,0 +1,142 @@
+{{- if not (include "opence-server.hasGameData" .) }}
+{{- fail "gameData: set existingClaim, nfs.server and nfs.path, or volume - the server needs the game's maps, which are never in the image" }}
+{{- end }}
+{{- $fullname := include "opence-server.fullname" . }}
+{{- $env := list }}
+{{- $env = append $env (dict "name" "HALO_DEDICATED" "value" "1") }}
+{{- $env = append $env (dict "name" "HALO_DATA_ROOT" "value" "/data") }}
+{{- $env = append $env (dict "name" "HALO_SAVE_ROOT" "value" "/state/saves") }}
+{{- $env = append $env (dict "name" "HALO_SERVER_MAPS" "value" (join ", " .Values.server.maps)) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_GAME_TYPES" "value" (join ", " .Values.server.gameTypes)) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_TIME_LIMIT" "value" (toString (int .Values.server.timeLimit))) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_SCORE_LIMIT" "value" (toString (int .Values.server.scoreLimit))) }}
+{{- $env = append $env (dict "name" "HALO_NET_ONLINE" "value" (toString .Values.network.online)) }}
+{{- $env = append $env (dict "name" "HALO_NET_TUNNEL_PORT" "value" (toString (int .Values.network.tunnelPort))) }}
+{{- $env = append $env (dict "name" "HALO_NET_HOST_PUBLIC" "value" (toString .Values.network.hostPublic)) }}
+{{- $env = append $env (dict "name" "HALO_NET_ALLOW_UPNP" "value" (toString .Values.network.allowUpnp)) }}
+{{- with .Values.network.publicAddress }}
+{{- $env = append $env (dict "name" "HALO_NET_PUBLIC_ADDRESS" "value" .) }}
+{{- end }}
+{{- with .Values.network.serverName }}
+{{- $env = append $env (dict "name" "HALO_NET_SERVER_NAME" "value" .) }}
+{{- end }}
+{{- with .Values.network.stunServers }}
+{{- $env = append $env (dict "name" "HALO_NET_STUN" "value" .) }}
+{{- end }}
+{{- if .Values.telnetConsole.enabled }}
+{{- $env = append $env (dict "name" "HALO_TELNET_CONSOLE" "value" "1") }}
+{{- $env = append $env (dict "name" "HALO_TELNET_CONSOLE_PORT" "value" (toString (int .Values.telnetConsole.port))) }}
+{{- end }}
+{{- $probe := dict "exec" (dict "command" (list "/bin/sh" "-c" (printf "grep -qs '^ *[0-9]*: [0-9A-F]*:%s ' /proc/net/udp /proc/net/udp6" (include "opence-server.portHex" .)))) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "opence-server.labels" . | nindent 4 }}
+spec:
+  # One server owns the tunnel port and the address players reach it at.
+  replicas: 1
+  strategy:
+    {{- toYaml .Values.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "opence-server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "opence-server.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # The server never calls the Kubernetes API.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: opence-server
+          image: {{ include "opence-server.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- toYaml $env | nindent 12 }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: tunnel
+              containerPort: {{ .Values.network.tunnelPort }}
+              protocol: UDP
+          {{- range $name := list "startup" "readiness" "liveness" }}
+          {{- $p := index $.Values.probes $name }}
+          {{- if $p.enabled }}
+          {{ $name }}Probe:
+            {{- toYaml (merge (omit $p "enabled") $probe) | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: game-data
+              mountPath: /data
+              readOnly: true
+              {{- with .Values.gameData.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+            # config.toml (through the image's link), the save root and its map cache.
+            - name: state
+              mountPath: /state
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: game-data
+          {{- if .Values.gameData.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.gameData.existingClaim }}
+            readOnly: true
+          {{- else if and .Values.gameData.nfs.server .Values.gameData.nfs.path }}
+          nfs:
+            server: {{ .Values.gameData.nfs.server }}
+            path: {{ .Values.gameData.nfs.path }}
+            readOnly: true
+          {{- else }}
+          {{- toYaml .Values.gameData.volume | nindent 10 }}
+          {{- end }}
+        - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "opence-server.stateClaim" . }}
+          {{- else }}
+          emptyDir:
+            sizeLimit: {{ .Values.persistence.emptyDirSizeLimit }}
+          {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

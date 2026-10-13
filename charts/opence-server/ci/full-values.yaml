@@ -1,0 +1,82 @@
+# Every option the chart has, for lint and the schema check (not installed: the NFS server is made
+# up).
+image:
+  tag: latest@sha256:0000000000000000000000000000000000000000000000000000000000000000
+imagePullSecrets:
+  - name: registry-credentials
+gameData:
+  nfs:
+    server: nfs.example.com
+    path: /exports/halo
+  subPath: ce
+server:
+  maps: [bloodgulch:slayer, bloodgulch:ctf, hangemhigh:king, chillout]
+  gameTypes: [slayer, oddball]
+  timeLimit: 10
+  scoreLimit: 25
+network:
+  tunnelPort: 27016
+  publicAddress: halo.example.com:27016
+  hostPublic: true
+  serverName: Example server
+  stunServers: stun.example.com:3478
+telnetConsole:
+  enabled: true
+extraEnv:
+  - name: HALO_NET_VOTEKICK
+    value: "false"
+persistence:
+  enabled: true
+  storageClass: standard
+  annotations:
+    example.com/keep: "true"
+service:
+  type: LoadBalancer
+  port: 27016
+  nodePort: 30716
+  annotations:
+    example.com/address: 192.0.2.10
+  externalTrafficPolicy: Local
+  loadBalancerSourceRanges: [0.0.0.0/0]
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: node-role.kubernetes.io/control-plane
+              operator: DoesNotExist
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: games
+    effect: NoSchedule
+priorityClassName: ""
+podAnnotations:
+  example.com/scrape: "false"
+podLabels:
+  team: games
+probes:
+  liveness:
+    periodSeconds: 30
+  readiness:
+    enabled: false
+defaultServiceAccount:
+  manage: true
+networkPolicy:
+  from:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+  extraEgress:
+    - to:
+        - ipBlock:
+            cidr: 203.0.113.0/24
+      ports:
+        - protocol: TCP
+          port: 443
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: '{{ .Release.Name }}-extra'
+    data:
+      hello: world

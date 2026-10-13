@@ -1,0 +1,6 @@
+# The smallest install that renders and starts: no maps (an emptyDir in their place), so the server
+# runs and binds its port but hosts nothing. Installed by e2e/run.sh minimal. A real install gives
+# gameData.existingClaim or gameData.nfs instead (README, Quick start).
+gameData:
+  volume:
+    emptyDir: {}

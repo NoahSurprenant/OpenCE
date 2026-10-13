@@ -787,6 +787,12 @@ every five minutes, so a dynamic DNS name follows the router's address.
 The telnet console (`debug.telnet_console`) gives the console of the
 server on 127.0.0.1.
 
+A container image of the server, `ghcr.io/noahsurprenant/opence-server`, is
+built from [docker/server/Dockerfile](../../docker/server/Dockerfile), and a
+Helm chart deploys it on Kubernetes:
+[charts/opence-server](../../charts/opence-server/README.md). Neither
+contains game data: the maps are mounted read-only at `/data`.
+
 `debug.network_test`, `debug.network_test_time` and
 `debug.network_test_score` still operate. If `debug.network_test` is not
 empty, the server hosts its list instead of `server.maps`.

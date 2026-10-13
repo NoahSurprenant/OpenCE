@@ -1,0 +1,143 @@
+suite: deployment
+templates:
+  - templates/deployment.yaml
+set:
+  gameData.existingClaim: halo-maps
+tests:
+  - it: refuses to render without game data, which is never in the image
+    set:
+      gameData.existingClaim: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "gameData: set existingClaim"
+
+  - it: mounts an existing claim read-only at /data
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0]
+          value: { name: game-data, persistentVolumeClaim: { claimName: halo-maps, readOnly: true } }
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: { name: game-data, mountPath: /data, readOnly: true }
+
+  - it: mounts an NFS export read-only, with a subPath
+    set:
+      gameData: { existingClaim: "", nfs: { server: nfs.example.com, path: /halo }, subPath: ce }
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0]
+          value: { name: game-data, nfs: { server: nfs.example.com, path: /halo, readOnly: true } }
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: { name: game-data, mountPath: /data, readOnly: true, subPath: ce }
+
+  - it: takes any other volume source
+    set:
+      gameData: { existingClaim: "", volume: { emptyDir: {} } }
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0]
+          value: { name: game-data, emptyDir: {} }
+
+  - it: runs one replica, replaced not rolled, hardened
+    asserts:
+      - equal: { path: 'spec.replicas', value: 1 }
+      - equal: { path: 'spec.strategy.type', value: Recreate }
+      - equal: { path: 'spec.template.spec.automountServiceAccountToken', value: false }
+      - equal: { path: 'spec.template.spec.securityContext.runAsNonRoot', value: true }
+      - equal: { path: 'spec.template.spec.securityContext.runAsUser', value: 10001 }
+      - equal: { path: 'spec.template.spec.securityContext.seccompProfile.type', value: RuntimeDefault }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem', value: true }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation', value: false }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.capabilities.drop', value: [ALL] }
+      - equal: { path: 'spec.template.spec.nodeSelector', value: { kubernetes.io/os: linux, kubernetes.io/arch: amd64 } }
+      - equal: { path: 'spec.template.spec.terminationGracePeriodSeconds', value: 15 }
+      - exists: { path: 'spec.template.spec.containers[0].resources.limits.memory' }
+
+  - it: maps the settings to the HALO_ variables
+    set:
+      server: { maps: ["bloodgulch:slayer", "bloodgulch:ctf", "hangemhigh:king"], gameTypes: [slayer], timeLimit: 10, scoreLimit: 25 }
+      network: { publicAddress: "halo.example.com:27015", serverName: Test, hostPublic: true }
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_DEDICATED, value: "1" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_DATA_ROOT, value: /data } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SAVE_ROOT, value: /state/saves } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_MAPS, value: "bloodgulch:slayer, bloodgulch:ctf, hangemhigh:king" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_GAME_TYPES, value: slayer } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TIME_LIMIT, value: "10" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_SCORE_LIMIT, value: "25" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_TUNNEL_PORT, value: "27015" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_PUBLIC_ADDRESS, value: "halo.example.com:27015" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_SERVER_NAME, value: Test } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_HOST_PUBLIC, value: "true" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_ALLOW_UPNP, value: "false" } }
+
+  - it: is invite-only by default and leaves empty settings to the game
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_HOST_PUBLIC, value: "false" } }
+      - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_PUBLIC_ADDRESS, value: "" } }
+      - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_TELNET_CONSOLE, value: "1" } }
+
+  - it: turns on the console only when asked (any value of its variable turns it on)
+    set:
+      telnetConsole.enabled: true
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_TELNET_CONSOLE, value: "1" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_TELNET_CONSOLE_PORT, value: "2323" } }
+
+  - it: puts extraEnv after the chart's variables, so it can override them
+    set:
+      extraEnv: [{ name: HALO_SERVER_TIME_LIMIT, value: "5" }]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[-1:]
+          value: { name: HALO_SERVER_TIME_LIMIT, value: "5" }
+
+  - it: probes for the bound tunnel port, in /proc/net/udp's hex
+    set:
+      network.tunnelPort: 27015
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.exec.command[2]
+          value: "grep -qs '^ *[0-9]*: [0-9A-F]*:6987 ' /proc/net/udp /proc/net/udp6"
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.exec.command[2]
+          value: "grep -qs '^ *[0-9]*: [0-9A-F]*:6987 ' /proc/net/udp /proc/net/udp6"
+      - equal: { path: 'spec.template.spec.containers[0].startupProbe.failureThreshold', value: 60 }
+      - equal: { path: 'spec.template.spec.containers[0].ports[0]', value: { name: tunnel, containerPort: 27015, protocol: UDP } }
+
+  - it: drops a probe that is turned off
+    set:
+      probes.liveness.enabled: false
+    asserts:
+      - notExists: { path: 'spec.template.spec.containers[0].livenessProbe' }
+      - exists: { path: 'spec.template.spec.containers[0].readinessProbe' }
+
+  - it: keeps the state in an emptyDir, or the chart's claim with persistence
+    asserts:
+      - contains: { path: 'spec.template.spec.volumes', content: { name: state, emptyDir: { sizeLimit: 1Gi } } }
+  - it: uses the claim with persistence
+    release: { name: opence-server }
+    set:
+      persistence.enabled: true
+    asserts:
+      - contains: { path: 'spec.template.spec.volumes', content: { name: state, persistentVolumeClaim: { claimName: opence-server-state } } }
+
+  - it: takes a tag with a digest, as Image Updater writes it
+    set:
+      image.tag: latest@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/noahsurprenant/opence-server:latest@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  - it: lets digest replace the tag's digest
+    set:
+      image.tag: latest@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      image.digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/noahsurprenant/opence-server:latest@sha256:2222222222222222222222222222222222222222222222222222222222222222
+  - it: uses the appVersion as the default tag
+    asserts:
+      - equal: { path: 'spec.template.spec.containers[0].image', value: "ghcr.io/noahsurprenant/opence-server:latest" }
