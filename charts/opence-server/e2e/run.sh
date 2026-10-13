@@ -11,8 +11,10 @@
 #   2. the pod: user 10001, a read-only root filesystem, no service account token, the state volume
 #      writable (config.toml through the image's link), /data read-only;
 #   3. the Service and the NetworkPolicy exist as rendered;
-#   4. a restart: the old server quits on SIGTERM and says so, within the grace period, and the new
-#      pod gets ready (Recreate: never two at once).
+#   4. a restart: the old pod goes and a new one gets ready (Recreate: never two at once).
+# Not here: the clean stop on SIGTERM (exit 0 in about 2 s, the players told). A server without maps
+# never reaches the frame loop that hears the signal, so it is killed at the end of the grace period
+# (shortened to 5 s here). tools/test_linux_port.py test_dedicated_server checks the stop with maps.
 set -euo pipefail
 
 scenario=${1:-minimal}
@@ -40,7 +42,7 @@ step "install ($scenario, $image)"
 kubectl create namespace "$ns"
 helm install "$release" "$chart" -n "$ns" -f "$chart/ci/$scenario-values.yaml" \
   --set "image.repository=${image%:*}" --set "image.tag=${image##*:}" --set image.pullPolicy=IfNotPresent \
-  --set defaultServiceAccount.manage=true
+  --set terminationGracePeriodSeconds=5
 kubectl -n "$ns" rollout status "$deploy" --timeout=180s || fail "the server did not get ready"
 pod=$(pod_name)
 kubectl -n "$ns" logs "$pod" | grep -q 'settings: a dedicated server, hosting bloodgulch:slayer' \
@@ -64,20 +66,12 @@ step "the Service and the NetworkPolicy"
 kubectl -n "$ns" get networkpolicy "$release" >/dev/null || fail "no NetworkPolicy"
 echo "UDP 27015 with an endpoint; NetworkPolicy present"
 
-step "restart: SIGTERM, a clean exit, a new pod"
-kubectl -n "$ns" logs -f "$pod" > "${TMPDIR:-/tmp}/opence-e2e-old.log" 2>&1 &
-follower=$!
-sleep 2
-start=$(date +%s)
-kubectl -n "$ns" delete pod "$pod" --wait=true --timeout=60s
-took=$(( $(date +%s) - start ))
-wait "$follower" || true
-grep -q 'quitting on signal 15' "${TMPDIR:-/tmp}/opence-e2e-old.log" || { cat "${TMPDIR:-/tmp}/opence-e2e-old.log" | tail -20; fail "the server did not quit on SIGTERM"; }
-grep -q 'server: closed' "${TMPDIR:-/tmp}/opence-e2e-old.log" || fail "the server did not close cleanly"
-[ "$took" -lt 15 ] || fail "the pod took ${took}s to stop (grace period 15s)"
+step "restart: the old pod goes, a new one gets ready"
+kubectl -n "$ns" rollout restart "$deploy"
 kubectl -n "$ns" rollout status "$deploy" --timeout=180s || fail "the new server did not get ready"
 [ "$(pod_name)" != "$pod" ] || fail "no new pod"
-echo "quit on SIGTERM in ${took}s, closed cleanly; new pod $(pod_name) ready"
+[ "$(kubectl -n "$ns" get pods -l app.kubernetes.io/instance=$release -o name | wc -l)" = 1 ] || fail "more than one server pod"
+echo "new pod $(pod_name) ready"
 
 step "uninstall"
 helm uninstall "$release" -n "$ns" --wait

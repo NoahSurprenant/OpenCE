@@ -68,8 +68,9 @@ jobs:
           cache-to: type=gha,mode=max
 
       # There are no maps in CI (they are never published): the server starts without them, as uid
-      # 10001 on a read-only root, writes its settings to /state, binds the tunnel port, and exits 0 on
-      # SIGTERM.
+      # 10001 on a read-only root, writes its settings to /state and binds the tunnel port. Its clean
+      # stop on SIGTERM is not checked here: without maps it never reaches the frame loop that hears the
+      # signal (tools/test_linux_port.py test_dedicated_server checks the stop with maps).
       - name: Smoke test
         run: |
           set -euo pipefail
@@ -84,11 +85,7 @@ jobs:
           [ "$(docker exec server id -u)" = 10001 ]
           docker exec server test -s /state/config.toml
           docker logs server 2>&1 | grep -q 'settings: a dedicated server, hosting bloodgulch:slayer'
-          docker stop -t 15 server
-          docker logs server 2>&1 | tail -5
-          status=$(docker inspect -f '{{.State.ExitCode}}' server)
-          [ "$status" = 0 ] || { echo "::error::the server exited $status on SIGTERM"; exit 1; }
-          docker logs server 2>&1 | grep -q 'quitting on signal 15'
+          docker rm -f server
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

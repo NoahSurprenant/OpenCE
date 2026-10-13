@@ -182,7 +182,8 @@ probes:
     timeoutSeconds: 2
 
 # Manage the namespace's default ServiceAccount with automountServiceAccountToken: false. The server
-# never calls the Kubernetes API, and its pod mounts no token either way.
+# never calls the Kubernetes API, and its pod mounts no token either way. Every namespace already has
+# a default ServiceAccount: Argo CD adopts it, but plain helm install needs --take-ownership.
 defaultServiceAccount:
   manage: false
 

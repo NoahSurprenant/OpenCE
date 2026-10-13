@@ -155,6 +155,8 @@ setting goes in `extraEnv`, which comes last and so overrides the chart's.
 - `e2e/run.sh`: installs the chart on a k3s cluster with the image built from the checkout. There are
   no maps in CI, so `ci/minimal-values.yaml` mounts an emptyDir in their place: the server starts,
   binds its port and hosts nothing. The test checks the probes, the pod's hardening, the Service, the
-  NetworkPolicy, and a clean stop on SIGTERM.
+  NetworkPolicy and a restart. The clean stop on SIGTERM needs maps (a server without them never
+  reaches the loop that hears the signal), so OpenCE's own `tools/test_linux_port.py`
+  (`test_dedicated_server`, on a runner that has the maps) checks it.
 
 Kubernetes 1.34 to 1.37 are tested (`kubeVersion` in `Chart.yaml` refuses older).
