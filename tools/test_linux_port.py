@@ -761,3 +761,83 @@ def test_dedicated_server(tmp_path):
             if process.poll() is None:
                 process.kill()
             process.wait()
+
+
+def test_dedicated_server_without_maps(tmp_path):
+    """A dedicated server whose data root lacks the maps it is to host (no maps
+    folder, an empty one, one with ui.map but not the map of its list, a file
+    that is no map) exits at once with status 2 and one line saying which maps
+    and where (port/linux/src/xbox_files.c), before the game or its network
+    starts: its tunnel port is never bound and no debug.txt is written. Before,
+    it stopped on the damaged disc screen nobody sees, its port bound, deaf to
+    SIGTERM. Needs only a Linux build (HALO_TEST_GAME, else build/linux/halo),
+    no game data; a second or two."""
+    game = os.environ.get("HALO_TEST_GAME") or "build/linux/halo"
+    if not Path(game).is_file():
+        pytest.skip("needs a Linux build (HALO_TEST_GAME, or ninja linux's build/linux/halo)")
+    game = str(Path(game).resolve())
+    # (a map's header and no more: what the check reads, signatures and the
+    # Xbox caches' version, 5)
+    header = bytearray(0x800)
+    header[0:4], header[4:8], header[0x7FC:0x800] = b"daeh", (5).to_bytes(4, "little"), b"toof"
+    cases = {
+        "no maps folder": ({}, "no usable maps in {root}/maps (looked for ui.map, bloodgulch.map); exiting", ""),
+        "an empty maps folder": ({"maps": None}, "no usable maps in {root}/maps (looked for ui.map, bloodgulch.map); "
+                                 "exiting", ""),
+        "a map of the list missing": ({"maps/UI.MAP": bytes(header)}, "maps missing or unusable in {root}/maps: "
+                                      "Hangemhigh.map (missing); exiting", "bloodgulch, Hangemhigh:ctf"),
+        "no map": ({"maps/ui.map": bytes(header), "maps/bloodgulch.map": b"not a map" * 300},
+                   "maps missing or unusable in {root}/maps: bloodgulch.map (not a map); exiting", ""),
+    }
+    # (a port no other test uses, which the server binds as soon as its
+    # network starts: internet play is on)
+    port = 27315
+    for index, (name, (files, expected, maps)) in enumerate(cases.items()):
+        root = tmp_path / f"data{index}"
+        root.mkdir()
+        if files == {"maps": None}:
+            (root / "maps").mkdir()
+        for relative, content in files.items():
+            if content is not None:
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_bytes(content)
+        if maps:
+            (root / "maps" / "bloodgulch.map").write_bytes(bytes(header))
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
+        env.update(HALO_DEDICATED="1", HALO_DATA_ROOT=str(root), HALO_SAVE_ROOT=str(tmp_path / f"saves{index}"),
+                   HALO_NET_ONLINE="true", HALO_NET_TUNNEL_PORT=str(port), HALO_UPDATE_ANSWER="never")
+        if maps:
+            env["HALO_SERVER_MAPS"] = maps
+        # (in a folder of its own: config.toml is written beside the
+        # executable, or in the current folder when that cannot be)
+        folder = tmp_path / f"run{index}"
+        folder.mkdir()
+        started = time.monotonic()
+        process = subprocess.Popen([game], cwd=folder, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True)
+        bound = False
+        try:
+            # its port watched for as long as it runs
+            while process.poll() is None and time.monotonic() - started < 10:
+                for table in ("udp", "udp6"):
+                    try:
+                        text = Path(f"/proc/{process.pid}/net/{table}").read_text()
+                    except OSError:
+                        text = ""
+                    bound = bound or f":{port:04X} " in text
+                time.sleep(0.005)
+            status = process.wait(timeout=5)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        seconds = time.monotonic() - started
+        stderr = process.stderr.read()
+        print(f"{name}: status {status} after {seconds:.2f} s: {stderr.strip().splitlines()[-1:]}")
+        assert status == 2, f"{name}: status {status}:\n{stderr[-3000:]}"
+        assert seconds < 5, f"{name}: took {seconds:.1f} s"
+        assert f"halo-linux: server: {expected.format(root=root)}\n" in stderr, f"{name}:\n{stderr[-3000:]}"
+        assert not bound, f"{name}: the tunnel port was bound"
+        assert "Internet play" not in stderr, f"{name}: the network started:\n{stderr[-3000:]}"
+        assert not (root / "debug.txt").exists(), f"{name}: the game started (it wrote debug.txt)"

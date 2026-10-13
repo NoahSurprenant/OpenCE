@@ -101,6 +101,12 @@ const char *platform_data_root(void);
 /* the Halo Custom Edition install the Xbox drive h:\ is (paths.custom_edition),
 or "" when none is set or it has no maps folder */
 const char *platform_custom_edition_root(void);
+/* server.dedicated: exits with status 2, saying so, when the data root lacks
+ui.map or a map the server is to host (xbox_files.c); called first */
+void platform_dedicated_maps_check(void);
+/* the game ends with status in seconds, at once, unless it has gone by then
+(sdl_platform.c; 0 seconds: now; only that on Windows and Android) */
+void platform_exit_deadline(int status, unsigned seconds);
 /* on the desktop, when the data root has no maps folder: offers to copy it
 out of an Xbox disc image into destination (sdl_platform.c), and quits if
 the player declines; nonzero once destination has one */

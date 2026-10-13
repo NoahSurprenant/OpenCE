@@ -67,25 +67,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # There are no maps in CI (they are never published): the server starts without them, as uid
-      # 10001 on a read-only root, writes its settings to /state and binds the tunnel port. Its clean
-      # stop on SIGTERM is not checked here: without maps it never reaches the frame loop that hears the
-      # signal (tools/test_linux_port.py test_dedicated_server checks the stop with maps).
+      # There are no maps in CI (they are never published), and the server needs real ones: started
+      # without them, as uid 10001 on a read-only root, it writes its settings to /state, then exits
+      # with status 2 at once, saying which maps it looked for where, before its network starts (its
+      # tunnel port never bound). tools/test_linux_port.py's test_dedicated_server checks a server
+      # with maps (its game, a client joining, its clean stop on SIGTERM) on the owner's runner.
       - name: Smoke test
         run: |
           set -euo pipefail
-          docker run -d --name server --read-only --cap-drop ALL --security-opt no-new-privileges \
-            --tmpfs /state:uid=10001,gid=10001 --tmpfs /tmp opence-server:ci
-          for i in $(seq 1 30); do
-            if docker exec server grep -qs '^ *[0-9]*: [0-9A-F]*:6987 ' /proc/net/udp /proc/net/udp6; then bound=1; break; fi
-            sleep 1
-          done
-          docker logs server 2>&1 | head -20
-          [ "${bound:-}" = 1 ] || { echo "::error::the server did not bind UDP 27015"; exit 1; }
-          [ "$(docker exec server id -u)" = 10001 ]
-          docker exec server test -s /state/config.toml
-          docker logs server 2>&1 | grep -q 'settings: a dedicated server, hosting bloodgulch:slayer'
-          docker rm -f server
+          [ "$(docker image inspect -f '{{.Config.User}}' opence-server:ci)" = 10001:10001 ]
+          status=0
+          timeout 30 docker run --name server --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /state:uid=10001,gid=10001 --tmpfs /tmp opence-server:ci > server.log 2>&1 || status=$?
+          cat server.log
+          docker rm -f server > /dev/null
+          [ "$status" = 2 ] || { echo "::error::the server without maps exited with $status, not 2"; exit 1; }
+          grep -qF 'server: no usable maps in /data/maps (looked for ui.map, bloodgulch.map); exiting' server.log
+          grep -q 'settings: wrote the defaults to /opt/opence/config.toml' server.log
+          grep -q 'settings: a dedicated server, hosting bloodgulch:slayer' server.log
+          if grep -q 'Internet play' server.log; then echo "::error::the server's network started"; exit 1; fi
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

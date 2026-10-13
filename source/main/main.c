@@ -680,6 +680,9 @@ void platform_wait_for_vertical_blank(void);
 /* port: a dedicated server's log, and its quitting on SIGTERM
 (port/linux/game/dedicated_server.c) */
 void dedicated_server_update(void);
+/* port: a dedicated server stopped by a fatal error, out with status 1
+(port/linux/game/dedicated_server.c); returns on the desktop */
+void dedicated_server_fatal(char const *errors);
 
 static boolean main_port_headless(
 	void)
@@ -3101,6 +3104,9 @@ void halt_and_catch_fire(
 	char label[96];
 	#endif
 
+	/* port: a dedicated server says what stopped it and exits with status 1,
+	instead of drawing this screen for nobody, forever, deaf to SIGTERM */
+	dedicated_server_fatal(error_get());
 	if (!global_screenshot_count.halt_recursion_lock)
 	{
 		scenario = global_scenario_try_and_get();
@@ -3224,6 +3230,10 @@ void halt_and_catch_fire(
 void main_loop_of_death(
 	void)
 {
+	/* port: a dedicated server says what stopped it (a map that could not
+	be read) and exits with status 1, rather than showing the error screen to
+	nobody, forever, deaf to SIGTERM */
+	dedicated_server_fatal(error_get());
 	while (TRUE)
 	{
 		input_frame_begin();

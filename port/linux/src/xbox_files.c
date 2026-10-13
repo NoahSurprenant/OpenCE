@@ -127,6 +127,176 @@ const char *platform_data_root(void)
 	return root;
 }
 
+/* ---------- a dedicated server's maps, checked before it starts */
+
+/* the exit status of a dedicated server without the maps it is to host */
+#define DEDICATED_MAPS_EXIT_STATUS 2
+
+/* why the map file name in folder (the data root's maps folder, or
+custom_maps; NULL when there is none) cannot be loaded, or NULL when it can:
+it is there, and an Xbox cache by its header's signatures and version (5, or
+Custom Edition's 609 in custom_maps), which the cache file loader checks first
+(cache_file_header_verify) */
+static const char *dedicated_map_unusable(const char *folder, const char *file_name, int custom_edition)
+{
+	char on_disk[256];
+	char path[MAX_PATH];
+	unsigned char header[0x800];
+	unsigned long version;
+	FILE *file;
+	size_t count;
+
+	if (!folder || !posix_find_entry_case_insensitive(folder, file_name, on_disk, sizeof(on_disk)))
+		return "missing";
+	snprintf(path, sizeof(path), "%s/%s", folder, on_disk);
+	file = fopen(path, "rb");
+	if (!file)
+		return "not readable";
+	count = fread(header, 1, sizeof(header), file);
+	fclose(file);
+	if (count != sizeof(header) || memcmp(header, "daeh", 4) || memcmp(header + 0x7FC, "toof", 4))
+		return "not a map";
+	version = header[4] | ((unsigned long)header[5] << 8) | ((unsigned long)header[6] << 16) |
+		((unsigned long)header[7] << 24);
+	if (version != (custom_edition ? 609UL : 5UL))
+		return custom_edition ? "not a Custom Edition map" : "not an Xbox map";
+	return NULL;
+}
+
+/* whether name starts with prefix, in any case */
+static int starts_with_any_case(const char *name, const char *prefix)
+{
+	for (; *prefix; name++, prefix++)
+	{
+		if (tolower((unsigned char)*name) != tolower((unsigned char)*prefix))
+			return 0;
+	}
+	return 1;
+}
+
+/* server.dedicated: ui.map, which the game loads first, and the maps the
+server is to host (debug.network_test's host list, which config_apply_dedicated
+makes of server.maps) looked for in the data root before anything else
+starts - networking least of all, so that the tunnel port is never bound -
+and the game exits with status 2, saying which and where, when any is missing
+or is no map. Without them the game would stop at its first map on the damaged
+disc screen it shows a player (main_loop_of_death) and stay there, its port bound:
+a server that looks healthy, hosting nothing. This way a missing or wrong
+volume of maps is a failed start (in Kubernetes, a pod in CrashLoopBackOff).
+The maps folder is the one cache_files_map_directory picks (game.language's,
+else maps; when that is missing, the first of the others there is). A Custom
+Edition map (custom_maps\<name>) is looked for in custom_maps, and left to the
+game when a Custom Edition install is set (paths.custom_edition). */
+void platform_dedicated_maps_check(void)
+{
+	static const char *const folders[] = { "maps_de", "maps_fr", "maps_es", "maps_it", "maps" };
+	const char *language = config_string("game.language");
+	const char *preferred = "maps";
+	const char *hosted;
+	const char *root;
+	char folder_name[256];
+	char folder[MAX_PATH];
+	char custom_maps[MAX_PATH];
+	char looked_for[512];
+	char problems[768];
+	size_t looked_used = 0;
+	size_t problems_used = 0;
+	int has_folder;
+	int has_custom_maps;
+	char seen[512];
+	int checked = 0;
+	int missing = 0;
+	int unusable = 0;
+	int index;
+
+	if (!config_boolean("server.dedicated"))
+		return;
+	root = platform_data_root();
+	if (!strncmp(language, "de", 2))
+		preferred = "maps_de";
+	else if (!strncmp(language, "fr", 2))
+		preferred = "maps_fr";
+	else if (!strncmp(language, "es", 2))
+		preferred = "maps_es";
+	else if (!strncmp(language, "it", 2))
+		preferred = "maps_it";
+	has_folder = posix_find_entry_case_insensitive(root, preferred, folder_name, sizeof(folder_name));
+	for (index = 0; !has_folder && index < (int)(sizeof(folders) / sizeof(folders[0])); index++)
+		has_folder = posix_find_entry_case_insensitive(root, folders[index], folder_name, sizeof(folder_name));
+	snprintf(folder, sizeof(folder), "%s/%s", root, has_folder ? folder_name : preferred);
+	has_custom_maps = posix_find_entry_case_insensitive(root, "custom_maps", folder_name, sizeof(folder_name));
+	snprintf(custom_maps, sizeof(custom_maps), "%s/%s", root, has_custom_maps ? folder_name : "custom_maps");
+	looked_for[0] = 0;
+	problems[0] = 0;
+	snprintf(seen, sizeof(seen), "|");
+	/* ui.map, then each map of the list ("host:a:slayer,king;b:ctf"); a
+	server told to join a game instead hosts none */
+	hosted = config_string("debug.network_test");
+	hosted = !strncmp(hosted, "host:", 5) ? hosted + 5 : "";
+	for (index = -1; index < 0 || *hosted; index++)
+	{
+		char name[128];
+		char file_name[160];
+		char key[164];
+		const char *base;
+		const char *reason;
+		int custom_edition;
+
+		if (index < 0)
+		{
+			snprintf(name, sizeof(name), "ui");
+		}
+		else
+		{
+			snprintf(name, sizeof(name), "%.*s", (int)strcspn(hosted, ":;"), hosted);
+			hosted += strcspn(hosted, ";");
+			if (*hosted == ';')
+				hosted++;
+			if (!name[0])
+				continue;
+		}
+		/* (a level named by its path, a campaign level's for co-op or a
+		Custom Edition map's: the file of its last part) */
+		base = strrchr(name, '\\');
+		base = base ? base + 1 : name;
+		custom_edition = starts_with_any_case(name, "custom_maps\\");
+		snprintf(file_name, sizeof(file_name), "%s.map", base);
+		/* (each file once: a map named again for other game types) */
+		snprintf(key, sizeof(key), "|%s|", file_name);
+		if (strstr(seen, key) || (custom_edition && platform_custom_edition_root()[0]))
+			continue;
+		if (strlen(seen) + strlen(key) < sizeof(seen))
+			strcat(seen, key + 1);
+		checked++;
+		if (custom_edition)
+			reason = dedicated_map_unusable(has_custom_maps ? custom_maps : NULL, file_name, 1);
+		else
+			reason = dedicated_map_unusable(has_folder ? folder : NULL, file_name, 0);
+		if (looked_used + strlen(file_name) + 3 < sizeof(looked_for))
+		{
+			looked_used += (size_t)snprintf(looked_for + looked_used, sizeof(looked_for) - looked_used, "%s%s",
+				looked_used ? ", " : "", file_name);
+		}
+		if (!reason)
+			continue;
+		unusable++;
+		if (!strcmp(reason, "missing"))
+			missing++;
+		if (problems_used + strlen(file_name) + strlen(reason) + 6 < sizeof(problems))
+		{
+			problems_used += (size_t)snprintf(problems + problems_used, sizeof(problems) - problems_used,
+				"%s%s (%s)", problems_used ? ", " : "", file_name, reason);
+		}
+	}
+	if (!unusable)
+		return;
+	if (missing == checked)
+		platform_log("server: no usable maps in %s (looked for %s); exiting", folder, looked_for);
+	else
+		platform_log("server: maps missing or unusable in %s: %s; exiting", folder, problems);
+	exit(DEDICATED_MAPS_EXIT_STATUS);
+}
+
 /* creates every missing directory along path */
 static void make_directories(const char *path)
 {

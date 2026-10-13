@@ -26,8 +26,9 @@ gameData:
     server: ""
     path: ""
   # Or any other volume source, as in a pod's volumes (without the name), e.g.
-  # {hostPath: {path: /srv/halo, type: Directory}}. An {emptyDir: {}} starts the server without
-  # maps: it runs, but hosts nothing (for tests of the chart).
+  # {hostPath: {path: /srv/halo, type: Directory}}. The server checks for maps/ui.map and the maps of
+  # server.maps before it starts: without them (an {emptyDir: {}}, a wrong path) it exits with status
+  # 2 and says which maps it looked for where, and the pod goes into CrashLoopBackOff.
   volume: {}
   # The folder within the volume that contains maps/. Empty: the volume's root.
   subPath: ""
@@ -162,7 +163,7 @@ securityContext:
 
 # The probes check that the server holds its tunnel port (a UDP socket bound to network.tunnelPort
 # in the container's /proc/net/udp): it binds the port as internet play starts and keeps it until it
-# quits. Each probe's fields (other than its exec) override the defaults here; enabled: false drops
+# quits (a server without its maps exits before it binds it). Each probe's fields (other than its exec) override the defaults here; enabled: false drops
 # it.
 probes:
   startup:

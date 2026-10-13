@@ -394,7 +394,9 @@ jobs:
     # skating) on one machine: tools/test_linux_port.py's
     # test_skate_multiplayer (port/skate/README.md, "Testing multiplayer"),
     # and a dedicated server with a client joining it and SIGTERM stopping it
-    # (test_dedicated_server, port/linux/README.md's "Dedicated server"),
+    # (test_dedicated_server, port/linux/README.md's "Dedicated server";
+    # test_dedicated_server_without_maps, its refusal to start without them,
+    # runs here too, and in the linux job),
     # which needs the converted Skate 3 data and the Halo maps - so on the
     # owner's runner, opence-k8s, for the reasons skate-assets gives above,
     # and only for this repository's own code, as skate-assets. The runner
@@ -464,8 +466,8 @@ jobs:
           set -o pipefail
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
             tools/test_linux_port.py -k "test_skate_multiplayer or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log"
-          if ! grep -q '2 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
-            echo "::error::test_skate_multiplayer and test_dedicated_server did not both run and pass"
+          if ! grep -q '3 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
+            echo "::error::test_skate_multiplayer, test_dedicated_server and test_dedicated_server_without_maps did not all run and pass"
             exit 1
           fi
 

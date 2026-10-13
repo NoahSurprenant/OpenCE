@@ -5426,6 +5426,16 @@ void game_engine_playlist_next(
 
 	csstrcpy(global_stage.map_name, "levels\\test\\carousel\\carousel");
 	map_name = main_get_multiplayer_map_name();
+	/* port: a host debug.network_test gives its maps (a dedicated server)
+	starts on its first, not carousel, which fast setup's cleared map left it
+	to load at once: a server without carousel.map stopped on the damaged
+	disc screen (port/linux/game/network_test.c) */
+	if (!map_name || !map_name[0])
+	{
+		extern char const *network_test_first_level(void);
+
+		map_name = (char *)network_test_first_level();
+	}
 	if (map_name && map_name[0])
 	{
 		csstrncpy(global_stage.map_name, map_name, sizeof(global_stage.map_name) - 1);

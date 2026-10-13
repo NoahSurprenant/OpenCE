@@ -193,6 +193,30 @@ static void network_test_select_map(
 	}
 }
 
+/* port: the level a host debug.network_test gives maps to starts its server
+on (game_engine.c's game_engine_playlist_next, in place of carousel): the
+current map's, a multiplayer map's levels\test\<map>\<map> or the level its
+path names; NULL for any other run, and for a co-op game, whose level the
+Map screen's way chooses (network_test_update) */
+char const *network_test_first_level(
+	void)
+{
+	static char path[128];
+	char variant_name[64];
+
+	if (!network_test.checked || network_test.mode != _network_test_host || !network_test.map_name[0] ||
+		(network_test_variant(network_test.variant_index, variant_name, sizeof(variant_name)) &&
+		!strcmp(variant_name, "coop")))
+	{
+		return NULL;
+	}
+	if (strchr(network_test.map_name, '\\'))
+		snprintf(path, sizeof(path), "%s", network_test.map_name);
+	else
+		snprintf(path, sizeof(path), "levels\\test\\%s\\%s", network_test.map_name, network_test.map_name);
+	return path;
+}
+
 /* whether a game follows the one running: the list wraps to its first map,
 so a host that names maps keeps rotating for as long as it runs */
 static boolean network_test_has_next_game(
