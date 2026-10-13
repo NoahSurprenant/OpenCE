@@ -1011,7 +1011,19 @@ skater (another machine's): shield 1.00 to 0.57, ...`), whether the grenade
 bounced off them, the damage its blast did, and the skater a third of a
 second after it: how much further from the blast than their course had them,
 and how much faster away from it. A grenade kills a skater,
-and the watcher near, as it would anyone, so the shots are few.
+and the watcher near, as it would anyone, so the shots are few. Every shot
+goes along a clear line: from the side of the skater where Halo's projectile
+collision test meets the skater first and nothing stands between (in the
+duel the other skater, who has just ridden into them, is often right in
+front). A burst that does them no harm is fired again, up to eight times in
+30 seconds; a shot due while another's grenade is about waits for it. A
+grenade at the host's own skater waits for them to be nearly still (under
+1.5 m/s: a skater riding off is far from where it goes off) and heals them
+first as a health pack would (so does a burst at them), so that its blast
+hurts without killing; their course is where they went over the 6 ticks
+before the blast, not their velocity. It is thrown again till one has moved
+them away: a skater left on the teleporter's exit by the teleport test can
+stand there unmoved by a blast (seen in several runs, not understood yet).
 `debug.network_test_skate_teleport` (`HALO_NETWORK_TEST_SKATE_TELEPORT`) puts a
 host's own skater on a teleporter's entrance that many seconds in, for Halo's
 teleporter to take.
@@ -1034,10 +1046,10 @@ scenery; and that the client,
 deleting a piece of it 30 seconds in and making it again, built the level
 again with one piece fewer, then as before, each swapped in. The host also
 shoots: a burst must damage a skater on each machine, a grenade must bounce
-off one, and two thrown alone at the host's own skater must not push them
+off one, and grenades thrown alone at the host's own skater must not push them
 before they go off, bounce or not, and each that goes off hurting them (one
-must) push them once as it does, further from the blast than their course a
-third of a second on; the client must push its own skater once for
+must) push them once as it does, away from the blast, and one at least must
+have moved them further from it than their course a third of a second on; the client must push its own skater once for
 each blast that hurt them without killing them, and no push may be undone;
 and it puts its own skater on Blood Gulch's teleporter, which must take them
 to its exit. It needs a build with `--skate`, the converted data and the
@@ -1062,6 +1074,23 @@ owner's runner (`opence-k8s`, which has the data; see `skate-assets` in
 debug` does (`--skate --lto=off --pgo=off --portable`; the compile cache and
 the engine's cargo build are kept from run to run), runs the test headless,
 and fails if it skips. Like `skate-assets`, the release does not wait for it.
+
+To run it many times, `tools/skate_mp_loop.sh SLOT RUNS OUT [LOAD]` runs it
+RUNS times in a row in slot SLOT (its own loopback addresses, through
+`HALO_TEST_SKATE_NET`, so that several slots run side by side), with LOAD
+busy loops beside it if given, and writes each result to `OUT/results`,
+keeping a failed run's logs and deleting every run's temporary folder (some
+190 MB) as it goes. It also watches for a host that hangs: each game runs
+with `tools/stall_backtrace.c` preloaded, and a host whose log stops for 30
+seconds is sent SIGUSR2 on every thread, whose backtraces go to
+`OUT/hang-SLOT-RUN.txt` through addr2line (`gdb -p` and cores do not work
+in a container without `CAP_SYS_PTRACE`, and a game under gdb is too slow
+to be the one that hangs):
+
+```text
+HALO_TEST_GAME=$PWD/build/linux/halo HALO_SKATE_TEST_ASSETS=... HALO_SKATE_TEST_HALO_MAPS=... \
+SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy tools/skate_mp_loop.sh 0 10 /tmp/skate-mp
+```
 
 `tools/harness/tests/test_skate_state.py` checks the state itself, without
 any data, on every build: poses of a random skeleton sent and rebuilt within
