@@ -75,6 +75,16 @@ without one, and sets no default path:
 `gameData.subPath` picks a folder within the volume. The server only reads the data: if it cannot
 write `debug.txt` there, the log goes to the standard error, where `kubectl logs` shows it.
 
+The server needs `maps/ui.map` and a map file for each map of `server.maps`, and checks them before it
+starts. If one is missing or is not a map (a wrong volume, path or `subPath`, or an empty folder), it
+exits with status 2 and one line that names the maps and the folder, before it binds its port:
+
+```
+halo-linux: server: no usable maps in /data/maps (looked for ui.map, bloodgulch.map); exiting
+```
+
+The pod goes into `CrashLoopBackOff` and never gets ready. `kubectl logs --previous` shows the line.
+
 ## Networking
 
 Internet play uses one UDP port, `network.tunnelPort` (27015). The machines of an invite find each
@@ -119,7 +129,11 @@ and `extraEgress` add rules.
   cache (about 115 MB for the multiplayer maps), and the key of the invite links. An emptyDir
   unless `persistence.enabled`.
 - Probes: the server holds a UDP socket on the tunnel port (the container's `/proc/net/udp`) from
-  the start of internet play until it quits. The startup probe allows two minutes.
+  the start of internet play until it quits. The startup probe allows two minutes. A server without
+  its maps never binds the port: it exits with status 2 (Game data, above).
+- A fatal error (a map that cannot be read, say) ends the server with status 1 and a `server: a fatal
+  error (...)` line, and the pod restarts. If the server does not exit within 5 seconds of SIGTERM, it
+  is ended with status 143, before the kubelet kills it.
 - SIGTERM ends the game in progress, tells the players and exits 0 in about 2 seconds
   (`terminationGracePeriodSeconds: 15`).
 - Measured with a client playing: about 120-140 MB resident and 1-3% of a core. The defaults
@@ -152,11 +166,15 @@ setting goes in `extraEnv`, which comes last and so overrides the chart's.
 - `tests/`: [helm-unittest](https://github.com/helm-unittest/helm-unittest) suites (`helm unittest charts/opence-server`).
 - `ci/*-values.yaml`: linted and rendered against the Kubernetes schemas of the oldest and newest
   supported versions.
-- `e2e/run.sh`: installs the chart on a k3s cluster with the image built from the checkout. There are
-  no maps in CI, so `ci/minimal-values.yaml` mounts an emptyDir in their place: the server starts,
-  binds its port and hosts nothing. The test checks the probes, the pod's hardening, the Service, the
-  NetworkPolicy and a restart. The clean stop on SIGTERM needs maps (a server without them never
-  reaches the loop that hears the signal), so OpenCE's own `tools/test_linux_port.py`
-  (`test_dedicated_server`, on a runner that has the maps) checks it.
+- `e2e/run.sh`: installs the chart on a k3s cluster with the image built from the checkout, in a
+  namespace that enforces Pod Security's `restricted` profile. There are no maps in CI, so
+  `ci/minimal-values.yaml` mounts an emptyDir in their place. The test checks that the server exits
+  with status 2 and the line about the maps, that the pod goes into `CrashLoopBackOff` and never gets
+  ready, and that the Service has no ready endpoint. Then it patches the Deployment: the container runs
+  `sleep` in place of the server (with the same image, user, security context and volumes), and a
+  sidecar binds the tunnel port as the server does. With this, the test checks that the probes pass
+  and the pod gets ready, the pod's hardening, the Service and its endpoint, the NetworkPolicy and a
+  restart. A running server and its clean stop on SIGTERM need maps, so OpenCE's own
+  `tools/test_linux_port.py` (`test_dedicated_server`, on a runner that has the maps) checks them.
 
 Kubernetes 1.34 to 1.37 are tested (`kubeVersion` in `Chart.yaml` refuses older).

@@ -37,12 +37,18 @@ Called from the main loop every frame (main.c).
 int config_boolean(char const *name);
 void platform_log(char const *format, ...);
 int platform_quit_requested(void);
+void platform_exit_deadline(int status, unsigned seconds);
 
 /* the players the server's list is asked for at most */
 #define DEDICATED_SERVER_MAXIMUM_PLAYERS 64
 /* the server's state in a game (network_server_manager.c's enum
 network_game_server_state) */
 #define DEDICATED_SERVER_STATE_INGAME 1
+/* the seconds a dedicated server has to finish going (its exit hooks: the
+server browser's listing withdrawn, p2p.c), past which it is ended at once */
+#define DEDICATED_SERVER_EXIT_SECONDS 5
+/* the exit status of a dedicated server stopped by a fatal error */
+#define DEDICATED_SERVER_EXIT_FATAL 1
 
 static struct
 {
@@ -177,6 +183,9 @@ static void dedicated_server_quit(
 {
 	struct network_game_server *server = global_network_game_server_get();
 
+	/* (the rest of the way out given its own few seconds: a deadline the
+	signal set may be nearly over, sdl_platform.c) */
+	platform_exit_deadline(signal_number > 0 ? 128 + signal_number : EXIT_SUCCESS, DEDICATED_SERVER_EXIT_SECONDS);
 	if (signal_number > 0)
 		platform_log("quitting on signal %d", signal_number);
 	else
@@ -221,4 +230,64 @@ void dedicated_server_update(
 		dedicated_server.looked_at = system_milliseconds();
 		dedicated_server_log_players();
 	}
+}
+
+/* a dedicated server the game cannot go on with (main.c: halt_and_catch_fire
+after a fatal error, and main_loop_of_death, the damaged disc screen a
+player is left on when a map cannot be read: display_error_damaged_media): the error's last lines on the
+log, and out with status 1 - rather than drawing that screen for nobody,
+forever, deaf to SIGTERM, as it did. A desktop game keeps its screen (this
+returns at once). errors is the game's recent messages (error_get), lines
+ending in "\r\n". */
+void dedicated_server_fatal(
+	char const *errors)
+{
+	static boolean exiting;
+	char const *start;
+	char const *end;
+	short lines = 0;
+
+	if (!config_boolean("server.dedicated"))
+		return;
+	/* (an error on the way out: out at once) */
+	if (exiting)
+		platform_exit_deadline(DEDICATED_SERVER_EXIT_FATAL, 0);
+	exiting = TRUE;
+	if (!errors)
+		errors = "";
+	/* (the last three lines) */
+	end = errors + strlen(errors);
+	while (end > errors && (end[-1] == '\r' || end[-1] == '\n'))
+		end--;
+	start = end;
+	while (start > errors)
+	{
+		if (start[-1] == '\n' && ++lines == 3)
+			break;
+		start--;
+	}
+	{
+		char text[512];
+		short index = 0;
+
+		for (; start < end && index < (short)sizeof(text) - 3; start++)
+		{
+			if (*start == '\r')
+				continue;
+			if (*start == '\n')
+			{
+				text[index++] = ';';
+				text[index++] = ' ';
+			}
+			else
+			{
+				text[index++] = *start;
+			}
+		}
+		text[index] = 0;
+		platform_log("server: a fatal error (%s); exiting (debug.txt in the data root has the rest)",
+			index ? text : "no message");
+	}
+	platform_exit_deadline(DEDICATED_SERVER_EXIT_FATAL, DEDICATED_SERVER_EXIT_SECONDS);
+	exit(DEDICATED_SERVER_EXIT_FATAL);
 }

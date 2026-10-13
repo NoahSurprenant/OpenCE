@@ -12,7 +12,8 @@
 #
 # A release build (assertions are not checked, as in the retail game and the builds that players
 # download) without Skate 3 mode's engine: a server draws no board, and a build without --skate
-# still relays skaters' states, applies their bounds and decides their hits. No link-time or
+# still relays skaters' states, applies their bounds and decides their hits, with no Skate 3 data
+# (tools/test_linux_port.py's test_dedicated_server_skaters). No link-time or
 # profile-guided optimisation: the server sleeps most of each frame, and Debian's clang is older
 # than the profiles need.
 #

@@ -765,10 +765,35 @@ No X, Wayland or `SDL_VIDEO_DRIVER` is necessary. The server:
 - Writes its log to the standard error: players who join and leave, the
   start of each game, its end and its scores. If the data root is
   read-only, the lines of `debug.txt` go to the standard error too.
+- Checks its maps before it starts. The maps folder of the data root
+  must have `ui.map` and a map file for each map of `server.maps`. If one
+  is missing or is not a map, the server writes one line to the standard
+  error and exits with status 2, before it starts its network:
+
+  ```
+  halo-linux: server: no usable maps in /data/maps (looked for ui.map, bloodgulch.map); exiting
+  ```
+
+  The server needs only these maps: for example `ui.map` and
+  `bloodgulch.map` for the default `server.maps`.
+- Exits with status 1 after a fatal error, for example a map that it
+  cannot read, with a line `server: a fatal error (...); exiting`. A
+  player's game shows an error screen in this case; a server has nobody
+  to show it to.
 - Stops on SIGTERM or SIGINT. It ends a game that is in progress, tells
   the players that the host goes, removes its listing from the server
-  browser and exits with status 0. A second signal stops it at once.
+  browser and exits with status 0. A second signal stops it at once. If
+  the game has not stopped 5 seconds after the signal, it exits at once
+  with status 128 plus the number of the signal (143 for SIGTERM). This
+  applies to every game, not only to a server.
 - Does not use the clipboard, Discord or the self-updater.
+- Needs no Skate 3 data, and no build with `--skate`. A server built
+  without the mode still sends each skater's state to the other players,
+  holds the skaters to a board's bounds and decides their hits (refer to
+  `port/skate/README.md`, "Multiplayer"). The players who skate need the
+  mode and its data on their own machines. `test_dedicated_server_skaters`
+  in `tools/test_linux_port.py` tests this with a server built without
+  `--skate` and two skating clients.
 
 For internet play (`network.online`), it makes an invite link as other
 hosts do. If `network.host_public` is `true`, the server browser lists it

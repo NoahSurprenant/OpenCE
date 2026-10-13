@@ -393,15 +393,22 @@ jobs:
     # Skate 3 mode in a network game, two real games (a host and a client
     # skating) on one machine: tools/test_linux_port.py's
     # test_skate_multiplayer (port/skate/README.md, "Testing multiplayer"),
-    # and a dedicated server with a client joining it and SIGTERM stopping it
-    # (test_dedicated_server, port/linux/README.md's "Dedicated server"),
-    # which needs the converted Skate 3 data and the Halo maps - so on the
-    # owner's runner, opence-k8s, for the reasons skate-assets gives above,
-    # and only for this repository's own code, as skate-assets. The runner
-    # serves one job at a time, so the two take turns.
+    # a dedicated server with a client joining it and SIGTERM stopping it
+    # (test_dedicated_server, port/linux/README.md's "Dedicated server"), and
+    # a dedicated server built without --skate, as the server image is, with
+    # two skating clients (test_dedicated_server_skaters: it relays their
+    # states and decides their hits with no Skate 3 data of its own). They
+    # need the converted Skate 3 data and the Halo maps - so on the owner's
+    # runner, opence-k8s, for the reasons skate-assets gives above, and only
+    # for this repository's own code, as skate-assets. The runner serves one
+    # job at a time, so the two take turns. test_dedicated_server_without_maps
+    # (the server's refusal to start without its maps) runs here too, and in
+    # the linux job.
     #
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
-    # --skate --lto=off --pgo=off --portable), 32-bit, headless: the runner
+    # --skate --lto=off --pgo=off --portable), and the server of
+    # test_dedicated_server_skaters the image's (docker/server/Dockerfile:
+    # --release --lto=off --pgo=off --portable), 32-bit, headless: the runner
     # has no display or sound, so SDL's dummy drivers and the null renderer
     # (HALO_NULL_RENDERER, which the test sets). Not needed by release or
     # notify, as skate-assets.
@@ -452,20 +459,30 @@ jobs:
           restore-keys: skate-mp-
 
       - name: Build
-        run: python3 tools/ci_build.py linux debug
+        run: |
+          python3 tools/ci_build.py linux debug
+          cp build/linux/halo "$RUNNER_TEMP/halo-skate"
+
+      # the dedicated server as the server image builds it: no Skate 3 mode
+      - name: Build the server
+        run: |
+          python3 configure.py --release --lto=off --pgo=off --portable --compiler-launcher ccache
+          ninja linux
+          cp build/linux/halo "$RUNNER_TEMP/halo-server"
 
       # a skip fails the job too: on this runner it would mean the data or
       # the game did not reach the test. The test stops both games itself;
       # the last step makes sure.
       - name: Test
         env:
-          HALO_TEST_GAME: ${{ github.workspace }}/build/linux/halo
+          HALO_TEST_GAME: ${{ runner.temp }}/halo-skate
+          HALO_TEST_SERVER: ${{ runner.temp }}/halo-server
         run: |
           set -o pipefail
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
             tools/test_linux_port.py -k "test_skate_multiplayer or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log"
-          if ! grep -q '2 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
-            echo "::error::test_skate_multiplayer and test_dedicated_server did not both run and pass"
+          if ! grep -q '4 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
+            echo "::error::test_skate_multiplayer and the three test_dedicated_server tests did not all run and pass"
             exit 1
           fi
 
@@ -485,8 +502,8 @@ jobs:
       - name: Stop the games
         if: always()
         run: |
-          pkill -KILL -f "$GITHUB_WORKSPACE/build/linux/halo" || true
-          rm -rf "$RUNNER_TEMP/skate-mp" "$RUNNER_TEMP/skate-mp.log"
+          pkill -KILL -f "$RUNNER_TEMP/halo-" || true
+          rm -rf "$RUNNER_TEMP/skate-mp" "$RUNNER_TEMP/skate-mp.log" "$RUNNER_TEMP/halo-skate" "$RUNNER_TEMP/halo-server"
 
   release:
     # The six builds (and the Windows builds' PDBs) as a release, tagged

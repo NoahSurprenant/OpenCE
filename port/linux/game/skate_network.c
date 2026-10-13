@@ -1442,6 +1442,39 @@ static void skate_network_test_teleport(void)
 	}
 }
 
+/* debug.network_test_skate_block on a dedicated server (server.dedicated),
+which has no player of its own to step into a skater's way: the watcher is
+another machine's player on foot, the last there is, whom the host puts there
+(a joining machine's player on foot is the host's to place, as network_test.c
+stands one at a vehicle's seat). So skaters on the clients of a server hit a
+player and the server decides it (skate_authority.c) */
+static void skate_network_test_block_for_server(void)
+{
+	static int dedicated = -1;
+	short index;
+
+	if (dedicated < 0)
+		dedicated = config_boolean("server.dedicated") ? 1 : 0;
+	if (!dedicated || !skate_network_globals.block || game_connection() != _game_connection_network_server ||
+		!game_in_progress())
+	{
+		return;
+	}
+	for (index = SKATE_NETWORK_PLAYERS - 1; index >= 0; index--)
+	{
+		real_point3d position;
+		struct object_datum *object;
+		long unit_index;
+
+		if (skate_network_player_skating(index) || (unit_index = skate_network_player_unit(index)) == NONE)
+			continue;
+		object = object_get(unit_index);
+		if (skate_network_block_spot(unit_index, FALSE, &position, NULL))
+			object_set_position(unit_index, &position, &object->object.forward, &object->object.up);
+		return;
+	}
+}
+
 void skate_network_update_after_objects(void)
 {
 	boolean log = skate_network_globals.log && game_time_get() % TICKS_PER_SECOND == 0 &&
@@ -1450,6 +1483,7 @@ void skate_network_update_after_objects(void)
 
 	skate_network_test_shoot();
 	skate_network_test_teleport();
+	skate_network_test_block_for_server();
 	/* (the host's verdicts on skaters' hits: skate_authority.c) */
 	skate_authority_update();
 	if (log)

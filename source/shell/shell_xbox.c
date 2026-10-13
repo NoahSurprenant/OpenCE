@@ -104,6 +104,13 @@ shell_idle(
 int main(
 	void)
 {
+	/* port: a dedicated server without the maps it is to host exits now,
+	with status 2, before its network starts (port/linux/src/xbox_files.c) */
+	{
+		extern void platform_dedicated_maps_check(void);
+
+		platform_dedicated_maps_check();
+	}
 	fuck_code_in_the_eye();
 	rasterizer_preinitialize__fill_you_up_with_the_devils_cock();
 	physical_memory_allocate();

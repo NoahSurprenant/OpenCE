@@ -761,3 +761,186 @@ def test_dedicated_server(tmp_path):
             if process.poll() is None:
                 process.kill()
             process.wait()
+
+
+def test_dedicated_server_skaters(tmp_path):
+    """Skate 3 mode on a dedicated server built without it: the server
+    (HALO_TEST_SERVER: a Linux build without --skate, as the server image's)
+    has the Halo maps and no Skate 3 data, and two clients with the mode
+    (HALO_TEST_GAME, HALO_SKATE_TEST_ASSETS) join it. The first skates from 15
+    seconds in (debug.network_test_skate); the server steps the second, on
+    foot, into their way every five seconds (debug.network_test_skate_block on
+    a dedicated server, skate_network.c), and from 55 seconds the second
+    skates too. The server relays each skater's state to the other client,
+    which poses them with their board; it takes the skaters' places (a board's
+    bounds, refusing a stray few at most) and decides each hit
+    (skate_authority.c: the skater's report, message 92, and the verdict, 93),
+    which both clients hear alike. With a round trip of 150 ms and a tenth of
+    the datagrams lost. Skips without the builds, the data and the maps
+    (HALO_SKATE_TEST_HALO_MAPS); about two minutes."""
+    game = os.environ.get("HALO_TEST_GAME")
+    server = os.environ.get("HALO_TEST_SERVER")
+    assets = os.environ.get("HALO_SKATE_TEST_ASSETS")
+    maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
+    if not (game and server and assets and maps and Path(game).is_file() and Path(server).is_file() and
+            Path(maps, "bloodgulch.map").is_file()):
+        pytest.skip("needs HALO_TEST_GAME, HALO_TEST_SERVER, HALO_SKATE_TEST_ASSETS and HALO_SKATE_TEST_HALO_MAPS")
+    seconds = int(os.environ.get("HALO_TEST_SKATE_SECONDS", "110"))
+    addresses = {"server": "127.0.0.214", "first": "127.0.0.215", "second": "127.0.0.216"}
+    clients = {"HALO_NETWORK_TEST": "join", "HALO_FULLSCREEN": "0", "HALO_NO_AUDIO": "1", "HALO_NULL_RENDERER": "1",
+               "HALO_HIDDEN_WINDOW": "1", "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75",
+               "HALO_NETWORK_LOSS": "10", "HALO_NET_BROADCAST": addresses["server"]}
+    machines = {"server": {"HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "12",
+                           "HALO_NETWORK_TEST_SKATE_BLOCK": "1",
+                           "HALO_NET_BROADCAST": f"{addresses['first']},{addresses['second']}"},
+                "first": dict(clients, HALO_NETWORK_TEST_SKATE="15"),
+                "second": dict(clients, HALO_NETWORK_TEST_SKATE="55")}
+    games = {}
+    try:
+        for name, settings in machines.items():
+            folder = tmp_path / name
+            (folder / "data").mkdir(parents=True)
+            (folder / "saves").mkdir()
+            (folder / "data" / "maps").symlink_to(maps)
+            # (the server's environment has no Skate 3 data, nor a display)
+            env = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("HALO_", "DISPLAY", "WAYLAND")) and
+                   (name != "server" or not key.startswith("SDL_"))}
+            env.update(settings, HALO_NET_ONLINE="false", HALO_UPDATE_ANSWER="never", HALO_EXIT_AFTER=str(seconds),
+                       HALO_NET_ADDRESS=addresses[name], HALO_DATA_ROOT=str(folder / "data"),
+                       HALO_SAVE_ROOT=str(folder / "saves"))
+            with open(folder / "run.log", "w") as log:
+                games[name] = subprocess.Popen([server if name == "server" else game], cwd=folder, env=env,
+                                               stdout=log, stderr=subprocess.STDOUT)
+            time.sleep(4 if name == "server" else 2)
+        deadline = time.monotonic() + seconds + 30
+        for process in games.values():
+            try:
+                process.wait(timeout=max(1.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        for process in games.values():
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+    logs = {name: (tmp_path / name / "run.log").read_text(errors="replace") for name in machines}
+    host, first, second = logs["server"], logs["first"], logs["second"]
+    assert "server: the game starts: slayer on bloodgulch" in host, host[-4000:]
+    # (no skate engine on the server: it never loads the mode's data or steps a skater)
+    assert "halo-skate" not in host, [line for line in host.splitlines() if "halo-skate" in line][:5]
+    own = {name: set(re.findall(r"skate network: player (\d+) skates here", logs[name])) for name in ("first", "second")}
+    assert len(own["first"]) == 1 and len(own["second"]) == 1 and own["first"] != own["second"], own
+    (first_player,), (second_player,) = own["first"], own["second"]
+    remote = (r"skate network: player (\d+) skates on another machine at .*?: (posed|not posed,) \d+ nodes, "
+              r"(the board drawn|no board), .*?host took (\d+) of its places, refused (\d+)")
+    seen = {name: re.findall(remote, logs[name]) for name in machines}
+    # the server relays: it has each client's skater from their state, and
+    # takes their places
+    print(f"the server had the skaters {sorted(set(r[0] for r in seen['server']))} for {len(seen['server'])} "
+          f"skater-seconds; the first client the second's {len(seen['first'])} s, the second the first's "
+          f"{len(seen['second'])} s")
+    assert {r[0] for r in seen["server"]} == {first_player, second_player}, host[-4000:]
+    taken, refused = int(seen["server"][-1][3]), int(seen["server"][-1][4])
+    assert refused <= max(3, taken // 50), f"the server refused {refused} of the skaters' places, took {taken}"
+    # each client sees the other skate, posed with their board
+    for name, other, least in (("first", second_player, 15), ("second", first_player, 20)):
+        lines = [r for r in seen[name] if r[0] == other]
+        posed = [r for r in lines if r[1] == "posed" and r[2] == "the board drawn"]
+        assert len(lines) >= least, f"the {name} client saw the other skater {len(lines)} s:\n{logs[name][-4000:]}"
+        assert len(posed) >= 0.9 * len(lines), f"the {name} client posed them with the board {len(posed)} of {len(lines)} s"
+    # the server steps the second client's player into the first's way: the
+    # first's skater hits them, tells the server, and the server decides
+    blocks = re.findall(r"the watcher steps into the skater's way at", host)
+    hits = re.findall(r"skate hit \d+: this machine's skater \(player \d+\) hit a person on foot", first)
+    decided = dict((int(n), text) for n, text in re.findall(r"skate verdict (\d+) decided: (.*)", host))
+    heard = {name: dict((int(n), text) for n, text in re.findall(r"skate verdict (\d+) heard: (.*)", logs[name]))
+             for name in ("first", "second")}
+    print(f"{len(blocks)} blocks; {len(hits)} hits told; verdicts decided {decided}; heard {heard}")
+    assert len(blocks) >= 2, f"the server stepped the player in {len(blocks)} times:\n{host[-4000:]}"
+    assert hits, f"the skater never hit the player on foot:\n{first[-4000:]}"
+    assert any("on foot" in text for text in decided.values()), f"no hit decided by the server: {decided}"
+    for name in ("first", "second"):
+        missing = [n for n in decided if n not in heard[name] and n != max(decided)]
+        assert not missing, f"the {name} client never heard verdicts {missing}: {decided}, {heard[name]}"
+        assert all(heard[name][n] == decided.get(n) for n in heard[name]), f"verdicts differ: {decided}, {heard}"
+
+
+def test_dedicated_server_without_maps(tmp_path):
+    """A dedicated server whose data root lacks the maps it is to host (no maps
+    folder, an empty one, one with ui.map but not the map of its list, a file
+    that is no map) exits at once with status 2 and one line saying which maps
+    and where (port/linux/src/xbox_files.c), before the game or its network
+    starts: its tunnel port is never bound and no debug.txt is written. Before,
+    it stopped on the damaged disc screen nobody sees, its port bound, deaf to
+    SIGTERM. Needs only a Linux build (HALO_TEST_GAME, else build/linux/halo),
+    no game data; a second or two."""
+    game = os.environ.get("HALO_TEST_GAME") or "build/linux/halo"
+    if not Path(game).is_file():
+        pytest.skip("needs a Linux build (HALO_TEST_GAME, or ninja linux's build/linux/halo)")
+    game = str(Path(game).resolve())
+    # (a map's header and no more: what the check reads, signatures and the
+    # Xbox caches' version, 5)
+    header = bytearray(0x800)
+    header[0:4], header[4:8], header[0x7FC:0x800] = b"daeh", (5).to_bytes(4, "little"), b"toof"
+    cases = {
+        "no maps folder": ({}, "no usable maps in {root}/maps (looked for ui.map, bloodgulch.map); exiting", ""),
+        "an empty maps folder": ({"maps": None}, "no usable maps in {root}/maps (looked for ui.map, bloodgulch.map); "
+                                 "exiting", ""),
+        "a map of the list missing": ({"maps/UI.MAP": bytes(header)}, "maps missing or unusable in {root}/maps: "
+                                      "Hangemhigh.map (missing); exiting", "bloodgulch, Hangemhigh:ctf"),
+        "no map": ({"maps/ui.map": bytes(header), "maps/bloodgulch.map": b"not a map" * 300},
+                   "maps missing or unusable in {root}/maps: bloodgulch.map (not a map); exiting", ""),
+    }
+    # (a port no other test uses, which the server binds as soon as its
+    # network starts: internet play is on)
+    port = 27315
+    for index, (name, (files, expected, maps)) in enumerate(cases.items()):
+        root = tmp_path / f"data{index}"
+        root.mkdir()
+        if files == {"maps": None}:
+            (root / "maps").mkdir()
+        for relative, content in files.items():
+            if content is not None:
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_bytes(content)
+        if maps:
+            (root / "maps" / "bloodgulch.map").write_bytes(bytes(header))
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
+        env.update(HALO_DEDICATED="1", HALO_DATA_ROOT=str(root), HALO_SAVE_ROOT=str(tmp_path / f"saves{index}"),
+                   HALO_NET_ONLINE="true", HALO_NET_TUNNEL_PORT=str(port), HALO_UPDATE_ANSWER="never")
+        if maps:
+            env["HALO_SERVER_MAPS"] = maps
+        # (in a folder of its own: config.toml is written beside the
+        # executable, or in the current folder when that cannot be)
+        folder = tmp_path / f"run{index}"
+        folder.mkdir()
+        started = time.monotonic()
+        process = subprocess.Popen([game], cwd=folder, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True)
+        bound = False
+        try:
+            # its port watched for as long as it runs
+            while process.poll() is None and time.monotonic() - started < 10:
+                for table in ("udp", "udp6"):
+                    try:
+                        text = Path(f"/proc/{process.pid}/net/{table}").read_text()
+                    except OSError:
+                        text = ""
+                    bound = bound or f":{port:04X} " in text
+                time.sleep(0.005)
+            status = process.wait(timeout=5)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        seconds = time.monotonic() - started
+        stderr = process.stderr.read()
+        print(f"{name}: status {status} after {seconds:.2f} s: {stderr.strip().splitlines()[-1:]}")
+        assert status == 2, f"{name}: status {status}:\n{stderr[-3000:]}"
+        assert seconds < 5, f"{name}: took {seconds:.1f} s"
+        assert f"halo-linux: server: {expected.format(root=root)}\n" in stderr, f"{name}:\n{stderr[-3000:]}"
+        assert not bound, f"{name}: the tunnel port was bound"
+        assert "Internet play" not in stderr, f"{name}: the network started:\n{stderr[-3000:]}"
+        assert not (root / "debug.txt").exists(), f"{name}: the game started (it wrote debug.txt)"

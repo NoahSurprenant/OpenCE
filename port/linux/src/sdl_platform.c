@@ -107,8 +107,25 @@ void updater_poll(SDL_Window *window);
 
 /* SIGTERM or SIGINT arrived (a service manager stopping a server, Ctrl+C at
 its terminal): the game quits at its next frame, telling the players first
-(port/linux/game/dedicated_server.c), and a second one quits at once */
+(port/linux/game/dedicated_server.c), and a second one quits at once. So
+does the deadline: a game that has not gone PLATFORM_QUIT_SECONDS later (one
+stopped where no frame hears the signal, on an error screen nobody sees) is
+ended with 128 and the signal's number, before a container's runtime gives up
+on it and kills it (docker stop: 10 seconds) */
 static volatile sig_atomic_t platform_quit_signal;
+
+#define PLATFORM_QUIT_SECONDS 5
+
+/* the status the game ends with when its deadline passes (platform_exit_deadline) */
+static volatile sig_atomic_t platform_deadline_status = EXIT_FAILURE;
+
+#if !defined(_WIN32) && !defined(HALO_ANDROID)
+static void platform_deadline_passed(int signal_number)
+{
+	(void)signal_number;
+	_exit(platform_deadline_status);
+}
+#endif
 
 #ifndef HALO_ANDROID
 static void platform_quit_signalled(int signal_number)
@@ -116,8 +133,30 @@ static void platform_quit_signalled(int signal_number)
 	if (platform_quit_signal)
 		_exit(128 + signal_number);
 	platform_quit_signal = signal_number;
+#ifndef _WIN32
+	platform_deadline_status = 128 + signal_number;
+	alarm(PLATFORM_QUIT_SECONDS);
+#endif
 }
 #endif
+
+/* the game ends with status in seconds, at once, unless it has gone by then:
+for an exit that may never finish (a dedicated server's, after a fatal error
+or a signal, whose exit hooks may wait on a lock the error left held); 0
+seconds ends it now. Only that on Windows and Android, which have no alarm */
+void platform_exit_deadline(int status, unsigned seconds)
+{
+	if (!seconds)
+		_exit(status);
+#if !defined(_WIN32) && !defined(HALO_ANDROID)
+	platform_deadline_status = status;
+	signal(SIGALRM, platform_deadline_passed);
+	alarm(seconds);
+#else
+	(void)status;
+	(void)seconds;
+#endif
+}
 
 static void platform_quit_signals_install(void)
 {
@@ -129,6 +168,9 @@ static void platform_quit_signals_install(void)
 	installed = TRUE;
 	/* (before SDL_Init, which then leaves them: SDL's own would only push
 	a quit event that a game without a window never reads) */
+#ifndef _WIN32
+	signal(SIGALRM, platform_deadline_passed);
+#endif
 	signal(SIGTERM, platform_quit_signalled);
 	signal(SIGINT, platform_quit_signalled);
 #endif
