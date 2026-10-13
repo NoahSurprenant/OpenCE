@@ -139,6 +139,9 @@ try {
       HALO_SAVE_ROOT: path.join(work, 'server', 'saves'), HALO_NET_BROKERS_FILE: path.join(work, 'brokers.txt'),
       HALO_NET_TUNNEL_PORT: String(tunnelPort), HALO_NET_PUBLIC_ADDRESS: expectedPath,
       HALO_NET_HOST_PUBLIC: 'false', HALO_NET_ALLOW_UPNP: 'false', HALO_DISCORD_APPLICATION: '',
+      // (no STUN: the browser joins through the forward, on this machine, and
+      // the machine's internet address would only end up in the log)
+      HALO_NET_STUN: '',
       HALO_UPDATE_ANSWER: 'never', HALO_EXIT_AFTER: '600',
     });
     const server = spawn(halo, [], { cwd: path.join(work, 'server'), env });

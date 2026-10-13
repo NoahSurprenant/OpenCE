@@ -539,6 +539,77 @@ jobs:
           pkill -KILL -f "$RUNNER_TEMP/halo-" || true
           rm -rf "$RUNNER_TEMP/skate-mp" "$RUNNER_TEMP/skate-mp.log" "$RUNNER_TEMP/halo-skate" "$RUNNER_TEMP/halo-server"
 
+  web-dedicated:
+    # A browser joining the dedicated server by its invite
+    # (port/web/tests/dedicated.mjs; port/linux/README.md, "Dedicated
+    # server"): the server as the server image builds it (invite-only), a
+    # local MQTT broker, and the web job's site in a headless Chromium, which
+    # imports ui.map and bloodgulch.map and joins the server over WebRTC
+    # through a UDP forward that stands in for a router's port forward
+    # (network.public_address). The server must log the player joining and
+    # its WebRTC connection, the browser its player each second, and the
+    # browser's chosen ICE path must be the forward. Everything runs on the
+    # runner, on its loopback and its own address; the test's server asks no
+    # STUN server. It needs the Halo maps, so on the owner's runner,
+    # opence-k8s, for the reasons skate-assets gives above and with its
+    # conditions. The runner's image has Node, Playwright 1.58 with its
+    # Chromium headless shell, and mosquitto. After web, whose site it tests;
+    # not needed by release or notify, as skate-assets. About two minutes:
+    # the server builds in about 30 seconds and the test takes about 30.
+    needs: web
+    if: >-
+      github.repository == 'NoahSurprenant/OpenCE' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: opence-k8s
+    timeout-minutes: 15
+    env:
+      HALO_MAPS: /skate-assets/halo/maps
+    steps:
+      # the test needs all of these; on this runner a missing one is a
+      # broken runner, not a reason to skip
+      - name: Halo maps, Node, Playwright and mosquitto
+        run: |
+          for map in ui.map bloodgulch.map; do
+            if [ ! -f "$HALO_MAPS/$map" ]; then
+              echo "::error::no $map at $HALO_MAPS (the runner's /skate-assets mount is missing or empty)"
+              exit 1
+            fi
+          done
+          node --version
+          node -e "require('playwright')" || { echo "::error::the runner's Node has no Playwright"; exit 1; }
+          command -v mosquitto || { echo "::error::the runner has no mosquitto"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: halo-web-release
+          path: ${{ runner.temp }}/halo-web-release
+
+      # (not --portable, as skate-multiplayer builds it)
+      - name: Build the server
+        run: |
+          python3 configure.py --release --lto=off --pgo=off
+          ninja linux
+
+      - name: Test
+        run: |
+          set -o pipefail
+          node port/web/tests/dedicated.mjs "$RUNNER_TEMP/halo-web-release" "$HALO_MAPS" build/linux/halo 2>&1 |
+            tee "$RUNNER_TEMP/web-dedicated.log"
+          if ! grep -q '^a browser on the dedicated server: ok$' "$RUNNER_TEMP/web-dedicated.log"; then
+            echo "::error::the browser did not join and play on the dedicated server"
+            exit 1
+          fi
+
+      - name: Stop the server
+        if: always()
+        run: |
+          pkill -KILL -f "$GITHUB_WORKSPACE/build/linux/halo" || true
+          pkill -KILL -x mosquitto || true
+          rm -f "$RUNNER_TEMP/web-dedicated.log"
+
   web:
     # Emscripten (emsdk, the version below, cached) builds the web port's
     # site (port/web/README.md); the tests check its graph, the page's

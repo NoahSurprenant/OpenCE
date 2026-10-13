@@ -1076,8 +1076,16 @@ about 30 seconds:
 node port/web/tests/dedicated.mjs build/web/site /path/to/halo/maps build/linux/halo
 ```
 
-CI does not run this test: only the `opence-k8s` runner has the maps, and
-it has no Chromium or mosquitto. If `HALO_WEBJOIN_INVITE` has the 64 digits
+CI runs this test in the `web-dedicated` job of
+[.github/workflows/build.yml](../../.github/workflows/build.yml), after the
+`web` job, with the release site of that job and a server built as the
+server image builds it. The job runs on the `opence-k8s` runner, because only
+that runner has the maps; its image has Node.js, Playwright 1.58 with its
+Chromium headless shell, and mosquitto. Everything stays on the runner: the
+broker listens on loopback, the forward on the runner's own address, and the
+server of the test asks no STUN server (`HALO_NET_STUN` is empty).
+
+If `HALO_WEBJOIN_INVITE` has the 64 digits
 of a server that runs, the test starts only the browser and joins that
 server, for example a server container behind a NAT (the header of the
 script gives the details).
