@@ -62,6 +62,18 @@ SITE_FONTS = ["OpenCE-Regular.ttf", "Overpass-750.ttf"]
 # (port/web/src/web_memory_watch.c)
 WATCH_HASH = ANDROID_DIR / "host" / "host_watch_hash.c"
 
+# Skate 3 mode (configure.py --skate, port/skate): the skate engine, a Rust
+# static library, for Emscripten's target. The game's threads share one
+# WebAssembly memory, so the engine must be compiled with atomics, and Rust's
+# standard library with it: stable Rust's prebuilt one for the target has
+# none (and links into no -pthread program), so a pinned nightly builds it
+# from its source (-Zbuild-std, the rust-src component), with panics
+# aborting (Rust's unwinding does not build for the target with atomics). No
+# debug information: with it the library is 190 MB.
+SKATE_DIR = Path("port/skate")
+SKATE_WEB_TARGET = "wasm32-unknown-emscripten"
+SKATE_WEB_TOOLCHAIN = "nightly-2026-10-01"
+
 # The Xbox window (port/linux/src/platform.h) is the top 128 MB of the
 # WebAssembly memory, 0x80000000 to 0x88000000; the C heap has everything
 # below it (port/web/src/web_main.c).
@@ -208,7 +220,8 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     )
     n.build(outputs=sdl_stamp, implicit_outputs=[sdl_license], rule="web_sdl3", implicit=[SDL_PORT])
 
-    abi = " ".join(WEB_ABI_FLAGS + configuration_defines(sln))
+    abi = " ".join(WEB_ABI_FLAGS + configuration_defines(sln)
+                   + (["-DHALO_SKATE"] if getattr(sln, "port_skate", False) else []))
     code = " ".join(WEB_CODE_FLAGS)
     implicit_headers = [*xdk_headers(), prefix_header, semantics_header, platform_semantics_header, sdl_stamp]
     objects: List[Path] = []
@@ -285,6 +298,35 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     for source in musl_math_sources():
         add_object(source, musl_math_cflags(abi))
 
+    # ---------- Skate 3 mode (configure.py --skate): the skate engine
+
+    skate_inputs: List[Path] = []
+    if getattr(sln, "port_skate", False):
+        toolchain = getattr(sln, "web_rust_toolchain", None) or SKATE_WEB_TOOLCHAIN
+        skate_target_dir = build_dir / "skate"
+        skate_library = skate_target_dir / SKATE_WEB_TARGET / "release" / "libhalo_skate.a"
+        # (the C the engine's crates build, zstd and blake3, with emcc and
+        # -pthread as the game's; the target's rustflags, atomics and
+        # panic=abort, are in port/skate/.cargo/config.toml; a target folder
+        # of its own, as the nightly's builds are not stable Rust's)
+        cc_variable = SKATE_WEB_TARGET.replace("-", "_")
+        n.rule(
+            name="web_cargo",
+            command=(f"env CC_{cc_variable}=$web_emcc AR_{cc_variable}={_quote(Path(emcc).with_name('emar'))} "
+                     f"CFLAGS_{cc_variable}=-pthread "
+                     f"cargo +{toolchain} build --release --manifest-path {SKATE_DIR / 'Cargo.toml'} "
+                     f"--config {SKATE_DIR / '.cargo' / 'config.toml'} --config profile.release.debug=0 "
+                     f"--target {SKATE_WEB_TARGET} --target-dir {skate_target_dir} -p halo-skate "
+                     f"-Zbuild-std=std,panic_abort"),
+            description="WEB CARGO $out",
+            pool="console",
+            # (cargo leaves an up-to-date library alone)
+            restat=True,
+        )
+        n.build(outputs="web_skate_always", rule="phony")
+        n.build(outputs=skate_library, rule="web_cargo", implicit=["web_skate_always"])
+        skate_inputs.append(skate_library)
+
     # ---------- the link
 
     library_js = PORT_DIR / "src" / "web_library.js"
@@ -336,7 +378,7 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         rspfile="$out.rsp",
         rspfile_content="$in_newline",
     )
-    n.build(outputs=halo_js, implicit_outputs=[halo_wasm], rule="web_link", inputs=objects,
+    n.build(outputs=halo_js, implicit_outputs=[halo_wasm], rule="web_link", inputs=[*objects, *skate_inputs],
             implicit=[library_js, pre_js, SDL_PORT, sdl_stamp], variables={"ldflags": " ".join(link_flags)})
 
     # ---------- the site: the page, its service worker and the importer
@@ -361,7 +403,8 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     site_files.append(licenses)
     n.rule(
         name="web_version",
-        command=f"$python {PORT_DIR}/stamp_version.py --flavor {'release' if release else 'debug'} $out $in",
+        command=f"$python {PORT_DIR}/stamp_version.py --flavor {'release' if release else 'debug'}"
+                f"{' --skate' if getattr(sln, 'port_skate', False) else ''} $out $in",
         description="WEB VERSION $out",
     )
     version_file = site_dir / "version.json"

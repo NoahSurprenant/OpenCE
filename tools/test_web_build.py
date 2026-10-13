@@ -33,12 +33,12 @@ def in_the_repository(monkeypatch):
     monkeypatch.chdir(ROOT)
 
 
-def graph(release=False, emcc="/opt/emsdk/upstream/emscripten/emcc"):
-    """build.ninja's web part, as configure.py writes it, its long lines
-    joined again"""
+def graph(release=False, emcc="/opt/emsdk/upstream/emscripten/emcc", skate=False):
+    """build.ninja's web part, as configure.py writes it (with --skate:
+    skate), its long lines joined again"""
     out = io.StringIO()
     sln = SimpleNamespace(build_dir=Path("build"), web_emcc=emcc, port_release=release, port_profile=False,
-                          compiler_launcher=None)
+                          compiler_launcher=None, port_skate=skate)
     web_build.generate_web_build(ninja_syntax.Writer(out), sln)
     return re.sub(r" \$\n +", " ", out.getvalue())
 
@@ -154,6 +154,41 @@ def test_version_json_names_the_build_and_its_files(tmp_path, monkeypatch):
     (site / "halo.js").write_text("js changed")
     again = stamp_version.stamp(site / "version.json", [site / "halo.js", site / "icons" / "icon.png"], "release")
     assert again["version"] != written["version"]
+    assert again["skate"] is False
+    with_skate = stamp_version.stamp(site / "version.json", [site / "halo.js"], "release", skate=True)
+    assert with_skate["skate"] is True
+
+
+def test_skate_mode_builds_the_engine_with_the_pinned_nightly():
+    """--skate: the skate engine for Emscripten's target, with the nightly
+    tools/web_build.py pins building Rust's standard library with atomics,
+    linked, and HALO_SKATE on; without it, none of that"""
+    assert re.fullmatch(r"nightly-\d{4}-\d{2}-\d{2}", web_build.SKATE_WEB_TOOLCHAIN)
+    text = graph(skate=True)
+    cargo = re.search(r"^rule web_cargo\n  command = ([^\n]*)", text, re.M).group(1)
+    for part in (f"cargo +{web_build.SKATE_WEB_TOOLCHAIN} build --release", "--target wasm32-unknown-emscripten",
+                 "-Zbuild-std=std,panic_abort", "--config profile.release.debug=0", "-p halo-skate",
+                 "CFLAGS_wasm32_unknown_emscripten=-pthread", "--target-dir build/web/skate",
+                 "--config port/skate/.cargo/config.toml"):
+        assert part in cargo, part
+    library = "build/web/skate/wasm32-unknown-emscripten/release/libhalo_skate.a"
+    assert re.search(r"^build " + re.escape(library) + r": web_cargo", text, re.M)
+    link = re.search(r"^build build/web/site/halo\.js[^\n]*: web_link ([^\n]*)", text, re.M).group(1)
+    assert library in link.split()
+    for source in ("source/main/main.c", "port/linux/game/skate.c", "port/linux/src/d3d8_gl.c", "port/web/src/web_main.c"):
+        assert "-DHALO_SKATE" in compile_flags(text, source).split(), source
+    assert re.search(r"stamp_version\.py --flavor debug --skate ", text)
+    # (the target's rustflags, which -Zbuild-std's standard library is built with too)
+    config = (ROOT / "port/skate/.cargo/config.toml").read_text()
+    section = re.search(r"\[target\.wasm32-unknown-emscripten\]\nrustflags = \[([^\]]*)\]", config).group(1)
+    assert '"panic=abort"' in section and "+atomics" in section and "+bulk-memory" in section
+    plain = graph()
+    assert "web_cargo" not in plain and "-DHALO_SKATE" not in plain and "--skate" not in plain
+    # the game looks for the skate data where the page's importer puts it
+    main = (ROOT / "port/web/src/web_main.c").read_text()
+    assert 'set_default("HALO_SKATE_ASSETS", "/data/skate-data/assets");' in main
+    worker = (ROOT / "port/web/site/xiso-worker.js").read_text()
+    assert "const SKATE_DIRECTORY = 'skate-data';" in worker
 
 
 def test_licenses_txt_has_every_notice():

@@ -610,9 +610,86 @@ jobs:
           pkill -KILL -x mosquitto || true
           rm -f "$RUNNER_TEMP/web-dedicated.log"
 
+  web-skate:
+    # Skate 3 mode in a browser (port/web/tests/skate.mjs; port/skate/README.md,
+    # "In a browser"): the web job's site in a headless Chromium imports the
+    # owner's Halo maps (ui.map and bloodgulch.map) and converted Skate 3
+    # data through the page's two importers, into the browser's throwaway
+    # profile, and hosts a game on Blood Gulch alone; J gets on the board and
+    # both sticks clicked in on a stand-in controller (the Gamepad API) get
+    # off. The game's log must show the skater preloaded from the imported
+    # data, the level sent to the engine with its rails, the pose finite and
+    # the board drawn each second (debug.skate_status), and sounds from the
+    # imported folder. Then again without skate data, where J must say there
+    # is none and the game play on. It needs the maps and the data, so on the
+    # owner's runner, opence-k8s, for the reasons skate-assets gives above and
+    # with its conditions; nothing of them leaves it (no screenshots, no
+    # artifacts; the game is offline: debug.network_test hosts system link,
+    # network.online off). After web, whose site it tests; not needed by
+    # release or notify, as skate-assets. About four minutes, most of it the
+    # import and the skater's preload in Chromium's software renderer.
+    needs: web
+    if: >-
+      github.repository == 'NoahSurprenant/OpenCE' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: opence-k8s
+    timeout-minutes: 20
+    env:
+      HALO_MAPS: /skate-assets/halo/maps
+      SKATE_DATA: /skate-assets/skate-data
+    steps:
+      # the test needs all of these; on this runner a missing one is a
+      # broken runner, not a reason to skip
+      - name: Halo maps, Skate 3 data, Node and Playwright
+        run: |
+          for map in ui.map bloodgulch.map; do
+            if [ ! -f "$HALO_MAPS/$map" ]; then
+              echo "::error::no $map at $HALO_MAPS (the runner's /skate-assets mount is missing or empty)"
+              exit 1
+            fi
+          done
+          for file in assets/board.json sounds; do
+            if [ ! -e "$SKATE_DATA/$file" ]; then
+              echo "::error::no $file in $SKATE_DATA (the runner's /skate-assets mount is missing or empty)"
+              exit 1
+            fi
+          done
+          node --version
+          node -e "require('playwright')" || { echo "::error::the runner's Node has no Playwright"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: halo-web-release
+          path: ${{ runner.temp }}/halo-web-release
+
+      - name: Test
+        run: |
+          set -o pipefail
+          node port/web/tests/skate.mjs "$RUNNER_TEMP/halo-web-release" "$HALO_MAPS" "$SKATE_DATA" 2>&1 |
+            tee "$RUNNER_TEMP/web-skate.log"
+          if ! grep -q '^skate in a browser: ok$' "$RUNNER_TEMP/web-skate.log"; then
+            echo "::error::Skate 3 mode did not work in the browser"
+            exit 1
+          fi
+          node port/web/tests/skate.mjs "$RUNNER_TEMP/halo-web-release" "$HALO_MAPS" none 2>&1 |
+            tee "$RUNNER_TEMP/web-skate.log"
+          if ! grep -q '^skate in a browser without skate data: ok$' "$RUNNER_TEMP/web-skate.log"; then
+            echo "::error::without skate data, J in the browser did not say so, or the game did not play on"
+            exit 1
+          fi
+
+      - name: Clean up
+        if: always()
+        run: rm -f "$RUNNER_TEMP/web-skate.log"
+
   web:
     # Emscripten (emsdk, the version below, cached) builds the web port's
-    # site (port/web/README.md); the tests check its graph, the page's
+    # site (port/web/README.md), with Skate 3 mode (its engine with the
+    # pinned nightly Rust, below; the site holds no skate data, which each
+    # player imports, nor game data); the tests check its graph, the page's
     # importer and service worker, its sockets, that it starts in a
     # headless Chromium (with no game data, as far as the menus' map), and
     # that two browsers join a room through a local MQTT broker.
@@ -638,6 +715,31 @@ jobs:
           ~/emsdk/emsdk activate "$EMSDK_VERSION"
           sudo apt-get update -q
           sudo apt-get install -y -q ninja-build ccache python3-pytest mosquitto
+
+      # Skate 3 mode (configure.py --skate, which tools/ci_build.py gives the
+      # web build): its engine needs the nightly Rust tools/web_build.py pins,
+      # with its standard library's source, which it builds for Emscripten's
+      # target with atomics (port/web/README.md, "Building"). The nightly, the
+      # crates and the engine's build are cached; a change to port/skate
+      # starts from the last cache and rebuilds what changed.
+      - name: The skate engine's Rust
+        run: |
+          toolchain=$(python3 -c "from tools.web_build import SKATE_WEB_TOOLCHAIN; print(SKATE_WEB_TOOLCHAIN)")
+          echo "SKATE_WEB_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains/${{ env.SKATE_WEB_TOOLCHAIN }}-x86_64-unknown-linux-gnu
+            ~/.rustup/update-hashes/${{ env.SKATE_WEB_TOOLCHAIN }}-x86_64-unknown-linux-gnu
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            build/web/skate
+          key: web-skate-${{ env.SKATE_WEB_TOOLCHAIN }}-${{ hashFiles('port/skate/Cargo.lock', 'port/skate/.cargo/config.toml', 'port/skate/**/Cargo.toml', 'port/skate/**/*.rs') }}
+          restore-keys: web-skate-${{ env.SKATE_WEB_TOOLCHAIN }}-
+
+      - name: Install the skate engine's Rust
+        run: rustup toolchain install "$SKATE_WEB_TOOLCHAIN" --profile minimal --component rust-src
 
       - uses: actions/cache@v4
         with:

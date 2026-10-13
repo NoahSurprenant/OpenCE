@@ -587,6 +587,11 @@ static const struct config_setting config_settings[] =
 		"of scenery nearest its player and makes it again four seconds later, for\n"
 		"Skate 3 mode's level to be built again each time (port/skate/README.md); 0\n"
 		"never." },
+	{ "debug.skate_status", _config_real, "0.0", "HALO_SKATE_STATUS", _environment_value, _platform_all,
+		"Every this many seconds while skating, a line in the log of Skate 3 mode's\n"
+		"state: the skater's place, speed and state, whether its pose is finite, and\n"
+		"how many times the board was drawn (the web build's skate test; a build with\n"
+		"Skate 3 mode); 0 never." },
 	{ "debug.network_test_public", _config_boolean, "false", "HALO_NETWORK_TEST_PUBLIC", _environment_value,
 		_platform_all,
 		"The network test's host lists its game in the server browser, as Create\n"

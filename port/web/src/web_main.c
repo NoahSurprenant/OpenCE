@@ -103,6 +103,12 @@ int main(int argc, char **argv)
 	/* (Custom Edition maps' window would be the C heap's here:
 	port/linux/src/xbox_memory.c) */
 	set_default("HALO_CUSTOM_EDITION", "false");
+#ifdef HALO_SKATE
+	/* Skate 3 mode's converted data, which the page's second importer copies
+	beside the maps (app.js; its sounds, skate-data/sounds, are found beside
+	it: port/skate/README.md) */
+	set_default("HALO_SKATE_ASSETS", "/data/skate-data/assets");
+#endif
 	/* (an invite link among them is joined: port/linux/src/p2p.c) */
 	web_net_arguments(argc, argv);
 	web_js_post(0, "starting");

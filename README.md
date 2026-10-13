@@ -1,3 +1,5 @@
+| `--skate` | Skate 3 mode, in the Linux, Windows and web builds. Refer to [port/skate/README.md](port/skate/README.md#build). |
+| `--web-rust-toolchain NAME` | The Rust toolchain that builds the web build's skate engine with `--skate` (else the pinned nightly: [port/web/README.md](port/web/README.md#skate-3-mode-1)). |
 # Halo: Combat Evolved for Linux, Windows, Android and the web
 
 [![Join our Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
@@ -28,7 +30,7 @@ builds of the latest release:
 | Linux | [halo-linux-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-linux-release.zip) | [halo-linux-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-linux-debug.zip) |
 | Windows | [halo-windows-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-windows-release.zip) | [halo-windows-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-windows-debug.zip) |
 | Android | [halo-android-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-android-release.zip) | [halo-android-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-android-debug.zip) |
-| Web | Play at [noahsurprenant.github.io/OpenCE](https://noahsurprenant.github.io/OpenCE/), or [halo-web-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-web-release.zip) for your own server (no Skate 3 mode; upstream's [halocombatevolved.com](https://halocombatevolved.com/) plays upstream's build) | [halo-web-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-web-debug.zip) |
+| Web | Play at [noahsurprenant.github.io/OpenCE](https://noahsurprenant.github.io/OpenCE/), or [halo-web-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-web-release.zip) for your own server (with Skate 3 mode: import your own converted Skate 3 data on the page; upstream's [halocombatevolved.com](https://halocombatevolved.com/) plays upstream's build) | [halo-web-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-web-debug.zip) |
 
 Use the release build to play. The debug build stops at the first failed
 assertion and writes it to the log. Use the debug build to find and report
@@ -66,7 +68,7 @@ storage for the site; nothing is uploaded. Refer to
 
 ## Skate 3 mode
 
-Skating works in the Linux and Windows builds. It needs Skate 3's data,
+Skating works in the Linux, Windows and web builds. It needs Skate 3's data,
 converted once from your own copy of the game. None of Skate 3 is included
 here. Set it up after the game itself runs (see [Game data](#game-data)).
 
@@ -125,6 +127,12 @@ Double-clicking `halo.exe` does this; on Linux, `cd` to the folder first. To
 keep the data somewhere else, set `HALO_SKATE_ASSETS` to its `assets`
 folder.
 
+In a browser, under **Skate 3 data** on the page, choose **Choose a
+skate-data folder…** and select the `skate-data` folder: the page copies its
+`assets` (and `sounds`, if you extracted Skate 3's sounds) into the
+browser's storage for the site. Nothing is uploaded. Refer to
+[port/web/README.md](port/web/README.md#skate-3-mode).
+
 Load any level and press **J**. The first time on a level, the game loads
 the skater and the level's collision before Chief gets on the board, which
 can take a moment. The console (the backquote key) shows `skate: on`, or why
@@ -155,7 +163,8 @@ Skate 3 mode is new and has barely been played.
   objects are passed through.
 - In multiplayer, other players see Chief in Halo's own animation, and a
   host holds a skating client back to about twice running speed.
-- Android builds do not skate.
+- Android builds do not skate. In a browser, the skater takes longer to
+  load (WebAssembly).
 
 How it works, and how to build it: [port/skate/README.md](port/skate/README.md).
 Builds with Skate 3 mode are GPL-3.0 as a whole, because the skate engine

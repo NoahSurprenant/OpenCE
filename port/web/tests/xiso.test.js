@@ -168,3 +168,45 @@ test('a maps folder chosen as files is checked as an image is', async () => {
   assert.deepStrictEqual(result.map((file) => file.name).sort(), ['a10.map', 'bloodgulch.map', 'loading.tga', 'ui.map']);
   await assert.rejects(xiso.folderFiles(files.filter((file) => file.name !== 'ui.map')), /no ui\.map/);
 });
+
+// Skate 3 mode's data: the skate-data folder (or one above it), its assets/
+// and sounds/ copied under skate-data/, nothing else and nothing hidden
+const skateItem = (relative, size = 4) => ({ path: relative, file: new File([new Uint8Array(size)], relative.split('/').pop()) });
+
+test("a skate-data folder's assets and sounds are copied, nothing else", () => {
+  const list = [
+    'skate-data/conversion.log', 'skate-data/assets/board.json', 'skate-data/assets/rig.json',
+    'skate-data/assets/private/stock/data/config/input.cfg', 'skate-data/sounds/land.wav',
+    'skate-data/sounds/.DS_Store', 'skate-data/other/thing.bin',
+  ].map((relative) => skateItem(relative));
+  const files = xiso.skateFiles(list);
+  assert.deepStrictEqual(files.map((file) => file.parts.join('/')).sort(), [
+    'assets/board.json', 'assets/private/stock/data/config/input.cfg', 'assets/rig.json', 'sounds/land.wav',
+  ]);
+  assert.strictEqual(files.find((file) => file.name === 'input.cfg').size, 4);
+});
+
+test('the assets folder itself, or a folder above skate-data, is taken too', () => {
+  assert.deepStrictEqual(xiso.skateFiles([skateItem('assets/board.json'), skateItem('assets/rig.json')])
+    .map((file) => file.parts.join('/')).sort(), ['assets/board.json', 'assets/rig.json']);
+  assert.deepStrictEqual(xiso.skateFiles([skateItem('games/skate-data/assets/board.json'),
+    skateItem('games/skate-data/sounds/pop.wav')]).map((file) => file.parts.join('/')).sort(),
+  ['assets/board.json', 'sounds/pop.wav']);
+});
+
+test('a folder without assets/board.json is not skate data', () => {
+  assert.throws(() => xiso.skateFiles([skateItem('maps/ui.map'), skateItem('maps/board.json')]), /assets\/board\.json/);
+  assert.throws(() => xiso.skateFiles([]), /assets\/board\.json/);
+});
+
+test('skate data names with paths or hidden files are not copied', () => {
+  assert.ok(xiso.skateName('board.json'));
+  assert.ok(xiso.skateName('Skater Hat 01.rx2'));
+  assert.ok(!xiso.skateName('.complete'));
+  assert.ok(!xiso.skateName('..'));
+  assert.ok(!xiso.skateName('a\\b'));
+  assert.ok(!xiso.skateName(''));
+  const files = xiso.skateFiles([skateItem('skate-data/assets/board.json'), skateItem('skate-data/assets/../x'),
+    skateItem('skate-data/assets/.hidden/y')]);
+  assert.deepStrictEqual(files.map((file) => file.parts.join('/')), ['assets/board.json']);
+});

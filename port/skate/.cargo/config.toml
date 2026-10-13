@@ -4,3 +4,8 @@
 # so the skate engine and the C it builds (zstd, blake3) must too.
 [target.i686-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+# The web build (tools/web_build.py) shares one WebAssembly memory among the
+# game's threads: the engine and the standard library it builds from source
+# (-Zbuild-std, a nightly's) need atomics, and panics abort.
+[target.wasm32-unknown-emscripten]
+rustflags = ["-C", "panic=abort", "-C", "target-feature=+atomics,+bulk-memory"]
