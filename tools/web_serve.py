@@ -4,18 +4,24 @@
     python tools/web_serve.py                       # build/web/site, what ninja web built
     python tools/web_serve.py dist/halo-web-debug   # a build from CI or a release zip
     python tools/web_serve.py --as-github-pages     # without the isolation headers
+    python tools/web_serve.py --base /OpenCE/       # under a sub-path
 
 with the headers that make the page cross-origin isolated (which the game's
 threads need), WebAssembly's type, single byte ranges and no caching, at
 http://localhost:8000/ (a secure context, as https is). --as-github-pages
 leaves the isolation headers out, as GitHub Pages does, so that the service
-worker's (port/web/site/sw.js) is what isolates the page.
+worker's (port/web/site/sw.js) is what isolates the page. --base serves the
+site under a sub-path (http://localhost:8000/OpenCE/), as GitHub Pages serves
+a repository's site without a domain of its own
+(https://<owner>.github.io/<repository>/): the site's addresses are all
+relative, so it works at either.
 """
 
 import argparse
 import os
 import shutil
 import sys
+import urllib.parse
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +33,7 @@ COPY_BUFFER_SIZE = 1 << 20
 class SiteHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     isolate = True
+    base = "/"
 
     extensions_map = {
         **SimpleHTTPRequestHandler.extensions_map,
@@ -68,8 +75,25 @@ class SiteHandler(SimpleHTTPRequestHandler):
             raise ValueError(value)
         return start, min(end, size - 1)
 
+    def translate_path(self, path):
+        # (the site's folder is at the base: a path under it, less the base)
+        if path.startswith(self.base):
+            path = "/" + path[len(self.base):]
+        return super().translate_path(path)
+
     def send_head(self):
         self.range_remaining = None
+        url = urllib.parse.urlsplit(self.path)
+        if url.path + "/" == self.base:
+            # as GitHub Pages does: the base without its slash, to the base
+            self.send_response(HTTPStatus.MOVED_PERMANENTLY)
+            self.send_header("Location", self.base + ("?" + url.query if url.query else ""))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+        if not url.path.startswith(self.base):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return None
         range_header = self.headers.get("Range")
         path = self.translate_path(self.path)
         if not range_header or not os.path.isfile(path):
@@ -114,19 +138,23 @@ def main(argv=None) -> int:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--as-github-pages", action="store_true",
                         help="no isolation headers: the service worker isolates the page")
+    parser.add_argument("--base", default="/",
+                        help="the sub-path to serve the site under, e.g. /OpenCE/ (default: /)")
     args = parser.parse_args(argv)
+    site_base = "/".join(["", *(part for part in args.base.split("/") if part), ""]) or "/"
     root = args.root.resolve()
     if not (root / "index.html").is_file():
         parser.error(f"{root} has no index.html: run `ninja web` first, or name a site's folder")
 
     class Handler(SiteHandler):
         isolate = not args.as_github_pages
+        base = site_base
 
         def __init__(self, *handler_args, **kwargs):
             super().__init__(*handler_args, directory=str(root), **kwargs)
 
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
-    print(f"Serving {root} at http://localhost:{server.server_address[1]}/", flush=True)
+    print(f"Serving {root} at http://localhost:{server.server_address[1]}{site_base}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -2,6 +2,11 @@
 // isolation headers, which the service worker then adds):
 //
 //     node port/web/tests/smoke.mjs dist/halo-web-release
+//     node port/web/tests/smoke.mjs dist/halo-web-release --base /OpenCE/
+//
+// (--base: under a sub-path, as GitHub Pages serves a repository's site
+// without a domain of its own, https://<owner>.github.io/<repository>/; the
+// service worker's scope must then be that sub-path)
 //
 // (with Playwright installed where Node finds it: .github/workflows/build.yml).
 // It checks that the page isolates itself after one reload, that every check
@@ -19,11 +24,14 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 
-const site = path.resolve(process.argv[2] || 'build/web/site');
+const args = process.argv.slice(2);
+const baseIndex = args.indexOf('--base');
+const base = baseIndex >= 0 ? args.splice(baseIndex, 2)[1] : '/';
+const site = path.resolve(args[0] || 'build/web/site');
 const port = 8000 + Math.floor(Math.random() * 1000);
 const server = spawn('python3', [path.join(path.dirname(new URL(import.meta.url).pathname), '../../../tools/web_serve.py'),
-  site, '--port', String(port), '--as-github-pages'], { stdio: 'inherit', env: { ...process.env, WEB_SERVE_QUIET: '1' } });
-const url = `http://localhost:${port}/`;
+  site, '--port', String(port), '--as-github-pages', '--base', base], { stdio: 'inherit', env: { ...process.env, WEB_SERVE_QUIET: '1' } });
+const url = new URL(base.replace(/^\/*/, '/').replace(/\/*$/, '/'), `http://localhost:${port}`).href;
 
 function fail(message) {
   console.error('FAILED: ' + message);
@@ -44,6 +52,9 @@ try {
   await page.goto(url);
   await page.waitForFunction(() => window.crossOriginIsolated && document.querySelectorAll('#checks li').length >= 5,
     null, { timeout: 60000 });
+  const scope = await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).scope);
+  console.log('service worker: ' + scope);
+  if (scope !== url) fail(`the service worker's scope is ${scope}, not ${url}`);
   const checks = await page.$$eval('#checks li', (items) => items.map((item) => [item.className, item.textContent]));
   console.log(checks.map(([state, text]) => `${state}: ${text}`).join('\n'));
   if (checks.some(([state]) => state !== 'good')) fail('a check did not pass');
