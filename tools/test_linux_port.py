@@ -1,5 +1,6 @@
 """Tests for the native Linux build tooling (port/linux, tools/linux_*.py)."""
 
+import math
 import os
 import re
 import shutil
@@ -606,9 +607,11 @@ def test_skate_multiplayer(tmp_path):
                          r"([\d.-]+), body ([\d.-]+) to ([\d.-]+)", host)
     damaged = {who for who, s0, s1, b0, b1 in bullets if float(s1) < float(s0) or float(b1) < float(b0)}
     bounced = re.findall(r"skate test: the grenade bounced off the skater \((this|another) machine's\)", host)
-    applied = r"skate: a push of ([\d.]+) m/s on the skater applied at tick (\d+) \((on|off) the board\)"
-    pushes = [(float(speed), int(tick), board) for speed, tick, board in re.findall(applied, host)]
-    pushes_join = [(float(speed), int(tick), board) for speed, tick, board in re.findall(applied, join)]
+    applied = (r"skate: a push of ([\d.]+) m/s on the skater applied at tick (\d+) \((on|off) the board\), along "
+               r"\(([\d.-]+) ([\d.-]+) [\d.-]+\)")
+    pushes = [(float(speed), int(tick), board, (float(x), float(y))) for speed, tick, board, x, y in
+              re.findall(applied, host)]
+    pushes_join = [(float(speed), int(tick), board) for speed, tick, board, _, _ in re.findall(applied, join)]
     undone = re.findall(r"skate: a push of ([\d.]+) m/s on the skater undone", host)
     print(f"bullets {bullets}; damaged {damaged}; grenades bounced off {bounced}; pushes applied {pushes}, on the "
           f"client {pushes_join}; undone {undone}")
@@ -620,30 +623,39 @@ def test_skate_multiplayer(tmp_path):
     events = re.findall(r"skate test: (?:shooting a skater \(this machine's\) [\d.]+ world units away, a burst \(none\) "
                         r"and a grenade at tick (\d+)|the grenade went off at tick (\d+) \((after|without) bouncing off "
                         r"them\), [\d.]+ world units from the skater \(this machine's\): shield ([\d.-]+) to ([\d.-]+), "
-                        r"body ([\d.-]+) to ([\d.-]+)|after the grenade the skater \(this machine's\) .*?; ([\d.-]+) "
-                        r"world units further)", host)
+                        r"body ([\d.-]+) to ([\d.-]+)|after the grenade the skater \(this machine's\) .*?body ([\d.-]+); "
+                        r"([\d.-]+) world units further .*?along \(([\d.-]+) ([\d.-]+)\))", host)
     throws = []
-    for thrown, off, bounce, s0, s1, b0, b1, further in events:
+    for thrown, off, bounce, s0, s1, b0, b1, body, further, away_x, away_y in events:
         if thrown:
             throws.append({"thrown": int(thrown)})
         elif off and throws:
             throws[-1].update(off=int(off), bounce=bounce, hurt=(float(s1) < float(s0) or float(b1) < float(b0)) and
                               float(b1) > 0)
         elif further and throws:
-            throws[-1]["further"] = float(further)
+            throws[-1].update(further=float(further), alive=float(body) > 0, away=(float(away_x), float(away_y)))
     for throw in throws:
         throw["early"] = [p for p in pushes if throw["thrown"] <= p[1] < throw.get("off", throw["thrown"])]
         throw["blast"] = [p for p in pushes if "off" in throw and throw["off"] <= p[1] <= throw["off"] + 2]
     # (a grenade that went off on its fuse, a second and a half on, hurting
-    # the skater without killing them)
-    blown = [t for t in throws if "off" in t and 40 <= t["off"] - t["thrown"] <= 60 and t["hurt"]]
+    # the skater without killing them, who were alive still a third of a
+    # second on, when the push was measured)
+    blown = [t for t in throws if "off" in t and 40 <= t["off"] - t["thrown"] <= 60 and t["hurt"] and t.get("alive")]
     print(f"grenades at the host's own skater: {throws}")
     assert throws, f"no grenade was thrown at the host's own skater:\n{host[-4000:]}"
     assert not any(t["early"] for t in throws), f"a grenade pushed the skater before it went off: {throws}"
     assert blown, f"no grenade went off at the host's own skater, hurting them: {throws}"
+    # (each pushed them once, away from the blast: level, within 45 degrees
+    # of the way from the grenade to them; and one, at least, moved them
+    # measurably further from it than their course. Not every one: a skater
+    # left on Blood Gulch's teleporter exit by the teleport test can stand
+    # unmoved by a blast pushed into the engine, and the host throws again
+    # till one moves them, skate_network.c)
     for t in blown:
         assert len(t["blast"]) == 1, f"the blast did not push the host's skater once: {t}"
-        assert t.get("further", 0) > 0.08, f"the skater did not go away from the blast: {t}"
+        (x, y), (ax, ay) = t["blast"][0][3], t["away"]
+        assert x * ax + y * ay > 0.7 * math.hypot(x, y), f"the blast did not push the skater away from it: {t}"
+    assert any(t["further"] > 0.08 for t in blown), f"no blast moved the skater away from it: {blown}"
     assert not undone, f"a push was undone: {undone}"
     # (the client pushes its own skater for a blast the host's grenade gave
     # them, replaying the host's damage, once: a push a little after each
