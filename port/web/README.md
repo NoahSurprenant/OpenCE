@@ -196,6 +196,10 @@ node port/web/tests/internet.mjs build/web/site <maps folder>  # internet play w
 node port/web/tests/dedicated.mjs build/web/site <maps folder>  # a browser joining a dedicated server
 ```
 
+The CI `web` job runs all but the last two, which need the maps. The
+`web-dedicated` job runs the dedicated server test on the owner's runner,
+which has the maps (port/linux/README.md, "Dedicated server").
+
 The smoke test serves the site as GitHub Pages does, checks that the page
 isolates itself and passes its checks, and starts the game with an empty
 maps folder, which gets as far as looking for the menus' map. The rooms test
