@@ -1047,6 +1047,41 @@ public address of the router: an IPv4 address or a name, with
 address to the joining machines first. The server looks up a name again
 every five minutes, so a dynamic DNS name follows the router's address.
 
+Players in a browser (the web build, [port/web/README.md](../web/README.md))
+join the server too. They open the invite in the web build: the address of
+its page with `?join=` and the 64 digits of the server's `halo://join/`
+link, for example `https://noahsurprenant.github.io/OpenCE/?join=<64 digits>`
+(refer to "Browsers" above). The page must be a build of the server's
+network version. The server needs no player of its own for this, and
+`network.host_public = false` does not stop it: the invite is enough. The
+browser reaches the server over WebRTC on the same UDP port
+(`network.tunnel_port`), so the one port forward serves the native and the
+browser players alike. The server gives the browser
+`network.public_address` first among its addresses, as it does to a native
+build, and the browser's ICE checks go to it. There is no TURN relay: a
+browser on a network that lets no WebRTC or UDP through (some company and
+school networks) cannot join.
+
+`port/web/tests/dedicated.mjs` tests this. It starts a dedicated server
+(invite-only) behind a UDP forward that the server names as its
+`network.public_address`, a local MQTT broker, and a headless Chromium that
+imports `ui.map` and `bloodgulch.map`, opens the invite of the server and
+plays. The server must log the player who joins and a WebRTC connection,
+the browser must log its player each second, and the ICE path that the
+browser chooses must be the forwarded address. The test needs the web build,
+the Linux build, the maps, Node.js with Playwright, and mosquitto. It takes
+about 30 seconds:
+
+```
+node port/web/tests/dedicated.mjs build/web/site /path/to/halo/maps build/linux/halo
+```
+
+CI does not run this test: only the `opence-k8s` runner has the maps, and
+it has no Chromium or mosquitto. If `HALO_WEBJOIN_INVITE` has the 64 digits
+of a server that runs, the test starts only the browser and joins that
+server, for example a server container behind a NAT (the header of the
+script gives the details).
+
 The telnet console (`debug.telnet_console`) gives the console of the
 server on 127.0.0.1.
 

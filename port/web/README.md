@@ -193,6 +193,7 @@ node port/web/tests/smoke.mjs dist/halo-web-release  # the site in a headless Ch
 node port/web/tests/rooms.mjs dist/halo-web-release  # two browsers in a room (and mosquitto)
 node port/web/tests/webrtc_native.mjs chromium firefox  # the native builds' WebRTC with browsers
 node port/web/tests/internet.mjs build/web/site <maps folder>  # internet play with the Linux build
+node port/web/tests/dedicated.mjs build/web/site <maps folder>  # a browser joining a dedicated server
 ```
 
 The smoke test serves the site as GitHub Pages does, checks that the page
@@ -214,7 +215,11 @@ and the multiplayer maps, which each browser imports) and the Linux build
 (`build/linux/halo`), and plays three games through a local broker: two
 browsers by invite, the native build hosting with a browser joining from the
 server browser, and the reverse (`debug.network_test` `browse`,
-`debug.network_test_public`).
+`debug.network_test_public`). The dedicated server test needs `ui.map` and
+`bloodgulch.map` and the Linux build too: a browser joins a dedicated server
+by its invite, through the UDP forward the server names as its
+`network.public_address` ("Dedicated server" in
+[port/linux/README.md](../linux/README.md)).
 
 Playwright's screenshots of the page in headless Firefox show the game's
 canvas black (it is drawn by a worker); the game draws. Check Firefox headed,
