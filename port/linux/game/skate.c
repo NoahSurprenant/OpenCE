@@ -59,7 +59,8 @@ objects (render.c). */
 int halo_skate_platform_toggle_pressed(void);
 void halo_skate_platform_pad(struct halo_skate_pad *pad);
 void halo_skate_platform_board_texture(int slot, int width, int height, const unsigned char *rgba);
-void halo_skate_platform_board_draw(const float *vertices, int vertex_count, const unsigned int *indices,
+/* (the number of the board's surfaces drawn: 0 when nothing was) */
+int halo_skate_platform_board_draw(const float *vertices, int vertex_count, const unsigned int *indices,
 	int index_count, const struct halo_skate_board_surface *surfaces, int surface_count, const float *lights);
 /* the platform layer's log (halo.log on Windows, stderr on Linux) */
 void platform_log(const char *format, ...);
@@ -850,6 +851,9 @@ The skate engine skins the board each tick (halo_skate_board_vertices); a
 frame draws it between the last two ticks, as the biped's nodes are
 (render_interpolation.c), so that it stays under the skater's feet. */
 
+/* the frames that drew the local board, for the status line (debug.skate_status) */
+static long skate_status_board_draws;
+
 /* (the game's free is debug_free, which takes no NULL: it reads the header
 before the pointer) */
 static void skate_free(void *pointer)
@@ -1072,8 +1076,11 @@ void skate_render_board(void)
 			skate_board.drawn[index] = previous[index] + (latest[index] - previous[index]) * fraction;
 		drawn = skate_board.drawn;
 	}
-	halo_skate_platform_board_draw(drawn, skate_board.vertex_count, skate_board.indices, skate_board.index_count,
-		skate_board.surfaces, skate_board.surface_count, &skate_board.lights[0][0]);
+	if (halo_skate_platform_board_draw(drawn, skate_board.vertex_count, skate_board.indices, skate_board.index_count,
+		skate_board.surfaces, skate_board.surface_count, &skate_board.lights[0][0]) > 0)
+	{
+		skate_status_board_draws++;
+	}
 }
 
 static void skate_stop(const char *reason)
@@ -1082,7 +1089,10 @@ static void skate_stop(const char *reason)
 	{
 		halo_skate_suspend();
 		if (reason)
+		{
 			console_printf(FALSE, "skate: off (%s)", reason);
+			platform_log("skate: off (%s)", reason);
+		}
 	}
 	skate_globals.skating = FALSE;
 	skate_globals.activate_when_ready = FALSE;
@@ -1156,6 +1166,7 @@ static void skate_start(long unit_index)
 	skate_board_forget();
 	skate_apply_frame(unit_index, TRUE);
 	console_printf(FALSE, "skate: on");
+	platform_log("skate: on");
 }
 
 /* the skating biped was moved since the last tick by something other than
@@ -2302,6 +2313,43 @@ void skate_holster_weapon(long unit_index, real_matrix4x3 const *node_matrices, 
 
 #ifdef HALO_SKATE
 
+/* every debug.skate_status seconds while skating, a line in the log: where
+the skater is, how fast, its state, whether the pose the engine gave is
+finite, and how many times the board has been drawn (the web build's skate
+test reads it: port/web/tests/skate.mjs) */
+static void skate_status(int written, int node_count, real_matrix4x3 const *matrices)
+{
+	static double interval = -1.0;
+	static long last_tick = NONE;
+	long now = game_time_get();
+	float const *values = &matrices[0].scale;
+	float const *velocity = skate_globals.frame.off_board ? skate_globals.frame.skater_velocity :
+		skate_globals.frame.velocity;
+	boolean finite = TRUE;
+	int index;
+
+	if (interval < 0.0)
+		interval = config_real("debug.skate_status");
+	if (interval <= 0.0 || (last_tick != NONE && now >= last_tick && now - last_tick < (long)(interval * TICKS_PER_SECOND)))
+		return;
+	last_tick = now;
+	for (index = 0; index < written * (int)(sizeof(real_matrix4x3) / sizeof(float)); index++)
+	{
+		if (!isfinite(values[index]))
+			finite = FALSE;
+	}
+	for (index = 0; index < 3; index++)
+	{
+		if (!isfinite(skate_globals.frame.position[index]))
+			finite = FALSE;
+	}
+	platform_log("skate status: %s at (%.2f %.2f %.2f), %.1f m/s, %s, posed %d of %d nodes, the pose %s, the board "
+		"drawn %ld times", skate_globals.frame.state, skate_globals.frame.position[0], skate_globals.frame.position[1],
+		skate_globals.frame.position[2], sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] +
+		velocity[2] * velocity[2]) * 3.048, skate_globals.frame.off_board ? "off the board" : "on the board", written,
+		node_count, finite ? "finite" : "NOT FINITE", skate_status_board_draws);
+}
+
 void skate_update_after_objects(void)
 {
 	real_matrix4x3 matrices[SKATE_MAXIMUM_NODES];
@@ -2355,6 +2403,7 @@ void skate_update_after_objects(void)
 	}
 	if (written == node_count)
 		memcpy(node_matrices, matrices, sizeof(real_matrix4x3) * node_count);
+	skate_status(written, node_count, matrices);
 	/* on a board the weapon is never in hand, posed or not */
 	skate_holster_weapon(skate_globals.unit_index, node_matrices, node_count);
 	/* and the others told, in a network game (skate_network.c) */

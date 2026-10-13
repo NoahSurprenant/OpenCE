@@ -9,7 +9,8 @@ The version is a hash of the site's files, so that any change is a new one;
 the build number (HALO_BUILD_NUMBER, which tools/ci_build.py gives builds of
 main), the commit (GITHUB_SHA, else git's) and the network version
 (HALO_PORT_NETWORK_VERSION, port/linux/include/halo_port_limits.h: which
-native builds a web build could play with) go with it.
+native builds a web build could play with) go with it, and whether the
+build has Skate 3 mode (--skate: the page then offers its data's importer).
 """
 
 import argparse
@@ -44,7 +45,7 @@ def site_name(output: Path, path: Path) -> str:
     return Path(os.path.relpath(path, output.parent)).as_posix()
 
 
-def stamp(output: Path, inputs: list, flavor: str) -> dict:
+def stamp(output: Path, inputs: list, flavor: str, skate: bool = False) -> dict:
     digest = hashlib.sha256()
     # (what the service worker caches: the site's files but its dot files,
     # which only tell GitHub Pages how to serve it)
@@ -60,6 +61,7 @@ def stamp(output: Path, inputs: list, flavor: str) -> dict:
         "flavor": flavor,
         "commit": commit(),
         "network_version": network_version(),
+        "skate": skate,
         "files": names,
     }
     output.write_text(json.dumps(version, indent=1) + "\n", encoding="utf-8")
@@ -69,10 +71,11 @@ def stamp(output: Path, inputs: list, flavor: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--flavor", choices=["debug", "release"], default="debug")
+    parser.add_argument("--skate", action="store_true", help="the build has Skate 3 mode (configure.py --skate)")
     parser.add_argument("output", type=Path)
     parser.add_argument("inputs", nargs="+")
     args = parser.parse_args()
-    stamp(args.output, args.inputs, args.flavor)
+    stamp(args.output, args.inputs, args.flavor, args.skate)
 
 
 if __name__ == "__main__":

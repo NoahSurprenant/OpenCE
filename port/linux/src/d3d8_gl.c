@@ -5680,8 +5680,16 @@ model_lighting), without the point lights or fog. */
 
 #include "../../skate/include/halo_skate.h"
 
+/* (OpenGL ES 3.0 for a browser's WebGL 2, which takes no other) */
+#ifdef HALO_GLES
+#define SKATE_BOARD_SHADER_VERSION \
+	"#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n"
+#else
+#define SKATE_BOARD_SHADER_VERSION "#version 450 core\n"
+#endif
+
 static const char skate_board_vertex_source[] =
-	"#version 450 core\n"
+	SKATE_BOARD_SHADER_VERSION
 	"layout(location = 0) in vec3 position;\n"
 	"layout(location = 1) in vec3 normal;\n"
 	"layout(location = 2) in vec2 texture_coordinate;\n"
@@ -5692,6 +5700,12 @@ static const char skate_board_vertex_source[] =
 	"{\n"
 	"\tvec4 world = vec4(position, 1.0);\n"
 	"\tgl_Position = vec4(dot(clip[0], world), dot(clip[1], world), dot(clip[2], world), dot(clip[3], world));\n"
+#ifdef HALO_GLES
+	/* what glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE) does on desktop GL:
+	rows from the top, depth 0..1 (as the game's own shaders do: nv2a_vsh.c) */
+	"\tgl_Position.y = -gl_Position.y;\n"
+	"\tgl_Position.z = 2.0 * gl_Position.z - gl_Position.w;\n"
+#endif
 	"\tworld_normal = normal;\n"
 	"\tboard_coordinate = texture_coordinate;\n"
 	"}\n";
@@ -5699,7 +5713,7 @@ static const char skate_board_vertex_source[] =
 /* lights: the ambient color, then each distant light's direction (the way
 its light travels) and color */
 static const char skate_board_fragment_source[] =
-	"#version 450 core\n"
+	SKATE_BOARD_SHADER_VERSION
 	"in vec3 world_normal;\n"
 	"in vec2 board_coordinate;\n"
 	"uniform sampler2D board_texture;\n"
@@ -5787,21 +5801,22 @@ void halo_skate_platform_board_texture(int slot, int width, int height, const un
 
 /* the board's triangles into the window being drawn: vertex_count vertices
 of HALO_SKATE_BOARD_VERTEX_FLOATS floats (world position, normal, texture
-coordinate), the surfaces' runs of indices, and lights[5][4] (above) */
-void halo_skate_platform_board_draw(const float *vertices, int vertex_count, const unsigned int *indices,
+coordinate), the surfaces' runs of indices, and lights[5][4] (above). The
+number of surfaces drawn: 0 when nothing was */
+int halo_skate_platform_board_draw(const float *vertices, int vertex_count, const unsigned int *indices,
 	int index_count, const struct halo_skate_board_surface *surfaces, int surface_count, const float *lights)
 {
 	float clip[4][4];
 	BOOL has_depth = FALSE;
-	int surface_index;
+	int surface_index, drawn = 0;
 
 	if (!device.gl_ready || vertex_count <= 0 || index_count <= 0 || !skate_board_prepare())
-		return;
+		return 0;
 	/* (only into a target with depth, which the 3D view's always has) */
 	if (!bind_targets(&has_depth) || !has_depth)
 	{
 		xgpu_gl_state_invalidate();
-		return;
+		return 0;
 	}
 	/* the window's viewport and depth range, then the objects' opaque state
 	whatever the game's last draw left */
@@ -5816,7 +5831,9 @@ void halo_skate_platform_board_draw(const float *vertices, int vertex_count, con
 	state_enable(&gl_state.offset_fill, GL_POLYGON_OFFSET_FILL, FALSE);
 	/* the game keeps scratch values in the destination's alpha */
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+#ifndef HALO_GLES
 	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+#endif
 
 	draw_flush();
 	glUseProgram(skate_board.program);
@@ -5843,9 +5860,11 @@ void halo_skate_platform_board_draw(const float *vertices, int vertex_count, con
 		glBindTexture(GL_TEXTURE_2D, skate_board.textures[surface->texture]);
 		glDrawElements(GL_TRIANGLES, surface->index_count, GL_UNSIGNED_INT,
 			(const void *)((size_t)surface->first_index * sizeof(unsigned int)));
+		drawn++;
 	}
 	glBindVertexArray(device.vertex_array);
 	xgpu_gl_state_invalidate();
+	return drawn;
 }
 #endif
 

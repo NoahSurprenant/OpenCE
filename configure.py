@@ -77,7 +77,8 @@ parser.add_argument(
 parser.add_argument(
     "--skate",
     action="store_true",
-    help="Skate 3 mode (Linux, Windows; port/skate/README.md): builds the skate engine with cargo and links it",
+    help="Skate 3 mode (Linux, Windows, web; port/skate/README.md): builds the skate engine with cargo and links it "
+    "(the web build's with a pinned nightly Rust: port/web/README.md)",
 )
 parser.add_argument(
     "--android-ndk",
@@ -93,6 +94,12 @@ parser.add_argument(
     "--web-emcc",
     type=str,
     help="Emscripten's emcc for `ninja web` (default: emcc on the PATH, then EMSDK's or ~/emsdk's)",
+)
+parser.add_argument(
+    "--web-rust-toolchain",
+    type=str,
+    help="the Rust toolchain (rustup's name) that builds the web build's skate engine with --skate (default: the "
+    "nightly tools/web_build.py pins, with its rust-src component)",
 )
 args = parser.parse_args()
 try:
@@ -115,6 +122,7 @@ sln = SimpleNamespace(
     android_guest_cc=args.android_guest_cc,
     port_skate=args.skate,
     web_emcc=args.web_emcc,
+    web_rust_toolchain=args.web_rust_toolchain,
 )
 
 

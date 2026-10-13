@@ -13,6 +13,9 @@ then fills the page.
   debug.txt, in the Origin Private File System (port/web/src/web_main.c
   mounts it at /data). Each origin has its own: the github.io address and
   the site's own domain do not share them.
+- A build with Skate 3 mode (version.json's skate) offers a second import:
+  the player's converted skate-data folder, into skate-data/ there, where
+  the game looks for it (port/web/src/web_main.c). It is optional.
 - Query parameters, for testing: ?set=NAME=value (any number) passes a
   setting's environment variable (port/linux/README.md, the settings
   table), ?room=<secret> joins a room (net.js; ?brokers= names other
@@ -284,11 +287,84 @@ function importData(message) {
 }
 
 function setImporting(importing) {
-  for (const id of ['image-label', 'folder-label']) $(id).classList.toggle('disabled', importing);
+  for (const id of ['image-label', 'folder-label', 'skate-label']) $(id).classList.toggle('disabled', importing);
   $('image-input').disabled = importing;
   $('folder-input').disabled = importing;
+  $('skate-input').disabled = importing;
+  $('skate-delete').disabled = importing;
   $('play').disabled = importing || !canPlay();
 }
+
+// ---------- Skate 3 mode's data (xiso-worker.js too), in a build with it
+// (version.json's skate): optional, the game plays without it
+
+async function refreshSkate() {
+  if (!stamp.skate) return;
+  $('skate-panel').hidden = false;
+  let text = 'No skate data: J in a game says so. Choose the skate-data folder converted from your copy of Skate 3.';
+  let ready = false;
+  try {
+    const root = await navigator.storage.getDirectory();
+    const folder = await root.getDirectoryHandle('skate-data');
+    const complete = JSON.parse(await (await (await folder.getFileHandle('.complete')).getFile()).text());
+    text = `${complete.files} files of skate data (${formatBytes(complete.bytes)}), ` +
+      (complete.sounds ? `with ${complete.sounds} sound files, ready.` : 'no sounds of its own (the built-in ones play), ready.');
+    ready = true;
+  } catch {
+    // none, or a copy that did not finish
+  }
+  $('skate-status').textContent = text;
+  $('skate-delete').hidden = !ready;
+}
+
+function importSkate(files) {
+  const worker = new Worker('xiso-worker.js');
+  $('skate-progress').hidden = false;
+  $('skate-bar').style.width = '0';
+  $('skate-text').textContent = 'Reading…';
+  setImporting(true);
+  worker.onmessage = async (event) => {
+    const data = event.data;
+    if (data.type === 'progress') {
+      $('skate-bar').style.width = (100 * data.done / data.total).toFixed(1) + '%';
+      $('skate-text').textContent = `Copying ${data.file}: ${formatBytes(data.done)} of ${formatBytes(data.total)}`;
+      return;
+    }
+    worker.terminate();
+    setImporting(false);
+    if (data.type === 'done') {
+      $('skate-text').textContent = `Copied ${data.files} files.`;
+      logLine(`skate import: ${data.files} files (${data.sounds} sounds), ${data.bytes} bytes`);
+    } else {
+      $('skate-text').textContent = data.message;
+      logLine('skate import failed: ' + data.message);
+    }
+    await refreshSkate();
+    await refreshStorage();
+  };
+  worker.onerror = (event) => {
+    worker.terminate();
+    setImporting(false);
+    $('skate-text').textContent = 'The copy failed: ' + event.message;
+  };
+  worker.postMessage({ type: 'skate', files });
+}
+
+$('skate-input').addEventListener('change', (event) => {
+  const files = [...event.target.files].map((file) => ({ path: file.webkitRelativePath || file.name, file }));
+  event.target.value = '';
+  if (files.length) importSkate(files);
+});
+
+$('skate-delete').addEventListener('click', async () => {
+  if (gameStarted && !gameStopped) return;
+  if (!confirm('Delete the skate data copied into this browser?')) return;
+  const root = await navigator.storage.getDirectory();
+  await root.removeEntry('skate-data', { recursive: true }).catch(() => {});
+  $('skate-progress').hidden = true;
+  await refreshSkate();
+  await refreshStorage();
+});
 
 $('image-input').addEventListener('change', (event) => {
   const file = event.target.files[0];
@@ -713,8 +789,12 @@ document.addEventListener('visibilitychange', async () => {
     $('checks-note').textContent = 'Desktop Chrome, Edge and Firefox run the game; Safari 17 or later may.';
     $('checks-note').hidden = false;
   }
-  if (results.opfs === 'good') await refreshData();
-  else updatePlay();
+  if (results.opfs === 'good') {
+    await refreshData();
+    await refreshSkate();
+  } else {
+    updatePlay();
+  }
   checkForUpdate();
   if (/^[0-9a-f]{32}$/.test(params.get('room') || '')) await joinRoom(params.get('room'));
   if (params.has('play')) play();

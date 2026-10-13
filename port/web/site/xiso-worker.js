@@ -25,9 +25,18 @@ Each map is checked as the game checks it when it loads it (cache_files.c):
 "head" and "foot" signatures, the Xbox's cache version, and the build of a
 retail disc (01.10.12.2276) or of this decompilation's (01.01.14.2342).
 
+It copies Skate 3 mode's converted data too (port/skate/README.md), in a
+build with it: the skate-data folder the converter wrote, its assets/ and,
+if there, its sounds/, into skate-data/ beside the maps, where the game
+looks (port/web/src/web_main.c). Those files are the player's, from their
+own copy of Skate 3: they stay in this browser, as the maps do.
+
 Messages from the page: { type: 'image', file } or { type: 'folder', files }
-(a maps folder's File objects). To the page: { type: 'progress', file, done,
-total }, then { type: 'done', files, bytes } or { type: 'error', message }.
+(a maps folder's File objects), or { type: 'skate', files } (a skate-data
+folder's, each { path, file }, its path from the folder chosen). To the page:
+{ type: 'progress', file, done, total }, then { type: 'done', files, bytes }
+(and sounds, the number of sound files, for skate data) or { type: 'error',
+message }.
 */
 
 'use strict';
@@ -237,9 +246,100 @@ async function copy(files) {
   return { files: files.length, bytes: total };
 }
 
+// ---------- Skate 3 mode's converted data
+
+const SKATE_DIRECTORY = 'skate-data';
+const SKATE_PARTS = ['assets', 'sounds'];
+const MAXIMUM_SKATE_FILES = 20000;
+const MAXIMUM_SKATE_DEPTH = 16;
+
+// a name a skate data file or folder may have: no path, nothing hidden (the
+// converter's names are plain; a .DS_Store is skipped)
+function skateName(name) {
+  return name.length > 0 && name.length <= 255 && !name.startsWith('.') && !/[\\/\0-\x1f]/.test(name);
+}
+
+// the files of a chosen skate-data folder to copy, each { parts, name, size,
+// read }, parts its path under skate-data/ (assets/... or sounds/...): the
+// folder chosen is the one with assets/board.json in it (the skate-data
+// folder, or one above it); anything else there (conversion.log) stays
+function skateFiles(list) {
+  const split = list.map((item) => ({ item, parts: String(item.path).split('/').filter((part) => part !== '') }));
+  let root = null;
+  for (const { parts } of split) {
+    const at = parts.length - 2;
+    if (at >= 0 && parts[at] === 'assets' && parts[at + 1] === 'board.json' && (root === null || at < root.length)) {
+      root = parts.slice(0, at);
+    }
+  }
+  if (root === null) {
+    throw new Error('There is no assets/board.json in this folder: choose the skate-data folder the converter ' +
+      'wrote from your copy of Skate 3.');
+  }
+  const files = [];
+  for (const { item, parts } of split) {
+    if (parts.length <= root.length + 1 || root.some((part, index) => parts[index] !== part)) continue;
+    const relative = parts.slice(root.length);
+    if (!SKATE_PARTS.includes(relative[0]) || relative.length > MAXIMUM_SKATE_DEPTH || !relative.every(skateName)) continue;
+    files.push({ parts: relative, name: relative[relative.length - 1], size: item.file.size,
+      read: (at, size) => readAt(item.file, at, size) });
+  }
+  if (files.length > MAXIMUM_SKATE_FILES) throw new Error(`The folder has ${files.length} files: is it skate-data?`);
+  return files;
+}
+
+async function copySkate(files) {
+  const total = files.reduce((sum, entry) => sum + entry.size, 0);
+  const storage = await navigator.storage.getDirectory();
+  if (navigator.storage.estimate) {
+    const { quota, usage } = await navigator.storage.estimate();
+    if (quota && quota - usage < total) {
+      throw new Error(`The browser lets this site keep ${Math.floor((quota - usage) / 1e6)} MB more, ` +
+        `and the skate data takes ${Math.ceil(total / 1e6)} MB.`);
+    }
+  }
+  // (as for the maps: a new copy replaces an earlier one)
+  await storage.removeEntry(SKATE_DIRECTORY, { recursive: true }).catch(() => {});
+  const root = await storage.getDirectoryHandle(SKATE_DIRECTORY, { create: true });
+  const folders = new Map();
+  const folder = async (parts) => {
+    const key = parts.join('/');
+    if (!folders.has(key)) {
+      const parent = parts.length > 1 ? await folder(parts.slice(0, -1)) : root;
+      folders.set(key, await parent.getDirectoryHandle(parts[parts.length - 1], { create: true }));
+    }
+    return folders.get(key);
+  };
+  let done = 0;
+  let lastReport = 0;
+  for (const entry of files) {
+    await writeFile(await folder(entry.parts.slice(0, -1)), entry, (count) => {
+      done += count;
+      const now = Date.now();
+      if (now - lastReport > 100 || done === total) {
+        lastReport = now;
+        postMessage({ type: 'progress', file: entry.parts.join('/'), done, total });
+      }
+    });
+  }
+  const sounds = files.filter((entry) => entry.parts[0] === 'sounds').length;
+  const summary = { files: files.length, bytes: total, sounds };
+  const marker = await root.getFileHandle(COMPLETE_MARKER, { create: true });
+  const access = await marker.createSyncAccessHandle();
+  access.truncate(0);
+  access.write(new TextEncoder().encode(JSON.stringify(summary)), { at: 0 });
+  access.flush();
+  access.close();
+  return summary;
+}
+
 if (typeof onmessage !== 'undefined' || typeof WorkerGlobalScope !== 'undefined') {
   onmessage = async (event) => {
     try {
+      if (event.data.type === 'skate') {
+        postMessage({ type: 'done', ...(await copySkate(skateFiles(event.data.files))) });
+        return;
+      }
       const files = event.data.type === 'folder' ? await folderFiles(event.data.files) : await imageFiles(event.data.file);
       postMessage({ type: 'done', ...(await copy(files)) });
     } catch (error) {
@@ -250,5 +350,5 @@ if (typeof onmessage !== 'undefined' || typeof WorkerGlobalScope !== 'undefined'
 
 // (for the tests: port/web/tests)
 if (typeof module !== 'undefined') {
-  module.exports = { findVolume, walkDirectory, mapProblem, imageFiles, folderFiles, plainName };
+  module.exports = { findVolume, walkDirectory, mapProblem, imageFiles, folderFiles, plainName, skateFiles, skateName };
 }

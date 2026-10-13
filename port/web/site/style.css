@@ -279,3 +279,10 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad)
 .touch-stick-knob { background: rgba(219, 228, 240, 0.55); }
 
 [hidden] { display: none !important; }
+
+/* (the Skate 3 data panel's heading: the data is not needed to play) */
+.optional {
+  font-weight: normal;
+  font-size: 0.8em;
+  opacity: 0.7;
+}
