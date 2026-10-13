@@ -5,7 +5,8 @@ same game and platform layer as the Linux build, with the OpenGL ES renderer
 of the Android build drawing through WebGL 2. Play it at
 <https://halocombatevolved.com/>: every build of `main` that passes on all
 platforms is published there (and as `halo-web-release.zip` in the release,
-for your own server).
+for your own server). This fork's builds are published the same way at
+<https://noahsurprenant.github.io/OpenCE/>.
 
 The site serves no game data. The page copies the `maps/` folder out of your
 own Xbox disc image of Halo: Combat Evolved into the browser's storage for
@@ -42,8 +43,10 @@ untrusted input: the reader checks every offset and size in it.
 
 The page asks the browser to keep the site's data. A browser that is short
 of space may delete it otherwise; **Settings and data** says which. The
-storage belongs to the site's address: `halocombatevolved.com` and the
-repository's `github.io` address do not share it.
+storage belongs to the site's address: `halocombatevolved.com` and
+`noahsurprenant.github.io` do not share it. (A `github.io` address is shared by
+all of its owner's project sites, so the browser keeps one storage for all
+of them.)
 
 ## Playing
 
@@ -374,7 +377,27 @@ Once, an owner of the organization sets it up:
 4. Nothing else: the deployment needs no secret, and the `github-pages`
    environment appears with the first one (give it no required reviewer).
 
-Later, Cloudflare can serve the site (proxied, SSL *Full (strict)*) with a
+This fork (NoahSurprenant/OpenCE) deploys its own builds the same way, to
+its project site at <https://noahsurprenant.github.io/OpenCE/>: Pages source
+**GitHub Actions**, no custom domain. The `pages` job runs for upstream and
+this fork, and for no other repository.
+
+**A sub-path.** A project site without a domain of its own is served under
+the repository's name (`/OpenCE/`), not at the root. The site works at
+either, because every address it uses is relative: the page's files,
+`halo.js` and `halo.wasm` (Emscripten finds them beside `halo.js`), the
+workers, `version.json`, the manifest (`start_url` and `scope` `./`), and
+the service worker, registered as `sw.js`, whose scope is then the folder it
+is in (`/OpenCE/`) and whose cache is that folder's files. Room and invite
+links keep the page's path. To try a sub-path on your computer:
+`python tools/web_serve.py --as-github-pages --base /OpenCE/`, which serves
+the site at <http://localhost:8000/OpenCE/> (and redirects `/OpenCE` there,
+as GitHub Pages does); CI runs the smoke test there too
+(`node port/web/tests/smoke.mjs <site> --base /OpenCE/`), which also checks
+the service worker's scope. Keep new addresses relative: one starting with
+`/` would work at a domain's root but not here.
+
+Later, Cloudflare can serve upstream's site (proxied, SSL *Full (strict)*) with a
 response header rule adding `Cross-Origin-Opener-Policy: same-origin`,
 `Cross-Origin-Embedder-Policy: require-corp` and
 `Cross-Origin-Resource-Policy: same-origin`: the first visit then needs no

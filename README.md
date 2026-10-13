@@ -28,7 +28,7 @@ builds of the latest release:
 | Linux | [halo-linux-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-linux-release.zip) | [halo-linux-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-linux-debug.zip) |
 | Windows | [halo-windows-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-windows-release.zip) | [halo-windows-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-windows-debug.zip) |
 | Android | [halo-android-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-android-release.zip) | [halo-android-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-android-debug.zip) |
-| Web | [halo-web-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-web-release.zip) for your own server (no Skate 3 mode; upstream's [halocombatevolved.com](https://halocombatevolved.com/) plays upstream's build) | [halo-web-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-web-debug.zip) |
+| Web | Play at [noahsurprenant.github.io/OpenCE](https://noahsurprenant.github.io/OpenCE/), or [halo-web-release.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-web-release.zip) for your own server (no Skate 3 mode; upstream's [halocombatevolved.com](https://halocombatevolved.com/) plays upstream's build) | [halo-web-debug.zip](https://github.com/NoahSurprenant/OpenCE/releases/latest/download/halo-web-debug.zip) |
 
 Use the release build to play. The debug build stops at the first failed
 assertion and writes it to the log. Use the debug build to find and report
@@ -40,7 +40,8 @@ if you want to install it. Refer to "Updates" in
 each new build when it is out.
 
 Each build of the `main` branch that passes on all four platforms is a new
-release (this fork has no web site of its own). The [Releases](https://github.com/NoahSurprenant/OpenCE/releases)
+release, and its web build is published at
+[noahsurprenant.github.io/OpenCE](https://noahsurprenant.github.io/OpenCE/). The [Releases](https://github.com/NoahSurprenant/OpenCE/releases)
 page keeps the last five releases. If the latest build has a problem, get
 an older build from that page.
 
