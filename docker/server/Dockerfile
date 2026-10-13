@@ -17,13 +17,17 @@
 # profile-guided optimisation: the server sleeps most of each frame, and Debian's clang is older
 # than the profiles need.
 #
+# --portable (code for any x86-64 processor, as the cluster's nodes differ) also builds against
+# Debian 11's glibc and builds its own SDL 3 (tools/linux_sysroot.py), hence CMake, pkgconf and
+# wayland-scanner here; the image runs the executable with Debian's 32-bit SDL 3 below.
+#
 # Built, pushed and signed by .github/workflows/server-image.yml.
 
 FROM debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5 AS build
 RUN dpkg --add-architecture i386 \
  && apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates python3 ninja-build clang lld \
-      gcc-multilib libsdl3-dev:i386 \
+      gcc-multilib cmake pkgconf libwayland-bin \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .

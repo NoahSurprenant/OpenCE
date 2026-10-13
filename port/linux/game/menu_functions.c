@@ -8,8 +8,10 @@ calls them from PC_MENU_FUNCTION_BASE on):
 - "port quit game" (and the PC version's "main menu quit game") quits, as
   closing the window does;
 - the PC version's "profile set edit begin" begins editing the first player
-  profile, as its settings screens need, and fails with none (its handlers
-  then open the screens that make one);
+  profile, as its settings screens need, and fails with none: the main
+  menu's then asks for a new one's name, as the menu's other items do, and
+  its handlers open the screens that make the profile ("new campaign
+  decision", after which Settings' is the one being edited);
 - "gamespy screen init" hides the server browser's error and filter panels,
   and the title of the mode "mp type set mode" did not choose (Internet or
   LAN);
@@ -68,6 +70,7 @@ their handlers open opens.
 #include "interface/event_manager.h"
 #include "interface/player_ui.h"
 #include "interface/ui_widget.h"
+#include "interface/ui_widget_event_handler_functions.h"
 #include "main/main.h"
 #include "networking/network_game_manager.h"
 #include "saved games/player_profile.h"
@@ -112,6 +115,7 @@ boolean ui_widget_port_dispatch_event(struct widget_instance *widget, short even
 void ui_widget_port_go_back(struct widget_instance *widget);
 short ui_widget_port_list_index(struct widget_instance *list_widget);
 boolean ui_widget_port_saved_game(char const **map_name, short *level, short *difficulty);
+char const *ui_widget_event_handler_function_name(long function_index);
 short main_get_solo_level_from_name(char const *name);
 boolean player_name_clean(wchar_t *name, long count);
 short players_port_local_player_count(void);
@@ -515,6 +519,53 @@ boolean pc_menu_profile_edit_begin(void)
 	return TRUE;
 }
 
+/* the game's own function of the name (as its tags name it), run for the
+widget: for ours of a name of the game's, which do more than it */
+static boolean game_function(char const *name, struct widget_instance *widget, struct event_record *event,
+	boolean *widget_deleted)
+{
+	char const *function;
+	long index;
+
+	for (index = 0; (function = ui_widget_event_handler_function_name(index)) != NULL; index++)
+	{
+		if (!strcmp(function, name))
+			return ui_widget_event_handler_function_invoke(widget, event, (word)index, widget_deleted);
+	}
+	return FALSE;
+}
+
+/* "profile set edit begin": Settings, the main menu's and a game's pause
+menu's. With no profile, the main menu's asks for a new one's name, as the
+menu's other items do ("new game if no plyr profiles"), and fails: the
+screens its handler then opens make the profile and edit it
+(new_profile_decision). Without the name asked, they made none, and showed
+"new campaign decision" as failed. The pause menu's has no such screens,
+and only fails. */
+static boolean profile_edit_begin(struct widget_instance *widget, struct event_record *event,
+	boolean *widget_deleted)
+{
+	if (pc_menu_profile_edit_begin())
+		return TRUE;
+	/* (a press: the profile is made on its controller) */
+	if (main_menu_is_active() && event && event->controller_index >= 0 && event->controller_index < 4)
+		game_function("new campaign chosen", widget, event, widget_deleted);
+	return FALSE;
+}
+
+/* "new campaign decision" (the screen after a new profile's name, each of
+the main menu's items having its own): the game's makes the profile, if the
+name was entered. Settings' then begins editing it: the PC version's screens
+open Settings with nothing more run, and its screen closes at once with no
+profile being edited ("close if not editing profile"). */
+static boolean new_profile_decision(struct widget_instance *widget, struct event_record *event,
+	boolean *widget_deleted)
+{
+	if (!game_function("new campaign decision", widget, event, widget_deleted))
+		return FALSE;
+	return strcmp(widget->name, "settings_creating_profile") || pc_menu_profile_edit_begin();
+}
+
 /* ---------- the campaign */
 
 /* the rows of its lists (main_menu/new_select/list_item_0 to 10) */
@@ -819,6 +870,7 @@ static void profile_name_show(struct widget_instance *description)
 	static struct player_profile profile;
 	static long read_index = NONE;
 	static unsigned long read_time;
+	static boolean read_good;
 	long index = player_ui_get_active_player_profile_index(0);
 
 	if (!description)
@@ -830,13 +882,17 @@ static void profile_name_show(struct widget_instance *description)
 	}
 	else if ((index = player_ui_get_player1_last_used_profile_index()) == NONE)
 		return;
-	else if (index != read_index || system_milliseconds() - read_time > 1000)
+	else
 	{
-		read_index = NONE;
-		if (!player_profile_get(index, &profile))
+		/* (one that cannot be read too: tried again a second later) */
+		if (index != read_index || system_milliseconds() - read_time > 1000)
+		{
+			read_index = index;
+			read_good = player_profile_get(index, &profile);
+			read_time = system_milliseconds();
+		}
+		if (!read_good)
 			return;
-		read_index = index;
-		read_time = system_milliseconds();
 	}
 	text_set(named(description, "current_profile_name", 0), profile.player_name);
 }
@@ -1501,6 +1557,17 @@ static boolean color_list_initialize(struct widget_instance *list)
 	return TRUE;
 }
 
+/* (ui_widget.c) whether the pointer moved the menus' focus last */
+boolean ui_widget_port_pointer_focused(void);
+
+/* Whether a list whose focus is on its first or last row moves on: when the
+d-pad put it there. The pointer resting there would make it move every
+frame; the wheel scrolls it instead. */
+static boolean list_scrolls_at_end(void)
+{
+	return !ui_widget_port_pointer_focused();
+}
+
 /* a list of more items than its rows: the row chosen kept off its ends
 while there are more past them, the list moving instead; the item chosen,
 or NONE (its buttons) */
@@ -1508,12 +1575,12 @@ static short list_scroll(struct widget_instance *list, short *first, short count
 {
 	short row = focused_row(list);
 
-	if (row == rows - 1 && *first + rows < count)
+	if (row == rows - 1 && *first + rows < count && list_scrolls_at_end())
 	{
 		(*first)++;
 		focus_row(list, --row);
 	}
-	else if (row == 0 && *first > 0)
+	else if (row == 0 && *first > 0 && list_scrolls_at_end())
 	{
 		(*first)--;
 		focus_row(list, ++row);
@@ -1879,6 +1946,7 @@ static struct
 	{ "controls.flashlight", L"FLASHLIGHT", 2 },
 	{ "controls.scoreboard", L"SHOW SCORES", 2 },
 	{ "controls.pause", L"PAUSE MENU", 2 },
+	{ "controls.screenshot", L"SCREENSHOT", 2 },
 	{ "controls.push_to_talk", L"PUSH TO TALK", 2 },
 };
 
@@ -2203,7 +2271,7 @@ void p2p_set_hosting_allowed(int allowed);
 int p2p_peer_address(unsigned char const *identifier, unsigned long *address);
 int platform_clipboard_get(char *text, int size);
 void platform_clipboard_set(char const *text);
-void platform_text_field(int typing);
+void platform_text_field(int typing, int password);
 int config_boolean(char const *name);
 void ui_widget_port_post_button(short controller_index, short button_index);
 
@@ -2271,8 +2339,8 @@ static boolean text_field_editing(struct widget_instance *row)
 	return text_field.row && (!row || text_field.row == row);
 }
 
-static void text_field_begin(struct widget_instance *row, char const *text, short maximum,
-	void (*done)(char const *text))
+static void text_field_open(struct widget_instance *row, char const *text, short maximum,
+	void (*done)(char const *text), boolean masked)
 {
 	struct key_stroke key;
 
@@ -2281,26 +2349,31 @@ static void text_field_begin(struct widget_instance *row, char const *text, shor
 	snprintf(text_field.before, sizeof(text_field.before), "%s", text);
 	text_field.maximum = (short)MIN(maximum, TEXT_FIELD_LENGTH - 1);
 	text_field.done = done;
-	text_field.masked = FALSE;
+	text_field.masked = masked;
 	text_field_shown_time = system_milliseconds();
 	while (input_get_key(&key))
 		;
-	platform_text_field(TRUE);
+	platform_text_field(TRUE, masked);
+}
+
+static void text_field_begin(struct widget_instance *row, char const *text, short maximum,
+	void (*done)(char const *text))
+{
+	text_field_open(row, text, maximum, done, FALSE);
 }
 
 /* a password's field: as text_field_begin, its text shown as stars */
 static void text_field_begin_masked(struct widget_instance *row, char const *text, short maximum,
 	void (*done)(char const *text))
 {
-	text_field_begin(row, text, maximum, done);
-	text_field.masked = TRUE;
+	text_field_open(row, text, maximum, done, TRUE);
 }
 
 static void text_field_end(boolean keep)
 {
 	void (*done)(char const *text) = text_field.done;
 
-	platform_text_field(FALSE);
+	platform_text_field(FALSE, FALSE);
 	text_field.row = NULL;
 	text_field.done = NULL;
 	if (!keep)
@@ -2663,13 +2736,13 @@ static void gametype_list_update(struct widget_instance *list)
 		if (row == list->focused_child && row_index >= 1 && row_index <= GAMETYPE_ROWS)
 			focused = (short)(row_index - 1);
 	}
-	if (focused == count - 1 && multiplayer.gametype_first + count < multiplayer.bank_count)
+	if (focused == count - 1 && multiplayer.gametype_first + count < multiplayer.bank_count && list_scrolls_at_end())
 	{
 		multiplayer.gametype_first++;
 		focus_row(list, (short)focused);
 		focused--;
 	}
-	else if (focused == 0 && multiplayer.gametype_first > 0)
+	else if (focused == 0 && multiplayer.gametype_first > 0 && list_scrolls_at_end())
 	{
 		multiplayer.gametype_first--;
 		focus_row(list, 2);
@@ -2766,10 +2839,11 @@ static char const *const server_settings_gametype_rows[] =
 /* the most players a co-op game hosted starts with (maximum_players') */
 #define COOPERATIVE_DEFAULT_PLAYERS 16
 /* Server Setup's help for co-op's options' rows (CO-OP OPTIONS, VOICE AND
-VOTING), and PASSWORD's (its help_strings, tools/port_settings.py) */
+VOTING), PASSWORD's and MAP SHARING's (its help_strings, tools/port_settings.py) */
 #define COOPERATIVE_OPTIONS_HELP 12
 #define COOPERATIVE_VOICE_OPTIONS_HELP 13
 #define SERVER_PASSWORD_HELP 14
+#define MAP_SHARE_OPTIONS_HELP 15
 
 /* co-op's EXTRA ENEMIES' choices (network.coop_enemies_mode's values, as
 gametype_options' coop_extra_enemies_spinner has them, in this order): its
@@ -2909,6 +2983,9 @@ static void server_settings_update(struct widget_instance *list)
 				help->parameters.text_box.string_list_index = COOPERATIVE_OPTIONS_HELP;
 			else if (help && list->focused_child == named(list, "op_voice_options", 0))
 				help->parameters.text_box.string_list_index = COOPERATIVE_VOICE_OPTIONS_HELP;
+			/* (MAP SHARING's, any game's: map_share.c) */
+			else if (help && list->focused_child == named(list, "op_map_share_options", 0))
+				help->parameters.text_box.string_list_index = MAP_SHARE_OPTIONS_HELP;
 		}
 	}
 	/* LISTING (an internet game's): PUBLIC, listed in everyone's server
@@ -3223,8 +3300,8 @@ scenario's path or name */
 static void map_display_name(char const *map_name, wchar_t *text)
 {
 	char const *const *names;
-	short last, index;
-	short count = xbox_multiplayer_map_count(ui_widget_port_multiplayer_maps(&names, &last));
+	short index;
+	short count = xbox_multiplayer_map_count(ui_widget_port_multiplayer_maps(&names, NULL));
 
 	/* (a Custom Edition map's, if this machine has it: custom_edition_maps.c) */
 	if (custom_edition_level_name(map_name))
@@ -3414,12 +3491,12 @@ static void lobby_browser_update(struct widget_instance *list)
 
 	lobby_browser.count = lobby_browser_valid_games(lobby_browser.games,
 		(short)p2p_lobby_games(lobby_browser.games, LOBBY_BROWSER_GAMES));
-	if (focused == BROWSER_ROWS - 1 && lobby_browser.first + BROWSER_ROWS < lobby_browser.count)
+	if (focused == BROWSER_ROWS - 1 && lobby_browser.first + BROWSER_ROWS < lobby_browser.count && list_scrolls_at_end())
 	{
 		lobby_browser.first++;
 		lobby_browser_focus_row(list, --focused);
 	}
-	else if (focused == 0 && lobby_browser.first > 0)
+	else if (focused == 0 && lobby_browser.first > 0 && list_scrolls_at_end())
 	{
 		lobby_browser.first--;
 		lobby_browser_focus_row(list, ++focused);
@@ -3930,6 +4007,27 @@ static boolean profile_save_changes(struct widget_instance *widget, boolean *wid
 	return TRUE;
 }
 
+/* "port profile settings save" (Gamepads' OK in a single-player campaign:
+menu_tags.c's pause_settings_patch): the profile saved at once, not on
+Settings' OK, so that the campaign's next save of the player's profile
+keeps it; saving makes it the player's own (player_ui_save_profile), and it
+is edited again from what was saved, for Settings to go on with */
+static boolean profile_settings_save(struct widget_instance *widget)
+{
+	long index = player_ui_get_edit_profile_index();
+
+	settings_each(screen_of(widget), setting_changed_save);
+	if (!player_ui_get_edit_player_profile() || !player_ui_edit_profile_is_dirty())
+		return TRUE;
+	if (!player_ui_save_profile())
+	{
+		platform_log("menus: could not save the profile's changes");
+		return campaign_fail();
+	}
+	player_ui_begin_editing_profile(index);
+	return TRUE;
+}
+
 /* "port pause end game" (the in-game pause menu's END GAME, the host's:
 menu_tags.c's pause_patch): the game ends as its time limit would, its
 players staying for the next (the carnage report, then the host's PICK GAME) */
@@ -4172,7 +4270,7 @@ static void lobby_row_text(short row, wchar_t *text)
 static void lobby_map_show(struct widget_instance *description, char const *map_name)
 {
 	char const *const *names;
-	short last, count = xbox_multiplayer_map_count(ui_widget_port_multiplayer_maps(&names, &last)), map = 19, index;
+	short count = xbox_multiplayer_map_count(ui_widget_port_multiplayer_maps(&names, NULL)), map = 19, index;
 	short level = campaign_level_of(map_name);
 	struct widget_instance *widget;
 
@@ -4237,7 +4335,8 @@ void menu_functions_text_box_drawn(struct widget_instance *widget, rectangle2d c
 		size = (short)MIN(14, bounds->y1 - bounds->y0);
 		icon.x1 = (short)(bounds->x1 - 4);
 		icon.y0 = (short)((bounds->y0 + bounds->y1 - size) / 2);
-		/* (the name's ink: the icon just left of it) */
+		/* (the name's ink: the icon just left of it, centred on its
+		capitals) */
 		if (widget->parameters.text_box.text && widget->parameters.text_box.text[0])
 		{
 			rectangle2d text;
@@ -4246,7 +4345,7 @@ void menu_functions_text_box_drawn(struct widget_instance *widget, rectangle2d c
 			draw_unicode_string_compute_bounds(bounds, widget->parameters.text_box.text, &text, &cursor);
 			if (text.x0 - size - 6 >= bounds->x0)
 				icon.x1 = (short)(text.x0 - 6);
-			icon.y0 = (short)((text.y0 + text.y1 - size) / 2);
+			icon.y0 = (short)(draw_unicode_string_capital_middle(bounds, widget->parameters.text_box.text) - size / 2);
 		}
 		icon.x0 = (short)(icon.x1 - size);
 		icon.y1 = (short)(icon.y0 + size);
@@ -4653,6 +4752,11 @@ static struct gametype_option const gametype_options[] =
 		{ "2", "4", "8", "16", "32" } },
 	{ "coop_player_collisions_spinner", _option_setting, 0, 0, 2, { 0 }, "network.coop_player_collisions",
 		{ "true", "false" } },
+	/* map sharing's (Server Setup's MAP SHARING: tools/port_settings.py's
+	MAP_SHARE_SETUP; map_share.c) */
+	{ "map_share_spinner", _option_setting, 0, 0, 2, { 0 }, "network.map_share", { "true", "false" } },
+	{ "map_share_upload_spinner", _option_setting, 0, 0, 6, { 0 }, "network.map_share_upload",
+		{ "256", "512", "1024", "2048", "4096", "8192" } },
 	/* vehicle options (the side's set and counts: vehicles_update) */
 	{ "vehicles_respawn_spinner", _option_short, OPTIONS_FIELD(vehicle_respawn_time), 0, 7,
 		{ 0, 30, 60, 90, 120, 180, 300 } },
@@ -5081,7 +5185,7 @@ static void gametype_edit_list_update(struct widget_instance *list)
 		gametype_edit_read();
 	focused = list_scroll(list, &gametype_edit.first, gametype_edit.count, GAMETYPE_EDIT_ROWS);
 	if (focused != NONE)
-		gametype_edit.chosen = (short)MIN(focused, gametype_edit.count - 1);
+		gametype_edit.chosen = (short)MAX(0, MIN(focused, gametype_edit.count - 1));
 	rows_update(list, (short)MIN(gametype_edit.count, GAMETYPE_EDIT_ROWS), gametype_edit_row_text);
 	visible_set(named(description, "gametype_right_item", 0), gametype_edit.count > 0);
 	if (gametype_edit.chosen < gametype_edit.count)
@@ -5294,7 +5398,11 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "profile set edit begin"))
 		{
-			return pc_menu_profile_edit_begin();
+			return profile_edit_begin(widget, event, widget_deleted);
+		}
+		else if (!strcmp(name, "new campaign decision"))
+		{
+			return new_profile_decision(widget, event, widget_deleted);
 		}
 		/* (the press posted is the controller's that chose the button: a
 		split screen player's LEAVE is theirs) */
@@ -5413,6 +5521,10 @@ boolean pc_menu_event_function_invoke(
 		else if (!strcmp(name, "player profile save changes"))
 		{
 			return profile_save_changes(widget, widget_deleted);
+		}
+		else if (!strcmp(name, "port profile settings save"))
+		{
+			return profile_settings_save(widget);
 		}
 		else if (!strcmp(name, "direct ip connect go"))
 		{

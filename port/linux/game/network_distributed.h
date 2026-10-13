@@ -118,6 +118,13 @@ enum
 	_distributed_message_voice_up = 80,
 	_distributed_message_voice_down = 81,
 	_distributed_message_voice_config = 82,
+	/* map sharing (map_share.c), in the lobby too, reliably: a client's
+	request for the game's map, the host's offer (the files, their sizes and
+	hashes) and the machines that may have them, and the client's progress */
+	_distributed_message_map_share_request = 83,
+	_distributed_message_map_share_offer = 84,
+	_distributed_message_map_share_sources = 85,
+	_distributed_message_map_share_progress = 86,
 	/* Skate 3 mode (skate_network.c): a client's own skaters' states, every
 	tick while they skate (unreliable); and every other machine's players'
 	states, from the host, as often as their units go. A build without them
