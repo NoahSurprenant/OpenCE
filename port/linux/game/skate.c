@@ -2316,7 +2316,8 @@ void skate_holster_weapon(long unit_index, real_matrix4x3 const *node_matrices, 
 /* every debug.skate_status seconds while skating, a line in the log: where
 the skater is, how fast, its state, whether the pose the engine gave is
 finite, and how many times the board has been drawn (the web build's skate
-test reads it: port/web/tests/skate.mjs) */
+test reads it: port/web/tests/skate.mjs). (Finite: between the largest floats,
+which neither a NaN nor an infinity is; the game's C has no isfinite) */
 static void skate_status(int written, int node_count, real_matrix4x3 const *matrices)
 {
 	static double interval = -1.0;
@@ -2335,12 +2336,12 @@ static void skate_status(int written, int node_count, real_matrix4x3 const *matr
 	last_tick = now;
 	for (index = 0; index < written * (int)(sizeof(real_matrix4x3) / sizeof(float)); index++)
 	{
-		if (!isfinite(values[index]))
+		if (!(values[index] > -FLT_MAX && values[index] < FLT_MAX))
 			finite = FALSE;
 	}
 	for (index = 0; index < 3; index++)
 	{
-		if (!isfinite(skate_globals.frame.position[index]))
+		if (!(skate_globals.frame.position[index] > -FLT_MAX && skate_globals.frame.position[index] < FLT_MAX))
 			finite = FALSE;
 	}
 	platform_log("skate status: %s at (%.2f %.2f %.2f), %.1f m/s, %s, posed %d of %d nodes, the pose %s, the board "
