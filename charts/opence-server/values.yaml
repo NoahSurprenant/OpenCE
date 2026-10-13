@@ -1,0 +1,223 @@
+# opence-server chart: the OpenCE dedicated server (port/linux/README.md, "Dedicated server"). One
+# replica: the server owns its tunnel port and the address players reach it at.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/noahsurprenant/opence-server
+  # Empty: the chart's appVersion (latest). Image Updater can write <tag>@sha256:... here.
+  tag: ""
+  # sha256:... ; replaces any digest in tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Secrets to pull the image with, if its registry needs them: [{name: my-pull-secret}].
+imagePullSecrets: []
+
+# The game data: the folder that contains maps/, from an Xbox disc image of Halo: Combat Evolved.
+# It is never in the image. Mounted read-only at /data (HALO_DATA_ROOT). Exactly one source is
+# required; the chart sets no default.
+gameData:
+  # An existing PersistentVolumeClaim (ReadOnlyMany, or any mode the volume allows).
+  existingClaim: ""
+  # Or an NFS export, mounted read-only by the kubelet.
+  nfs:
+    server: ""
+    path: ""
+  # Or any other volume source, as in a pod's volumes (without the name), e.g.
+  # {hostPath: {path: /srv/halo, type: Directory}}. An {emptyDir: {}} starts the server without
+  # maps: it runs, but hosts nothing (for tests of the chart).
+  volume: {}
+  # The folder within the volume that contains maps/. Empty: the volume's root.
+  subPath: ""
+
+# The server's settings, as the HALO_* environment variables (port/linux/README.md, "Settings").
+# The server writes config.toml with the defaults into the state volume; these take priority over
+# it for each start.
+server:
+  # server.maps: the maps, in turn, the first again after the last. "<map>:<game type>" gives a map
+  # its own game type.
+  maps:
+    - bloodgulch
+  # server.game_types: the game types of the maps that have none of their own, in turn: slayer,
+  # team_slayer, ctf, king, oddball, race and the other built-in game types.
+  gameTypes:
+    - slayer
+  # server.time_limit: the longest game, in minutes; 0: the game type's (the built-in ones have none).
+  timeLimit: 15
+  # server.score_limit: the score to win; 0: the game type's.
+  scoreLimit: 0
+
+network:
+  # network.tunnel_port: the UDP port of internet play, which the Service exposes.
+  tunnelPort: 27015
+  # network.public_address: the public address at which players reach the tunnel port, "<host>" or
+  # "<host>:<port>" (an IPv4 address or a DNS name; a name is looked up again every five minutes, so
+  # a dynamic DNS name follows the router). Needed behind a NAT that gives each destination its own
+  # port (most clusters): forward the port on the router to the Service and give the router's
+  # address here. Empty: none, the server offers only its STUN address.
+  publicAddress: ""
+  # network.host_public: true lists the server in the in-game server browser under serverName;
+  # false keeps it invite-only (players need the invite link from the server's log). The game's own
+  # default is true; this chart's is false.
+  hostPublic: false
+  # network.server_name: the server browser's name for it. Empty: the machine's (the pod's) name.
+  serverName: ""
+  # network.allow_upnp: asking the router to forward the port. Off: a pod cannot reach the router's
+  # UPnP, and the port is forwarded by hand.
+  allowUpnp: false
+  # network.online: internet play. false: system link on the local network only, which a pod
+  # seldom has.
+  online: true
+  # network.stun_servers: "host:port,host:port". Empty: the game's (Google's and Cloudflare's).
+  stunServers: ""
+
+# The script console on 127.0.0.1 (debug.telnet_console), for `kubectl exec`. It has no password;
+# only the container itself can reach it.
+telnetConsole:
+  enabled: false
+  port: 2323
+
+# More environment variables for the container, as in a pod spec ({name, value} or {name,
+# valueFrom}); they come after the chart's, so the same name overrides it.
+extraEnv: []
+
+# The writable state at /state: config.toml, the save root (HALO_SAVE_ROOT=/state/saves) with its
+# map cache (about 115 MB for the multiplayer maps; up to 800 MB with every map), and the key that
+# makes invite links. Without persistence, an emptyDir: the cache is rebuilt and a new key (a new
+# invite link) made at each start.
+persistence:
+  enabled: false
+  existingClaim: ""
+  size: 2Gi
+  # Empty: the cluster's default storage class.
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  annotations: {}
+  # The emptyDir's limit, without persistence.
+  emptyDirSizeLimit: 1Gi
+
+service:
+  # ClusterIP, NodePort or LoadBalancer. Players reach the server from outside the cluster, so a real
+  # deployment needs NodePort or LoadBalancer (and, behind a router, a forward to it).
+  type: ClusterIP
+  # The Service's port; the container listens on network.tunnelPort. Keep them the same unless the
+  # router forwards to a different one: network.publicAddress names the port players use.
+  port: 27015
+  # With NodePort or LoadBalancer: a fixed node port. Empty: one is assigned.
+  nodePort: ""
+  # E.g. a load balancer's address pool or fixed address, which most implementations take as
+  # annotations (spec.loadBalancerIP is deprecated).
+  annotations: {}
+  labels: {}
+  # With NodePort or LoadBalancer: Local keeps the players' own addresses (no SNAT to a node) and
+  # sends replies from the node the pod is on. Empty: the cluster's default (Cluster).
+  externalTrafficPolicy: ""
+  loadBalancerClass: ""
+  loadBalancerSourceRanges: []
+
+# One server owns the tunnel port: never two at once, so a rollout stops the old pod first.
+strategy:
+  type: Recreate
+
+# Measured with a client playing: about 120-140 MB resident, 1-3% of a core, 7 threads. The memory
+# limit leaves room for a full game.
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    memory: 512Mi
+
+# The image is 32-bit x86 Linux code, which runs on amd64 nodes only.
+nodeSelector:
+  kubernetes.io/os: linux
+  kubernetes.io/arch: amd64
+affinity: {}
+tolerations: []
+priorityClassName: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# SIGTERM ends the game in progress, tells the players and exits 0 in about 2 seconds; a second
+# signal exits at once.
+terminationGracePeriodSeconds: 15
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# The probes check that the server holds its tunnel port (a UDP socket bound to network.tunnelPort
+# in the container's /proc/net/udp): it binds the port as internet play starts and keeps it until it
+# quits. Each probe's fields (other than its exec) override the defaults here; enabled: false drops
+# it.
+probes:
+  startup:
+    enabled: true
+    periodSeconds: 2
+    failureThreshold: 60
+    timeoutSeconds: 2
+  readiness:
+    enabled: true
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 2
+  liveness:
+    enabled: true
+    periodSeconds: 20
+    failureThreshold: 3
+    timeoutSeconds: 2
+
+# Manage the namespace's default ServiceAccount with automountServiceAccountToken: false. The server
+# never calls the Kubernetes API, and its pod mounts no token either way. Every namespace already has
+# a default ServiceAccount: Argo CD adopts it, but plain helm install needs --take-ownership.
+defaultServiceAccount:
+  manage: false
+
+networkPolicy:
+  enabled: true
+  # Who may reach the tunnel port. Empty: anyone (players are on the internet). With a LoadBalancer
+  # or NodePort and externalTrafficPolicy Cluster, packets arrive from the nodes' addresses.
+  from: []
+  # DNS: the cluster's DNS pods (kube-system, k8s-app: kube-dns), UDP and TCP 53.
+  dns:
+    to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+  # The internet: TCP to the MQTT brokers that carry invites and the server browser (brokers.txt),
+  # and UDP to anywhere (STUN, and the players' own tunnel ports, which can be any). The private
+  # ranges are excepted, so the server reaches nothing on the local network or in the cluster.
+  internet:
+    cidr: 0.0.0.0/0
+    except:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 100.64.0.0/10
+      - 169.254.0.0/16
+    tcpPorts:
+      - 1883
+    udp: true
+  # More rules, as in a NetworkPolicy's ingress and egress.
+  extraIngress: []
+  extraEgress: []
+
+# More objects to render with the release (templated).
+extraObjects: []

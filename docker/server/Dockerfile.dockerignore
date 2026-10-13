@@ -1,0 +1,11 @@
+# The build context is the repository; only the sources go in.
+.git
+.github
+build
+assets
+dist
+docs
+charts
+**/__pycache__
+**/target
+port/android/app/build

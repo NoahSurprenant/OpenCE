@@ -1,0 +1,37 @@
+suite: service
+templates:
+  - templates/service.yaml
+release:
+  name: opence-server
+tests:
+  - it: exposes the tunnel port over UDP, ClusterIP by default
+    asserts:
+      - equal: { path: 'metadata.name', value: opence-server }
+      - equal: { path: 'spec.type', value: ClusterIP }
+      - equal: { path: 'spec.ports[0]', value: { name: tunnel, port: 27015, targetPort: tunnel, protocol: UDP } }
+      - notExists: { path: 'spec.externalTrafficPolicy' }
+
+  - it: takes a load balancer's address from annotations, and keeps the players' addresses
+    set:
+      service:
+        type: LoadBalancer
+        annotations: { example.com/address: 192.0.2.10 }
+        externalTrafficPolicy: Local
+    asserts:
+      - equal: { path: 'spec.type', value: LoadBalancer }
+      - equal: { path: 'metadata.annotations', value: { example.com/address: 192.0.2.10 } }
+      - equal: { path: 'spec.externalTrafficPolicy', value: Local }
+      - notExists: { path: 'spec.loadBalancerIP' }
+
+  - it: ignores externalTrafficPolicy and nodePort on a ClusterIP Service
+    set:
+      service: { externalTrafficPolicy: Local, nodePort: 30715 }
+    asserts:
+      - notExists: { path: 'spec.externalTrafficPolicy' }
+      - notExists: { path: 'spec.ports[0].nodePort' }
+
+  - it: sets a fixed node port
+    set:
+      service: { type: NodePort, nodePort: 30715 }
+    asserts:
+      - equal: { path: 'spec.ports[0].nodePort', value: 30715 }
