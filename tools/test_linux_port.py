@@ -465,12 +465,16 @@ def test_skate_multiplayer(tmp_path):
     common = {"HALO_FULLSCREEN": "0", "HALO_NO_AUDIO": "1", "HALO_EXIT_AFTER": str(seconds),
               "HALO_UPDATE_ANSWER": "never", "HALO_NULL_RENDERER": "1", "HALO_HIDDEN_WINDOW": "1",
               "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75", "HALO_NETWORK_LOSS": "10"}
-    machines = {"host": {"HALO_NET_ADDRESS": "127.0.0.210", "HALO_NET_BROADCAST": "127.0.0.211",
+    # (HALO_TEST_SKATE_NET: the host's and the client's loopback addresses,
+    # "127.0.0.210,127.0.0.211" by default; other pairs let runs go side by
+    # side, as tools/skate_mp_loop.sh runs them)
+    host_address, join_address = os.environ.get("HALO_TEST_SKATE_NET", "127.0.0.210,127.0.0.211").split(",")
+    machines = {"host": {"HALO_NET_ADDRESS": host_address, "HALO_NET_BROADCAST": join_address,
                          "HALO_NETWORK_TEST": "host:bloodgulch", "HALO_NETWORK_TEST_START": "12",
                          "HALO_NETWORK_TEST_SKATE_WATCH": "1", "HALO_NETWORK_TEST_SKATE_BLOCK": "1",
                          "HALO_NETWORK_TEST_SKATE_DUEL": "56",
                          "HALO_NETWORK_TEST_SKATE_SHOOT": "1", "HALO_NETWORK_TEST_SKATE_TELEPORT": "66"},
-                "join": {"HALO_NET_ADDRESS": "127.0.0.211", "HALO_NET_BROADCAST": "127.0.0.210",
+                "join": {"HALO_NET_ADDRESS": join_address, "HALO_NET_BROADCAST": host_address,
                          "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15",
                          "HALO_NETWORK_TEST_SKATE_SCENERY": "30"}}
     games = {}
@@ -646,7 +650,7 @@ def test_skate_multiplayer(tmp_path):
     # grenade that went off on its fuse at its skater on the host and hurt
     # them without killing them (a killed skater's body flies as anyone's))
     shots = [int(t) for t in re.findall(r"skate test: shooting a skater \(another machine's\) [\d.]+ world units away, "
-                                        r"a burst(?: \(none\))? and a grenade at tick (\d+)", host)]
+                                        r"a burst(?: \([^)]*\))? and a grenade at tick (\d+)", host)]
     blasts = re.findall(r"skate test: the grenade went off at tick (\d+) \([a-z]+ bouncing off them\), [\d.]+ world "
                         r"units from the skater \(another machine's\): shield ([\d.-]+) to ([\d.-]+), body ([\d.-]+) "
                         r"to ([\d.-]+)", host)

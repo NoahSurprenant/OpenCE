@@ -34,6 +34,7 @@ know, and its players see Halo's own biped.
 #include "objects/object_definitions.h"
 #include "objects/objects.h"
 #include "physics/collisions.h"
+#include "objects/damage.h"
 #include "game/game_globals.h"
 #include "items/weapon_definitions.h"
 #include "scenario/scenario.h"
@@ -837,16 +838,28 @@ static void skate_network_board_note(struct skate_network_player *player, long u
 /* ---------- debug.network_test_skate_shoot
 A host's watcher shoots skaters with real projectiles, as Halo's own
 weapons fire them, at the seconds skate_shoot_seconds gives (a grenade kills
-a skater, and a watcher near, as it would anyone, so not often): a burst of three rounds of its weapon from a
-little way off, then a grenade thrown at their chest, each aimed at the
-skater's posed body. The skater is another machine's (where the host has
-them, posed from their state) or, once the host skates too
-(debug.network_test_skate_duel), the host's own at the seconds given so. The log
-tells what each did: the burst's damage (shield and body before and after),
-whether the grenade bounced off the skater (its velocity turned back near
-them), and where the skater was when it went off and a second later. */
-/* when it shoots (seconds into the game), whether at its own skater, and
-whether a burst and a grenade */
+a skater, and a watcher near, as it would anyone, so not often): a burst of
+three rounds of its weapon from a little way off, then a grenade thrown at
+their chest, each aimed at the skater's posed body. The skater is another
+machine's (where the host has them, posed from their state) or, once the
+host skates too (debug.network_test_skate_duel), the host's own at the
+seconds given so. The log tells what each did: the burst's damage (shield
+and body before and after), whether the grenade bounced off the skater (its
+velocity turned back near them), and where the skater was when it went off
+and a little later.
+
+So that a shot tests the skater and not where they happen to be, every shot
+is fired along a clear line (skate_shoot_clear): from the side of the
+skater nothing stands on, the first thing a projectile there would meet being
+the skater. In the duel the other skater, who just rode into this one, is
+often right in front of them, and a burst from the front hit them instead. A
+burst that did no harm all the same (the skater bailing low, under it) is
+fired again, a fresh line each time, till one harms them
+(SKATE_BURST_TRIES). A shot due while another's grenade is about waits for
+it. */
+/* when it shoots (seconds into the game, or as soon after as nothing shot
+before is about), whether at its own skater, and whether a burst and a
+grenade */
 static struct
 {
 	short seconds;
@@ -857,9 +870,11 @@ static struct
 	{ 96, FALSE, TRUE, TRUE } };
 /* and a grenade alone at its own skater (any push on them till it goes off
 is its bounce's), from that many seconds in to that many, on a second when
-they skate, alive, their shield full, and no grenade is about, till that
-many have gone off hurting them without killing them (one that kills them is
-tried again once they skate again) */
+they skate, alive, nothing else shot is about and the line to them is clear,
+till that many have gone off hurting them without killing them. Each is
+thrown with them healed, a health pack's body and a full shield (a frag at
+their feet then hurts them without killing them), and one that went off away
+from them, or at once, is thrown again */
 #define SKATE_OWN_GRENADES 1
 #define SKATE_OWN_GRENADES_FROM 70
 #define SKATE_OWN_GRENADES_UNTIL 125
@@ -867,6 +882,14 @@ tried again once they skate again) */
 thrown from */
 #define SKATE_SHOOT_DISTANCE 1.5f
 #define SKATE_THROW_DISTANCE 0.8f
+/* bursts at a skater, at most, till one harms them */
+#define SKATE_BURST_TRIES 8
+/* and for that many seconds at most */
+#define SKATE_BURST_SECONDS 15
+/* the skater's course as a grenade goes off: how far they went over that
+many ticks before it (where they really went, not their velocity, which a
+skater pressed against something keeps while going nowhere) */
+#define SKATE_COURSE_TICKS 6
 
 static struct
 {
@@ -880,39 +903,140 @@ static struct
 	boolean bounced;
 	long detonated_time;
 	real_point3d detonated_at;
-	long shots;
 	/* (grenades alone at its own skater that went off hurting them) */
 	short own_grenades;
 	/* (where the grenade was last, the skater's shield and body then, and their
-	velocity as it went off) */
+	velocity and course, a tick's going, as it went off) */
 	real_point3d grenade_at;
 	real grenade_shield;
 	real grenade_body;
 	real_vector3d detonated_velocity;
+	real_vector3d detonated_course;
 	/* (when the grenade was thrown) */
 	long grenade_time;
-} skate_shoot = { NONE, FALSE, NONE, 0.f, 0.f, NONE, { 0.f, 0.f, 0.f }, FALSE, NONE, { 0.f, 0.f, 0.f }, 0 };
+	/* (a burst still wanted, at this machine's skater or another's, and how
+	many fired for it) */
+	boolean burst_wanted;
+	boolean burst_local;
+	short bursts;
+	/* (when it was first wanted) */
+	long burst_time;
+	/* (the next of skate_shoot_seconds) */
+	short next;
+	/* (where the skater was the last ticks a grenade was about, and when) */
+	real_point3d course[SKATE_COURSE_TICKS];
+	long course_time[SKATE_COURSE_TICKS];
+	short course_count;
+} skate_shoot;
 
-/* a projectile of definition_index aimed at target_index's middle (raised
-by height world units) from distance world units off, along direction (from
-it to the target) */
-static long skate_shoot_projectile(long definition_index, long owner_index, long target_index,
-	real_vector3d const *direction, real distance, real height)
+static boolean skate_shoot_alive(long object_index)
+{
+	struct object_datum *object = object_index != NONE ? object_try_and_get(object_index) : NULL;
+
+	return object && !TEST_FLAG(object->object.damage_flags, _object_dead_bit);
+}
+
+/* the skater to shoot: the host's own, alive and skating, or the nearest
+living skater of another machine */
+static long skate_shoot_target(long watcher_index, boolean local)
+{
+	long target_index = NONE;
+	real nearest = 0.f;
+	short index;
+
+	if (local)
+		return skate_unit_is_skating(watcher_index) && skate_shoot_alive(watcher_index) ? watcher_index : NONE;
+	for (index = 0; index < SKATE_NETWORK_PLAYERS; index++)
+	{
+		long skater_index = skate_network_player_skating(index) ? skate_network_player_unit(index) : NONE;
+		real distance;
+
+		if (skater_index == NONE || skater_index == watcher_index || !skate_shoot_alive(skater_index))
+			continue;
+		distance = distance_squared3d(&object_get(skater_index)->object.position,
+			&object_get(watcher_index)->object.position);
+		if (target_index == NONE || distance < nearest)
+		{
+			target_index = skater_index;
+			nearest = distance;
+		}
+	}
+	return target_index;
+}
+
+/* where a shot at target_index aims: their middle, or (a skater lying in a
+bail, as the host's verdicts often have them) their root node, low, rather
+than over them */
+static void skate_shoot_aim(long target_index, real_point3d *at)
 {
 	struct object_datum *target = object_get(target_index);
-	struct object_placement_data data;
-	real_point3d at = target->object.bounding_sphere_center;
 
-	/* (a skater lying in a bail, as the host's verdicts often have them: at
-	their root node, low, rather than over them) */
+	*at = target->object.bounding_sphere_center;
 	if (target->object.node_matrices.size >= (int)sizeof(real_matrix4x3))
 	{
 		real_matrix4x3 const *root = (real_matrix4x3 const *)object_header_block_get(target_index,
 			&target->object.node_matrices);
 
-		if (root->position.z < at.z - 0.2f)
-			at = root->position;
+		if (root->position.z < at->z - 0.2f)
+			*at = root->position;
 	}
+}
+
+/* a clear line to target_index from distance world units off, level: the
+way they face first, then turning round them 45 degrees at a time, either
+side, to their back. Clear is nothing between their middle and where the
+shot starts (not another skater, the watcher, a rock: a start inside a rock
+does not hit it from within), and a projectile's test from there (Halo's
+own, ignoring the shot's owner) meeting the skater first. Its direction is
+from the start to the skater */
+static boolean skate_shoot_clear(long target_index, long owner_index, real distance, real_vector3d *direction)
+{
+	struct object_datum *target = object_get(target_index);
+	real_point3d at;
+	real facing;
+	short attempt;
+
+	skate_shoot_aim(target_index, &at);
+	facing = (real)atan2(-target->object.forward.j, -target->object.forward.i);
+	for (attempt = 0; attempt < 8; attempt++)
+	{
+		real angle = facing + (real)((attempt + 1) / 2) * (attempt % 2 ? 1.f : -1.f) * _pi / 4.f;
+		struct collision_result collision;
+		real_point3d start;
+		real_vector3d back, along;
+
+		direction->i = (real)cos(angle);
+		direction->j = (real)sin(angle);
+		direction->k = 0.f;
+		start.x = at.x - direction->i * distance;
+		start.y = at.y - direction->j * distance;
+		start.z = at.z;
+		back.i = -direction->i * distance;
+		back.j = -direction->j * distance;
+		back.k = 0.f;
+		along.i = direction->i * (distance + 0.5f);
+		along.j = direction->j * (distance + 0.5f);
+		along.k = 0.f;
+		if (!collision_test_vector(_collision_test_for_projectiles_flags, &at, &back, target_index, &collision) &&
+			collision_test_vector(_collision_test_for_projectiles_flags, &start, &along, owner_index, &collision) &&
+			collision.type == _collision_result_object && collision.object_index == target_index)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* a projectile of definition_index aimed at target_index (skate_shoot_aim,
+raised by height world units) from distance world units off, along
+direction (from it to the target) */
+static long skate_shoot_projectile(long definition_index, long owner_index, long target_index,
+	real_vector3d const *direction, real distance, real height)
+{
+	struct object_placement_data data;
+	real_point3d at;
+
+	skate_shoot_aim(target_index, &at);
 	object_placement_data_new(&data, definition_index, owner_index);
 	data.position.x = at.x - direction->i * distance;
 	data.position.y = at.y - direction->j * distance;
@@ -921,28 +1045,130 @@ static long skate_shoot_projectile(long definition_index, long owner_index, long
 	return object_new(&data);
 }
 
+/* the first projectile of the watcher's weapon's first trigger, and Halo's
+first grenade */
+static long skate_shoot_bullet_definition(long watcher_index)
+{
+	struct unit_datum *unit = (struct unit_datum *)object_get(watcher_index);
+	long weapon_index = unit->unit.current_weapon_index != NONE ?
+		unit->unit.weapon_object_indices[unit->unit.current_weapon_index] : NONE;
+
+	if (weapon_index != NONE)
+	{
+		struct weapon_definition *weapon = weapon_definition_get(object_get(weapon_index)->definition_index);
+
+		if (weapon->weapon.triggers.count > 0)
+			return TAG_BLOCK_GET_ELEMENT(&weapon->weapon.triggers, 0, struct weapon_trigger_definition)->projectile.index;
+	}
+	return NONE;
+}
+
+static long skate_shoot_grenade_definition(void)
+{
+	return global_game_globals && global_game_globals->grenades.count > 0 ?
+		TAG_BLOCK_GET_ELEMENT(&global_game_globals->grenades, 0, struct game_globals_grenade)->projectile.index : NONE;
+}
+
+/* the wanted burst, if a skater of its kind is alive and a line to them
+clear: whether it was fired */
+static boolean skate_shoot_burst(long watcher_index, long now)
+{
+	long target_index = skate_shoot_target(watcher_index, skate_shoot.burst_local);
+	long owner_index = skate_shoot.burst_local ? NONE : watcher_index;
+	long definition_index = skate_shoot_bullet_definition(watcher_index);
+	struct object_datum *target;
+	real_vector3d direction;
+	short shot;
+
+	if (target_index == NONE || definition_index == NONE ||
+		!skate_shoot_clear(target_index, owner_index, SKATE_SHOOT_DISTANCE, &direction))
+	{
+		return FALSE;
+	}
+	target = object_get(target_index);
+	skate_shoot.target_index = target_index;
+	skate_shoot.local = skate_shoot.burst_local;
+	skate_shoot.shield = target->object.shield_vitality;
+	skate_shoot.body = target->object.body_vitality;
+	skate_shoot.bursts++;
+	/* (three: at the chest, and a little above and below) */
+	for (shot = -1; shot <= 1; shot++)
+	{
+		if (skate_shoot_projectile(definition_index, owner_index, target_index, &direction, SKATE_SHOOT_DISTANCE,
+			shot * 0.12f) != NONE)
+		{
+			skate_shoot.bullet_time = now;
+		}
+	}
+	skate_shoot.burst_wanted = FALSE;
+	return TRUE;
+}
+
+/* a grenade at target_index along direction */
+static void skate_shoot_grenade(long watcher_index, long target_index, boolean local, real_vector3d const *direction,
+	long now)
+{
+	long definition_index = skate_shoot_grenade_definition();
+
+	skate_shoot.target_index = target_index;
+	skate_shoot.local = local;
+	skate_shoot.bounced = FALSE;
+	skate_shoot.grenade_direction = *direction;
+	skate_shoot.grenade_time = now;
+	skate_shoot.course_count = 0;
+	skate_shoot.grenade_index = definition_index != NONE ? skate_shoot_projectile(definition_index,
+		local ? NONE : watcher_index, target_index, direction, SKATE_THROW_DISTANCE, 0.f) : NONE;
+}
+
 static void skate_network_test_shoot(void)
 {
 	static int enabled = -1;
 	long watcher_index = player_control_get_unit_index(0);
 	struct object_datum *watcher = watcher_index != NONE ? object_try_and_get(watcher_index) : NULL;
-	boolean burst, grenade;
 	long now = game_time_get();
+	boolean due;
 
 	if (enabled < 0)
+	{
 		enabled = config_boolean("debug.network_test_skate_shoot");
+		memset(&skate_shoot, 0, sizeof(skate_shoot));
+		skate_shoot.target_index = NONE;
+		skate_shoot.bullet_time = NONE;
+		skate_shoot.grenade_index = NONE;
+		skate_shoot.detonated_time = NONE;
+	}
 	if (!enabled || !watcher || game_connection() == _game_connection_network_client || !game_in_progress())
 		return;
 	/* (what the last shots did) */
-	if (skate_shoot.target_index != NONE && object_try_and_get(skate_shoot.target_index))
+	if (skate_shoot.target_index != NONE && !object_try_and_get(skate_shoot.target_index))
+	{
+		/* (the skater shot at gone, a body taken away: what was about of it
+		forgotten, a wanted burst fired at whoever is there next) */
+		platform_log("skate test: the skater shot at (%s) is gone at tick %ld",
+			skate_shoot.local ? "this machine's" : "another machine's", now);
+		skate_shoot.target_index = NONE;
+		skate_shoot.grenade_index = NONE;
+		skate_shoot.detonated_time = NONE;
+		if (skate_shoot.bullet_time != NONE && skate_shoot.bursts < SKATE_BURST_TRIES)
+			skate_shoot.burst_wanted = TRUE;
+		skate_shoot.bullet_time = NONE;
+	}
+	if (skate_shoot.target_index != NONE)
 	{
 		struct object_datum *target = object_get(skate_shoot.target_index);
 
 		if (skate_shoot.bullet_time != NONE && now - skate_shoot.bullet_time == TICKS_PER_SECOND / 2)
 		{
-			platform_log("skate test: a burst at a skater (%s): shield %.2f to %.2f, body %.2f to %.2f",
+			boolean harmed = target->object.shield_vitality < skate_shoot.shield ||
+				target->object.body_vitality < skate_shoot.body;
+
+			platform_log("skate test: a burst at a skater (%s): shield %.2f to %.2f, body %.2f to %.2f (burst %d)",
 				skate_shoot.local ? "this machine's" : "another machine's", skate_shoot.shield,
-				target->object.shield_vitality, skate_shoot.body, target->object.body_vitality);
+				target->object.shield_vitality, skate_shoot.body, target->object.body_vitality, skate_shoot.bursts);
+			skate_shoot.bullet_time = NONE;
+			/* (no harm done: again, while tries are left) */
+			if (!harmed && skate_shoot.bursts < SKATE_BURST_TRIES)
+				skate_shoot.burst_wanted = TRUE;
 		}
 		if (skate_shoot.grenade_index != NONE)
 		{
@@ -953,10 +1179,24 @@ static void skate_network_test_shoot(void)
 				real_vector3d const *v = &grenade->object.translational_velocity;
 				real near = (real)sqrt(distance_squared3d(&grenade->object.position,
 					&target->object.bounding_sphere_center));
+				short index;
 
 				skate_shoot.grenade_at = grenade->object.position;
 				skate_shoot.grenade_shield = target->object.shield_vitality;
 				skate_shoot.grenade_body = target->object.body_vitality;
+				/* (the skater's last places) */
+				if (skate_shoot.course_count == SKATE_COURSE_TICKS)
+				{
+					for (index = 1; index < SKATE_COURSE_TICKS; index++)
+					{
+						skate_shoot.course[index - 1] = skate_shoot.course[index];
+						skate_shoot.course_time[index - 1] = skate_shoot.course_time[index];
+					}
+					skate_shoot.course_count--;
+				}
+				skate_shoot.course[skate_shoot.course_count] = target->object.position;
+				skate_shoot.course_time[skate_shoot.course_count] = now;
+				skate_shoot.course_count++;
 
 				/* (turned more than 60 degrees from its throw near them) */
 				if (!skate_shoot.bounced && near < 1.f && v->i * skate_shoot.grenade_direction.i +
@@ -974,6 +1214,17 @@ static void skate_network_test_shoot(void)
 				skate_shoot.detonated_time = now;
 				skate_shoot.detonated_at = target->object.position;
 				skate_shoot.detonated_velocity = target->object.translational_velocity;
+				skate_shoot.detonated_course.i = 0.f;
+				skate_shoot.detonated_course.j = 0.f;
+				skate_shoot.detonated_course.k = 0.f;
+				if (skate_shoot.course_count > 0 && now > skate_shoot.course_time[0])
+				{
+					real ticks = (real)(now - skate_shoot.course_time[0]);
+
+					skate_shoot.detonated_course.i = (target->object.position.x - skate_shoot.course[0].x) / ticks;
+					skate_shoot.detonated_course.j = (target->object.position.y - skate_shoot.course[0].y) / ticks;
+					skate_shoot.detonated_course.k = (target->object.position.z - skate_shoot.course[0].z) / ticks;
+				}
 				/* (and on its fuse: one that went off at once, on something in its
 				way, is tried again) */
 				if (skate_shoot.local && target->object.body_vitality > 0.f &&
@@ -1005,133 +1256,114 @@ static void skate_network_test_shoot(void)
 			if (normalize3d(&away) != 0.f)
 			{
 				past = (target->object.position.x - skate_shoot.detonated_at.x -
-					skate_shoot.detonated_velocity.i * ticks) * away.i +
-					(target->object.position.y - skate_shoot.detonated_at.y - skate_shoot.detonated_velocity.j * ticks) *
+					skate_shoot.detonated_course.i * ticks) * away.i +
+					(target->object.position.y - skate_shoot.detonated_at.y - skate_shoot.detonated_course.j * ticks) *
 					away.j;
 				faster = ((target->object.translational_velocity.i - skate_shoot.detonated_velocity.i) * away.i +
 					(target->object.translational_velocity.j - skate_shoot.detonated_velocity.j) * away.j) *
 					TICKS_PER_SECOND * 3.048f;
 			}
 			platform_log("skate test: after the grenade the skater (%s) was %.2f world units on, going %.1f m/s, "
-				"shield %.2f, body %.2f; %.2f world units further from the blast than their course, %.1f m/s faster "
-				"away from it", skate_shoot.local ? "this machine's" : "another machine's",
+				"shield %.2f, body %.2f; %.2f world units further from the blast than their course (%.1f m/s), "
+				"%.1f m/s faster away from it", skate_shoot.local ? "this machine's" : "another machine's",
 				(real)sqrt(distance_squared3d(&skate_shoot.detonated_at, &target->object.position)),
 				magnitude3d(&target->object.translational_velocity) * TICKS_PER_SECOND * 3.048f,
-				target->object.shield_vitality, target->object.body_vitality, past, faster);
+				target->object.shield_vitality, target->object.body_vitality, past,
+				magnitude3d(&skate_shoot.detonated_course) * TICKS_PER_SECOND * 3.048f, faster);
 			skate_shoot.detonated_time = NONE;
 		}
 	}
+	/* (a burst not fired, or not harming them, in SKATE_BURST_SECONDS: given up) */
+	if (skate_shoot.burst_wanted && now - skate_shoot.burst_time > SKATE_BURST_SECONDS * TICKS_PER_SECOND)
 	{
-		short which;
-
-		for (which = 0; which < (short)NUMBEROF(skate_shoot_seconds); which++)
-		{
-			if (now == skate_shoot_seconds[which].seconds * TICKS_PER_SECOND)
-				break;
-		}
-		if (which < (short)NUMBEROF(skate_shoot_seconds))
-		{
-			skate_shoot.shots = skate_shoot_seconds[which].own;
-			grenade = skate_shoot_seconds[which].grenade;
-			burst = skate_shoot_seconds[which].burst;
-		}
-		else if (skate_shoot.own_grenades < SKATE_OWN_GRENADES && now >= SKATE_OWN_GRENADES_FROM * TICKS_PER_SECOND &&
-			now <= SKATE_OWN_GRENADES_UNTIL * TICKS_PER_SECOND &&
-			now % TICKS_PER_SECOND == 0 && skate_shoot.grenade_index == NONE && skate_shoot.detonated_time == NONE &&
-			skate_unit_is_skating(watcher_index) && !TEST_FLAG(watcher->object.damage_flags, _object_dead_bit) &&
-			watcher->object.shield_vitality >= 1.f)
-		{
-			skate_shoot.shots = TRUE;
-			grenade = TRUE;
-			burst = FALSE;
-		}
-		else
-			return;
+		platform_log("skate test: no burst at a skater (%s) harmed them in %d seconds, %d fired; given up",
+			skate_shoot.burst_local ? "this machine's" : "another machine's", SKATE_BURST_SECONDS, skate_shoot.bursts);
+		skate_shoot.burst_wanted = FALSE;
 	}
-	/* (a target: the host's own skater every other time it skates, else the
-	nearest skater of another machine) */
+	/* (a burst wanted, fired once no grenade is about, and the line clear) */
+	if (skate_shoot.burst_wanted && skate_shoot.grenade_index == NONE && skate_shoot.detonated_time == NONE &&
+		skate_shoot_burst(watcher_index, now))
 	{
-		long target_index = NONE;
-		boolean local = FALSE;
-		real nearest = 0.f;
-		short index;
+		platform_log("skate test: shooting a skater (%s) %.2f world units away, a burst (again, %d) and a grenade (none) "
+			"at tick %ld", skate_shoot.local ? "this machine's" : "another machine's",
+			(real)sqrt(distance_squared3d(&object_get(skate_shoot.target_index)->object.position,
+			&watcher->object.position)), skate_shoot.bursts, now);
+	}
+	/* (nothing shot about: the next shot may go) */
+	if (skate_shoot.burst_wanted || skate_shoot.bullet_time != NONE || skate_shoot.grenade_index != NONE ||
+		skate_shoot.detonated_time != NONE)
+	{
+		return;
+	}
+	due = skate_shoot.next < (short)NUMBEROF(skate_shoot_seconds) &&
+		now >= skate_shoot_seconds[skate_shoot.next].seconds * TICKS_PER_SECOND;
+	if (due)
+	{
+		boolean local = skate_shoot_seconds[skate_shoot.next].own;
+		boolean burst = skate_shoot_seconds[skate_shoot.next].burst;
+		boolean grenade = skate_shoot_seconds[skate_shoot.next].grenade;
+		long target_index = skate_shoot_target(watcher_index, local);
+		real_vector3d direction;
+		boolean clear;
 
-		if (skate_unit_is_skating(watcher_index) && skate_shoot.shots)
-		{
-			target_index = watcher_index;
-			local = TRUE;
-		}
-		for (index = 0; target_index == NONE && index < SKATE_NETWORK_PLAYERS; index++)
-		{
-			long skater_index = skate_network_player_skating(index) ? skate_network_player_unit(index) : NONE;
-			real distance;
-
-			if (skater_index == NONE || skater_index == watcher_index)
-				continue;
-			distance = distance_squared3d(&object_get(skater_index)->object.position, &watcher->object.position);
-			if (target_index == NONE || distance < nearest)
-			{
-				target_index = skater_index;
-				nearest = distance;
-			}
-		}
+		/* (a shot at the host's own skater who does not skate now waits; one
+		at another machine's whom there is none of waits too) */
 		if (target_index == NONE)
 			return;
+		clear = skate_shoot_clear(target_index, local ? NONE : watcher_index, SKATE_THROW_DISTANCE, &direction);
+		skate_shoot.next++;
+		skate_shoot.bursts = 0;
+		skate_shoot.bullet_time = NONE;
+		skate_shoot.burst_local = local;
+		skate_shoot.burst_wanted = burst;
+		skate_shoot.burst_time = now;
+		if (burst)
+			skate_shoot_burst(watcher_index, now);
+		if (grenade)
 		{
-			struct object_datum *target = object_get(target_index);
-			struct unit_datum *unit = (struct unit_datum *)watcher;
-			long weapon_index = unit->unit.current_weapon_index != NONE ?
-				unit->unit.weapon_object_indices[unit->unit.current_weapon_index] : NONE;
-			long bullet_definition = NONE;
-			long grenade_definition = NONE;
-			short shot;
-			real_vector3d direction;
+			/* (a line not clear at a grenade's throw: from their front all the
+			same, as before; it bounces off whatever is there) */
+			if (!clear)
+			{
+				struct object_datum *target = object_get(target_index);
 
-			if (weapon_index != NONE)
-			{
-				struct weapon_definition *weapon = weapon_definition_get(object_get(weapon_index)->definition_index);
-
-				if (weapon->weapon.triggers.count > 0)
-					bullet_definition = TAG_BLOCK_GET_ELEMENT(&weapon->weapon.triggers, 0,
-						struct weapon_trigger_definition)->projectile.index;
-			}
-			if (global_game_globals && global_game_globals->grenades.count > 0)
-				grenade_definition = TAG_BLOCK_GET_ELEMENT(&global_game_globals->grenades, 0,
-					struct game_globals_grenade)->projectile.index;
-			/* (level, from the way the target faces: at their front) */
-			direction.i = -target->object.forward.i;
-			direction.j = -target->object.forward.j;
-			direction.k = 0.f;
-			if (normalize3d(&direction) == 0.f)
-			{
-				direction.i = 1.f;
-				direction.j = 0.f;
-			}
-			skate_shoot.target_index = target_index;
-			skate_shoot.local = local;
-			skate_shoot.shield = target->object.shield_vitality;
-			skate_shoot.body = target->object.body_vitality;
-			skate_shoot.bullet_time = NONE;
-			/* (a burst of three: at the chest, and a little above and below) */
-			for (shot = -1; burst && bullet_definition != NONE && shot <= 1; shot++)
-			{
-				if (skate_shoot_projectile(bullet_definition, local ? NONE : watcher_index, target_index, &direction,
-					SKATE_SHOOT_DISTANCE, shot * 0.12f) != NONE)
+				direction.i = -target->object.forward.i;
+				direction.j = -target->object.forward.j;
+				direction.k = 0.f;
+				if (normalize3d(&direction) == 0.f)
 				{
-					skate_shoot.bullet_time = now;
+					direction.i = 1.f;
+					direction.j = 0.f;
 				}
 			}
-			skate_shoot.bounced = FALSE;
-			skate_shoot.grenade_direction = direction;
-			skate_shoot.grenade_time = now;
-			skate_shoot.grenade_index = grenade && grenade_definition != NONE ?
-				skate_shoot_projectile(grenade_definition, local ? NONE : watcher_index, target_index, &direction,
-					SKATE_THROW_DISTANCE, 0.f) : NONE;
-			platform_log("skate test: shooting a skater (%s) %.2f world units away, a burst%s and a grenade%s at tick %ld",
-				local ? "this machine's" : "another machine's",
-				(real)sqrt(distance_squared3d(&target->object.position, &watcher->object.position)),
-				skate_shoot.bullet_time != NONE ? "" : " (none)", skate_shoot.grenade_index != NONE ? "" : " (none)", now);
+			skate_shoot_grenade(watcher_index, target_index, local, &direction, now);
 		}
+		platform_log("skate test: shooting a skater (%s) %.2f world units away, a burst%s and a grenade%s at tick %ld",
+			local ? "this machine's" : "another machine's",
+			(real)sqrt(distance_squared3d(&object_get(target_index)->object.position, &watcher->object.position)),
+			skate_shoot.bullet_time != NONE ? "" : burst ? " (later: no clear line)" : " (none)",
+			skate_shoot.grenade_index != NONE ? "" : " (none)", now);
+	}
+	else if (skate_shoot.own_grenades < SKATE_OWN_GRENADES && now >= SKATE_OWN_GRENADES_FROM * TICKS_PER_SECOND &&
+		now <= SKATE_OWN_GRENADES_UNTIL * TICKS_PER_SECOND && now % TICKS_PER_SECOND == 0 &&
+		skate_shoot_target(watcher_index, TRUE) == watcher_index)
+	{
+		real_vector3d direction;
+
+		if (!skate_shoot_clear(watcher_index, NONE, SKATE_THROW_DISTANCE, &direction))
+			return;
+		/* (healed, as by a health pack, and a full shield: the frag hurts
+		them, and does not kill them) */
+		object_restore_body(watcher_index);
+		if (watcher->object.shield_vitality < 1.f)
+		{
+			watcher->object.shield_vitality = 1.f;
+			watcher->object.shield_stun_ticks = 0;
+		}
+		skate_shoot.bullet_time = NONE;
+		skate_shoot_grenade(watcher_index, watcher_index, TRUE, &direction, now);
+		platform_log("skate test: shooting a skater (this machine's) %.2f world units away, a burst (none) and a "
+			"grenade%s at tick %ld", 0.f, skate_shoot.grenade_index != NONE ? "" : " (none)", now);
 	}
 }
 
