@@ -286,18 +286,25 @@ the setting for one start of the game. It has priority over the file.
 | `network.votekick_ban_minutes` | `30` | `HALO_NET_VOTEKICK_BAN_MINUTES` | When you host: the minutes that a player who is kicked by a vote cannot join again (`1` to `1440`). |
 | `network.coop_public` | `false` | `HALO_NET_COOP_PUBLIC` | `true`: an online co-op game (Create Game > Internet, a SINGLEPLAYER map) starts as PUBLIC. `false`: it starts as PRIVATE. LISTING in co-op's Server Setup writes its choice here. Refer to "Server browser". |
 | `network.brokers_file` | `"brokers.txt"` | `HALO_NET_BROKERS_FILE` | The file of the public MQTT brokers that let the machines of an invite find each other, and that carry the listings of the server browser: next to `config.toml`, unless a full path. One `host:port` on each line, up to 4; `#` starts a comment. |
+| `network.server_name` | `""` | `HALO_NET_SERVER_NAME` | The name of the listing of a dedicated server (or a `debug.network_test` host) in the server browser. Empty: the name of the machine. A game from the menus uses the name of Server Setup. |
+| `network.public_address` | `""` | `HALO_NET_PUBLIC_ADDRESS` | When you host: the public address at which the router forwards `network.tunnel_port` to this machine, `"<host>"` or `"<host>:<port>"` (the host an IPv4 address or a name; the port, if not given, the port of `network.tunnel_port`). The other machines try this address first. Refer to "Dedicated server". Empty: none. |
 | `network.stun_servers` | Google and Cloudflare | `HALO_NET_STUN` | The public STUN servers (`host:port`, with commas between them) that give the internet address of a machine. |
 | `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for invites. Empty: no Discord. |
 | `update.auto` | `true` | `HALO_UPDATE_AUTO` | `true`: at start-up, the game looks for a new version. Refer to "Updates". `false`: the game does not look. |
 | `crash_reports.upload` | `"ask"` | `HALO_CRASH_REPORTS` | Windows only. `"yes"`: the game sends a report of each crash to the developers. `"no"`: the game sends no reports. `"ask"`: the game asks at the next crash and writes the answer here. Refer to "Crash reports" in [port/windows/README.md](../windows/README.md#crash-reports). |
+| `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: the game is a dedicated server, without a window, sound or player. Refer to "Dedicated server". |
+| `server.maps` | `"bloodgulch"` | `HALO_SERVER_MAPS` | The maps of a dedicated server, with commas between them, in turn. `"<map>:<game type>"` gives a map its own game type. |
+| `server.game_types` | `"slayer"` | `HALO_SERVER_GAME_TYPES` | The game types (with commas between them) of each map of `server.maps` that has no game type of its own, in turn: `slayer`, `team_slayer`, `ctf`, `king`, `oddball`, `race` and the other built-in game types. |
+| `server.time_limit` | `15` | `HALO_SERVER_TIME_LIMIT` | The longest time of a game of a dedicated server, in minutes. `0`: the limit of the game type (the built-in game types have none). |
+| `server.score_limit` | `0` | `HALO_SERVER_SCORE_LIMIT` | The score to win a game of a dedicated server. `0`: the score of the game type. |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
-| `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds. `0`: never. |
+| `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds (without a window, as on SIGTERM). `0`: never. |
 | `debug.screenshot_directory`, `debug.screenshot_every` | `""`, `0` | `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | The game writes each Nth frame to this folder as a BMP file. |
 | `debug.hidden_window`, `debug.null_renderer` | `false` | `HALO_HIDDEN_WINDOW`, `HALO_NULL_RENDERER` | `true`: no visible window, or no graphics. |
 | `debug.gpu_stats`, `debug.gpu_trace_frame`, `debug.gpu_trace_constants`, `debug.gpu_dump_shaders`, `debug.texture_dump_directory`, `debug.texture_log`, `debug.gl_debug`, `debug.texture_no_cache` | off | `HALO_GPU_STATS`, `HALO_GPU_TRACE`, `HALO_GPU_TRACE_CONSTANTS`, `HALO_GPU_DUMP_SHADERS`, `HALO_TEXTURE_DUMP`, `HALO_TEXTURE_LOG`, `HALO_GL_DEBUG`, `HALO_TEXTURE_NO_CACHE` | Tools to find problems in the graphics: counts for each frame, all the GL state of one frame, the GLSL code, the textures. |
 | `debug.menu_open` | `""` | `HALO_MENU_OPEN` | Start on this screen of the menus (`main_menu/settings_select/...`, as `port/assets/menus` names it), a player profile being edited, to look at it. |
 | `debug.gpu_skip_vertex_shaders`, `debug.gpu_debug_expression`, `debug.gpu_debug_flat`, `debug.gpu_debug_texture0` | off | `HALO_GPU_SKIP_VS`, `HALO_GPU_DEBUG_EXPR`, `HALO_GPU_DEBUG_FLAT`, `HALO_GPU_DEBUG_T0` | Tools to find problems in the graphics: skip the draws of a vertex shader, or replace the output of all pixel shaders with a GLSL expression (for example `t0.rgb`). |
-| `debug.network_test`, `debug.network_test_start`, `debug.network_test_kill`, `debug.network_test_score`, `debug.network_test_shoot`, `debug.network_test_vehicle`, `debug.network_test_pickup`, `debug.network_test_pickup_weapon`, `debug.network_test_skate`, `debug.network_test_skate_watch`, `debug.network_test_skate_block`, `debug.network_test_skate_duel`, `debug.network_test_skate_scenery`, `debug.network_test_skate_shoot`, `debug.network_test_skate_teleport`, `debug.test_input` | off | `HALO_NETWORK_TEST`, `HALO_NETWORK_TEST_START`, `HALO_NETWORK_TEST_KILL`, `HALO_NETWORK_TEST_SCORE`, `HALO_NETWORK_TEST_SHOOT`, `HALO_NETWORK_TEST_VEHICLE`, `HALO_NETWORK_TEST_PICKUP`, `HALO_NETWORK_TEST_PICKUP_WEAPON`, `HALO_NETWORK_TEST_SKATE`, `HALO_NETWORK_TEST_SKATE_WATCH`, `HALO_NETWORK_TEST_SKATE_BLOCK`, `HALO_NETWORK_TEST_SKATE_DUEL`, `HALO_NETWORK_TEST_SKATE_SCENERY`, `HALO_NETWORK_TEST_SKATE_SHOOT`, `HALO_NETWORK_TEST_SKATE_TELEPORT`, `HALO_TEST_INPUT` | Automatic tests of system link (`game/network_test.c`; the skate ones `game/skate.c` and `game/skate_network.c`). Refer to `NETCODE.md`. |
+| `debug.network_test`, `debug.network_test_start`, `debug.network_test_kill`, `debug.network_test_score`, `debug.network_test_time`, `debug.network_test_shoot`, `debug.network_test_vehicle`, `debug.network_test_pickup`, `debug.network_test_pickup_weapon`, `debug.network_test_skate`, `debug.network_test_skate_watch`, `debug.network_test_skate_block`, `debug.network_test_skate_duel`, `debug.network_test_skate_scenery`, `debug.network_test_skate_shoot`, `debug.network_test_skate_teleport`, `debug.test_input` | off | `HALO_NETWORK_TEST`, `HALO_NETWORK_TEST_START`, `HALO_NETWORK_TEST_KILL`, `HALO_NETWORK_TEST_SCORE`, `HALO_NETWORK_TEST_TIME`, `HALO_NETWORK_TEST_SHOOT`, `HALO_NETWORK_TEST_VEHICLE`, `HALO_NETWORK_TEST_PICKUP`, `HALO_NETWORK_TEST_PICKUP_WEAPON`, `HALO_NETWORK_TEST_SKATE`, `HALO_NETWORK_TEST_SKATE_WATCH`, `HALO_NETWORK_TEST_SKATE_BLOCK`, `HALO_NETWORK_TEST_SKATE_DUEL`, `HALO_NETWORK_TEST_SKATE_SCENERY`, `HALO_NETWORK_TEST_SKATE_SHOOT`, `HALO_NETWORK_TEST_SKATE_TELEPORT`, `HALO_TEST_INPUT` | Automatic tests of system link (`game/network_test.c`; the skate ones `game/skate.c` and `game/skate_network.c`). Refer to `NETCODE.md`. |
 | `debug.network_latency`, `debug.network_loss`, `debug.network_corrupt`, `debug.network_corrupt_stream`, `debug.network_corrupt_after` | `0` | `HALO_NETWORK_LATENCY`, `HALO_NETWORK_LOSS`, `HALO_NETWORK_CORRUPT`, `HALO_NETWORK_CORRUPT_STREAM`, `HALO_NETWORK_CORRUPT_AFTER` | The game holds all the data that it receives for this number of milliseconds, ignores this percentage of the datagrams, and damages this percentage of the datagrams it receives, and this percentage of its reads of streams, at random (bytes changed, cut short, stretched or replaced), from this many seconds after the start. Use the first two to test the netcode as on the internet, and the others to test that nothing another machine sends can crash the game (a damaged stream is closed, so a little goes a long way; a host's messages to its own client are damaged too, so start damaging once the game has started). |
 | `debug.voice_test` | `false` | `HALO_VOICE_TEST` | Automatic tests of voice chat: a tone replaces the microphone, and each voice that the game hears is written to the log once each second. |
 | `debug.telnet_console`, `debug.telnet_console_port` | `false`, `2323` | `HALO_TELNET_CONSOLE`, `HALO_TELNET_CONSOLE_PORT` | The game listens on 127.0.0.1, on this port, for a script console (connect with telnet). The console has no password, so only this computer can reach it. |
@@ -731,6 +738,58 @@ has a private party with the invite as its join secret. The host can send
 the invite with the invite button of Discord. When a person accepts it, that
 person joins the game. If the game does not operate, Discord starts it.
 The game sends the activity only to a Discord client of the same user.
+
+## Dedicated server
+
+The game can run as a dedicated server: a host without a window, sound or
+player of its own, for a machine that nobody sits at (a server, a
+container). Set `server.dedicated = true`, or start the game with
+`HALO_DEDICATED=1`:
+
+```
+HALO_DEDICATED=1 HALO_DATA_ROOT=/path/to/halo ./halo
+```
+
+No X, Wayland or `SDL_VIDEO_DRIVER` is necessary. The server:
+
+- Hosts the maps of `server.maps` in turn, each with the game types of
+  `server.game_types` in turn, and starts again at the first map after the
+  last. `server.time_limit` ends each game after that many minutes, so
+  that the next map comes when no player reaches the score.
+- Has no player of its own. Its games start without players, and the
+  players join them in progress. The game engine counts only the players
+  who joined.
+- Draws nothing and makes no sound. It runs at the 30 frames each second
+  of the game and sleeps between them: about 1-2% of a CPU core and 120 MB
+  of memory with two players.
+- Writes its log to the standard error: players who join and leave, the
+  start of each game, its end and its scores. If the data root is
+  read-only, the lines of `debug.txt` go to the standard error too.
+- Stops on SIGTERM or SIGINT. It ends a game that is in progress, tells
+  the players that the host goes, removes its listing from the server
+  browser and exits with status 0. A second signal stops it at once.
+- Does not use the clipboard, Discord or the self-updater.
+
+For internet play (`network.online`), it makes an invite link as other
+hosts do. If `network.host_public` is `true`, the server browser lists it
+under `network.server_name`. Set `network.host_public = false` to keep it
+private: then only players with the invite link can join.
+
+Behind a NAT that gives a different port for each destination (refer to
+"Connection"), the other machines cannot reach the server through its STUN
+address. Then forward a fixed `network.tunnel_port` (for example 27015, UDP)
+on the router to the server, and set `network.public_address` to the
+public address of the router: an IPv4 address or a name, with
+`:<port>` if the router forwards another port. The server gives this
+address to the joining machines first. The server looks up a name again
+every five minutes, so a dynamic DNS name follows the router's address.
+
+The telnet console (`debug.telnet_console`) gives the console of the
+server on 127.0.0.1.
+
+`debug.network_test`, `debug.network_test_time` and
+`debug.network_test_score` still operate. If `debug.network_test` is not
+empty, the server hosts its list instead of `server.maps`.
 
 ## Map checks
 

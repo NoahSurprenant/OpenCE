@@ -1118,6 +1118,10 @@ void network_test_update(
 			if (network_test.setup_seconds >= network_test.start_delay)
 			{
 				network_test.started = TRUE;
+				/* port: (the scores' map choice, which the main menu opens on a
+				host after a game, holds the countdown again: ui_widget.c) */
+				if (global_network_game_server_get())
+					network_game_server_pause_countdown(global_network_game_server_get(), FALSE);
 				network_game_client_request_immediate_start();
 				platform_log("network test: starting the game");
 			}
