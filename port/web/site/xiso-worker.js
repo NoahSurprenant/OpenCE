@@ -31,12 +31,20 @@ if there, its sounds/, into skate-data/ beside the maps, where the game
 looks (port/web/src/web_main.c). Those files are the player's, from their
 own copy of Skate 3: they stay in this browser, as the maps do.
 
+On a server that provides the game data itself (server-data.js, opt-in: a
+private server of the owner's own copy), it downloads the manifest's files
+into the same places instead, checks each one's size and SHA-256, and keeps
+what it downloaded (.server-files in each folder, the hashes) so that a
+later visit downloads only what changed.
+
 Messages from the page: { type: 'image', file } or { type: 'folder', files }
 (a maps folder's File objects), or { type: 'skate', files } (a skate-data
-folder's, each { path, file }, its path from the folder chosen). To the page:
-{ type: 'progress', file, done, total }, then { type: 'done', files, bytes }
-(and sounds, the number of sound files, for skate data) or { type: 'error',
-message }.
+folder's, each { path, file }, its path from the folder chosen), or { type:
+'server', manifest, skate } (server-data.js parseManifest's result; skate,
+whether the build has Skate 3 mode). To the page: { type: 'progress', file,
+done, total }, then { type: 'done', files, bytes } (and sounds, the number of
+sound files, for skate data; { maps, skate, bytes } for the server's) or
+{ type: 'error', message }.
 */
 
 'use strict';
@@ -333,9 +341,215 @@ async function copySkate(files) {
   return summary;
 }
 
+// ---------- the game data from the site's own server (server-data.js)
+
+// what the server's files were when they were downloaded, in each folder:
+// { path: sha256 } of the files checked complete, so that a later visit
+// downloads only what changed, and an interrupted one resumes
+const SERVER_FILES = '.server-files';
+const SERVER_WRITE_INTERVAL = 2000;
+
+// (server-data.js: in the worker beside this file, in the tests a module)
+const ServerData = typeof importScripts === 'function' ?
+  (importScripts('server-data.js'), self.HaloServerData) : require('./server-data.js');
+
+async function readJson(directory, name) {
+  try {
+    return JSON.parse(await (await (await directory.getFileHandle(name)).getFile()).text());
+  } catch {
+    return null;
+  }
+}
+
+async function writeJson(directory, name, value) {
+  const access = await (await directory.getFileHandle(name, { create: true })).createSyncAccessHandle();
+  try {
+    access.truncate(0);
+    access.write(new TextEncoder().encode(JSON.stringify(value)), { at: 0 });
+    access.flush();
+  } finally {
+    access.close();
+  }
+}
+
+async function fileSize(directory, parts) {
+  try {
+    let folder = directory;
+    for (const part of parts.slice(0, -1)) folder = await folder.getDirectoryHandle(part);
+    return (await (await folder.getFileHandle(parts[parts.length - 1])).getFile()).size;
+  } catch {
+    return -1;
+  }
+}
+
+// every file under directory, as paths ('assets/board.json'), but the
+// folder's own markers at its top
+async function storedPaths(directory, prefix = '', paths = []) {
+  for await (const [name, handle] of directory.entries()) {
+    if (!prefix && name.startsWith('.')) continue;
+    if (handle.kind === 'directory') await storedPaths(handle, prefix + name + '/', paths);
+    else paths.push(prefix + name);
+  }
+  return paths;
+}
+
+async function removePath(directory, path) {
+  const parts = path.split('/');
+  let folder = directory;
+  try {
+    for (const part of parts.slice(0, -1)) folder = await folder.getDirectoryHandle(part);
+    await folder.removeEntry(parts[parts.length - 1]);
+  } catch {
+    // gone already
+  }
+}
+
+// one file from the server into its place, checked against the manifest
+async function downloadFile(folderFor, file, onChunk) {
+  const response = await fetch(file.url, { mode: 'same-origin', credentials: 'same-origin', redirect: 'error', cache: 'no-store' });
+  if (!response.ok) throw new Error(`The server did not give ${file.path} (HTTP ${response.status}).`);
+  const folder = await folderFor(file.parts.slice(0, -1));
+  const access = await (await folder.getFileHandle(file.name, { create: true })).createSyncAccessHandle();
+  const hash = new ServerData.Sha256();
+  let position = 0;
+  try {
+    access.truncate(0);
+    const reader = response.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (position + value.length > file.size) {
+        reader.cancel().catch(() => {});
+        throw new Error(`${file.path} from the server is larger than its manifest says.`);
+      }
+      hash.update(value);
+      let written = 0;
+      while (written < value.length) {
+        const result = access.write(value.subarray(written), { at: position + written });
+        if (!result) throw new Error(`Could not write ${file.path}: is the device full?`);
+        written += result;
+      }
+      position += value.length;
+      onChunk(value.length);
+    }
+    access.flush();
+  } finally {
+    access.close();
+  }
+  if (position !== file.size) throw new Error(`${file.path} from the server is ${position} bytes, and its manifest says ${file.size}.`);
+  if (hash.hex() !== file.sha256) throw new Error(`${file.path} from the server does not match its manifest's SHA-256.`);
+}
+
+// one folder (maps, or skate-data) against the manifest's part: what is
+// there and unchanged stays, what changed or is missing is to download, what
+// the manifest no longer lists is to go
+async function planFolder(storage, name, part) {
+  const directory = await storage.getDirectoryHandle(name, { create: true });
+  const known = (await readJson(directory, SERVER_FILES)) || {};
+  const listed = new Set(part.files.map((file) => file.path));
+  const wanted = [];
+  for (const file of part.files) {
+    if (known[file.path] !== file.sha256 || await fileSize(directory, file.parts) !== file.size) wanted.push(file);
+  }
+  const extra = (await storedPaths(directory)).filter((path) => !listed.has(path));
+  const complete = await readJson(directory, COMPLETE_MARKER);
+  const current = !wanted.length && !extra.length && !!complete && complete.server === true;
+  return { directory, known, wanted, extra, current, bytes: wanted.reduce((sum, file) => sum + file.size, 0) };
+}
+
+// the plan carried out; the .complete marker the page looks for is written
+// last, as an import writes it
+async function applyFolder(plan, marker, onChunk) {
+  const { directory, known, wanted, extra } = plan;
+  // (not ready while it changes: the page waits for .complete again)
+  await directory.removeEntry(COMPLETE_MARKER).catch(() => {});
+  for (const file of wanted) delete known[file.path];
+  for (const path of extra) {
+    delete known[path];
+    await removePath(directory, path);
+  }
+  await writeJson(directory, SERVER_FILES, known);
+  const folders = new Map();
+  const folderFor = async (parts) => {
+    let folder = directory;
+    for (let index = 0; index < parts.length; index++) {
+      const key = parts.slice(0, index + 1).join('/');
+      if (!folders.has(key)) folders.set(key, await folder.getDirectoryHandle(parts[index], { create: true }));
+      folder = folders.get(key);
+    }
+    return folder;
+  };
+  let lastWrite = Date.now();
+  for (const file of wanted) {
+    await downloadFile(folderFor, file, (count) => onChunk(file.path, count));
+    known[file.path] = file.sha256;
+    if (Date.now() - lastWrite > SERVER_WRITE_INTERVAL) {
+      lastWrite = Date.now();
+      await writeJson(directory, SERVER_FILES, known);
+    }
+  }
+  await writeJson(directory, SERVER_FILES, known);
+  await writeJson(directory, COMPLETE_MARKER, { ...marker, server: true });
+}
+
+// the manifest (parsed by the page: server-data.js parseManifest) into the
+// browser's storage, skate data too if skate (a build with Skate 3 mode).
+// To the page: { maps, skate } each { files, bytes, downloaded, removed }
+// (skate null without), and bytes, those downloaded.
+async function syncServer(manifest, skate) {
+  const storage = await navigator.storage.getDirectory();
+  const folders = [{ name: 'maps', part: manifest.maps,
+    marker: { files: manifest.maps.files.map((file) => file.path), bytes: manifest.maps.bytes } }];
+  if (skate && manifest.skate) {
+    folders.push({ name: SKATE_DIRECTORY, part: manifest.skate, marker: { files: manifest.skate.files.length,
+      bytes: manifest.skate.bytes, sounds: manifest.skate.files.filter((file) => file.parts[0] === 'sounds').length } });
+  }
+  for (const folder of folders) folder.plan = await planFolder(storage, folder.name, folder.part);
+  const total = folders.reduce((sum, folder) => sum + folder.plan.bytes, 0);
+  if (total && navigator.storage.estimate) {
+    const { quota, usage } = await navigator.storage.estimate();
+    if (quota && quota - usage < total) {
+      throw new Error(`The browser lets this site keep ${Math.floor((quota - usage) / 1e6)} MB more, ` +
+        `and the game data to download takes ${Math.ceil(total / 1e6)} MB.`);
+    }
+  }
+  let done = 0;
+  let lastReport = 0;
+  const onChunk = (file, count) => {
+    done += count;
+    const now = Date.now();
+    if (now - lastReport > 100 || done === total) {
+      lastReport = now;
+      postMessage({ type: 'progress', file, done, total });
+    }
+  };
+  const results = {};
+  for (const { name, part, marker, plan } of folders) {
+    if (!plan.current) await applyFolder(plan, marker, onChunk);
+    results[name] = { files: part.files.length, bytes: part.bytes, downloaded: plan.wanted.length, removed: plan.extra.length };
+  }
+  // the game's copies of the maps (save/z/cache000.map and on, as the Xbox's
+  // hard disk kept them) go when a map changed, as when the maps are deleted
+  if (results.maps.downloaded || results.maps.removed) {
+    try {
+      const drive = await (await storage.getDirectoryHandle('save')).getDirectoryHandle('z');
+      for await (const [name] of drive.entries()) {
+        if (/^cache\d+\.map$/i.test(name)) await drive.removeEntry(name).catch(() => {});
+      }
+    } catch {
+      // no saved games yet
+    }
+  }
+  return { maps: results.maps, skate: results[SKATE_DIRECTORY] || null, bytes: done };
+}
+
 if (typeof onmessage !== 'undefined' || typeof WorkerGlobalScope !== 'undefined') {
   onmessage = async (event) => {
     try {
+      if (event.data.type === 'server') {
+        postMessage({ type: 'done', ...(await syncServer(event.data.manifest, event.data.skate)) });
+        return;
+      }
       if (event.data.type === 'skate') {
         postMessage({ type: 'done', ...(await copySkate(skateFiles(event.data.files))) });
         return;
@@ -350,5 +564,6 @@ if (typeof onmessage !== 'undefined' || typeof WorkerGlobalScope !== 'undefined'
 
 // (for the tests: port/web/tests)
 if (typeof module !== 'undefined') {
-  module.exports = { findVolume, walkDirectory, mapProblem, imageFiles, folderFiles, plainName, skateFiles, skateName };
+  module.exports = { findVolume, walkDirectory, mapProblem, imageFiles, folderFiles, plainName, skateFiles, skateName,
+    syncServer };
 }

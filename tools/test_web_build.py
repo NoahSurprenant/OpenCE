@@ -132,6 +132,20 @@ def test_the_site_holds_the_page_its_fonts_licences_and_version():
         assert f"build/web/site/{source.relative_to(Path('port/web/site')).as_posix()}" in outputs, source
 
 
+def test_the_site_never_holds_a_servers_game_data(tmp_path, monkeypatch):
+    # (server-data.json and game-data/ are a private server's own:
+    # port/web/README.md, "Serving the game data privately")
+    site = tmp_path / "port/web/site"
+    (site / "game-data/maps").mkdir(parents=True)
+    (site / "index.html").write_text("page")
+    (site / "server-data.js").write_text("code")
+    (site / "server-data.json").write_text("{}")
+    (site / "game-data/maps/ui.map").write_bytes(b"map")
+    monkeypatch.setattr(web_build, "PORT_DIR", tmp_path / "port/web")
+    assert [path.name for path in web_build.site_sources()] == ["index.html", "server-data.js"]
+    assert not (ROOT / "port/web/site/server-data.json").exists()
+
+
 def test_version_json_names_the_build_and_its_files(tmp_path, monkeypatch):
     sys.path.insert(0, str(ROOT / "port/web"))
     import stamp_version
