@@ -170,7 +170,7 @@ setting goes in `extraEnv`, which comes last and so overrides the chart's.
   namespace that enforces Pod Security's `restricted` profile. There are no maps in CI, so
   `ci/minimal-values.yaml` mounts an emptyDir in their place. The test checks that the server exits
   with status 2 and the line about the maps, that the pod goes into `CrashLoopBackOff` and never gets
-  ready, and that the Service has no endpoint. Then it patches the Deployment: the container runs
+  ready, and that the Service has no ready endpoint. Then it patches the Deployment: the container runs
   `sleep` in place of the server (with the same image, user, security context and volumes), and a
   sidecar binds the tunnel port as the server does. With this, the test checks that the probes pass
   and the pod gets ready, the pod's hardening, the Service and its endpoint, the NetworkPolicy and a

@@ -54,7 +54,11 @@ pod_name() {
 }
 # a field of the server container's status in the pod
 status() { kubectl -n "$ns" get pod "$1" -o jsonpath="{.status.containerStatuses[?(@.name=='opence-server')]$2}"; }
-endpoint() { kubectl -n "$ns" get endpointslices -l kubernetes.io/service-name=$release -o jsonpath='{.items[*].endpoints[*].addresses[0]}'; }
+# the Service's ready endpoints (a pod that is not ready is listed too, as not ready)
+endpoint() {
+  kubectl -n "$ns" get endpointslices -l kubernetes.io/service-name=$release \
+    -o jsonpath='{.items[*].endpoints[?(@.conditions.ready==true)].addresses[0]}'
+}
 
 step "install ($scenario, $image): no maps"
 kubectl create namespace "$ns"
@@ -87,7 +91,7 @@ grep -q 'settings: a dedicated server, hosting bloodgulch:slayer' <<<"$log" || f
 grep -qE 'settings: (wrote the defaults to )?/opt/opence/config.toml$' <<<"$log" || fail "config.toml was not written to /state (through the image's link)"
 if grep -q 'Internet play' <<<"$log"; then fail "the server's network started"; fi
 [ "$(status "$pod" .ready)" = false ] || fail "the pod is ready"
-[ -z "$(endpoint)" ] || fail "the Service has an endpoint"
+[ -z "$(endpoint)" ] || fail "the Service has a ready endpoint"
 echo "admitted under the restricted profile; exit 2, CrashLoopBackOff ($(status "$pod" .restartCount) restarts), never ready: $pod"
 
 step "the pod's hardening and its probes: the server swapped for sleep, a sidecar holding the tunnel port"
@@ -111,7 +115,7 @@ echo "ready on the probes; uid 10001, read-only root and /data, no token, /state
 step "the Service and the NetworkPolicy"
 [ "$(kubectl -n "$ns" get svc "$release" -o jsonpath='{.spec.ports[0].protocol}/{.spec.ports[0].port}')" = UDP/27015 ] \
   || fail "the Service does not expose UDP 27015"
-[ -n "$(endpoint)" ] || fail "the Service has no endpoint"
+[ -n "$(endpoint)" ] || fail "the Service has no ready endpoint"
 kubectl -n "$ns" get networkpolicy "$release" >/dev/null || fail "no NetworkPolicy"
 echo "UDP 27015 with an endpoint; NetworkPolicy present"
 
