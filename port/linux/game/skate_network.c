@@ -870,9 +870,9 @@ static struct
 	{ 96, FALSE, TRUE, TRUE } };
 /* and a grenade alone at its own skater (any push on them till it goes off
 is its bounce's), from that many seconds in to that many, on a second when
-they skate, alive, alone (SKATE_OWN_GRENADE_ALONE), nearly still
-(SKATE_STILL_SPEED), nothing else shot is about and the line to them is
-clear, till that many have gone off on their fuse hurting them without
+they skate, alive, nearly still (SKATE_STILL_SPEED), nothing else shot is
+about and the line to them is clear (not alone: the duel keeps the other
+skater near them, and one riding into them costs a throw at worst), till that many have gone off on their fuse hurting them without
 killing them and pushed them measurably away (SKATE_PUSH_AWAY). Each is
 thrown with them healed, a health pack's body and a full shield (a frag at
 their feet then hurts them without killing them); one that went off away
@@ -895,8 +895,6 @@ thrown from */
 many ticks before it (where they really went, not their velocity, which a
 skater pressed against something keeps while going nowhere) */
 #define SKATE_COURSE_TICKS 6
-/* and no other skater within that many world units of them */
-#define SKATE_OWN_GRENADE_ALONE 3.f
 /* and nearly still, slower than that many metres a second: a grenade bounced
 off their chest goes off a second and a half on, and a skater riding at
 8 m/s is 4 world units away by then, unhurt */
@@ -1391,13 +1389,8 @@ static void skate_network_test_shoot(void)
 		skate_shoot_target(watcher_index, TRUE) == watcher_index)
 	{
 		real_vector3d direction;
-		long other_index = skate_shoot_target(watcher_index, FALSE);
 
-		/* (no other skater near, to be hurt too or ride into them while the
-		push is measured) */
-		if ((other_index != NONE && distance_squared3d(&object_get(other_index)->object.position,
-			&watcher->object.position) < SKATE_OWN_GRENADE_ALONE * SKATE_OWN_GRENADE_ALONE) ||
-			magnitude3d(&watcher->object.translational_velocity) * TICKS_PER_SECOND * 3.048f >= SKATE_STILL_SPEED ||
+		if (magnitude3d(&watcher->object.translational_velocity) * TICKS_PER_SECOND * 3.048f >= SKATE_STILL_SPEED ||
 			!skate_shoot_clear(watcher_index, NONE, SKATE_THROW_DISTANCE, &direction))
 		{
 			return;

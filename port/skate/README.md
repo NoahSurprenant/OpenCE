@@ -1016,15 +1016,14 @@ goes along a clear line: from the side of the skater where Halo's projectile
 collision test meets the skater first and nothing stands between (in the
 duel the other skater, who has just ridden into them, is often right in
 front). A burst that does them no harm is fired again, up to eight times in
-15 seconds; a shot due while another's grenade is about waits for it. A
-grenade at the host's own skater waits for them to be alone (no other skater
-within 3 world units) and nearly still (under 1.5 m/s: a skater riding off
-is far from where it goes off), and heals them first as a health pack would
-(so does a burst at them), so that its blast hurts without killing; their
-course is where they went over the 6 ticks before the blast, not their
-velocity. It is thrown again till one has moved them away: a skater left on
-the teleporter's exit by the teleport test can stand there unmoved by a blast
-(seen in several runs, not understood yet).
+30 seconds; a shot due while another's grenade is about waits for it. A
+grenade at the host's own skater waits for them to be nearly still (under
+1.5 m/s: a skater riding off is far from where it goes off) and heals them
+first as a health pack would (so does a burst at them), so that its blast
+hurts without killing; their course is where they went over the 6 ticks
+before the blast, not their velocity. It is thrown again till one has moved
+them away: a skater left on the teleporter's exit by the teleport test can
+stand there unmoved by a blast (seen in several runs, not understood yet).
 `debug.network_test_skate_teleport` (`HALO_NETWORK_TEST_SKATE_TELEPORT`) puts a
 host's own skater on a teleporter's entrance that many seconds in, for Halo's
 teleporter to take.
