@@ -257,12 +257,13 @@ release build; 13.1 MB instead of 10.5 MB compressed, as a first visit
 downloads it): the engine (3.2 MB of code), the built-in sounds (1.2 MB) and
 tables. It is always in this fork's site rather than a second one: a
 player without the data pays the 2.6 MB once (the service worker keeps it),
-and nothing while playing. Memory does not grow: the game's memory is the
-same 2.1 GB, the engine's allocations come out of its C heap, and the
-browser test measured no difference beyond its run-to-run spread (about
-1.3 to 1.4 GB in all, on foot and skating). The engine's own thread (and,
-while a level loads, one that prepares its collision) fits the 16 workers
-Emscripten keeps ready (`PTHREAD_POOL_SIZE`; a debug build says when it runs
+and nothing while playing. The game's memory stays the same 2.1 GB (the
+engine's allocations come out of its C heap); the browser test measured its
+processes using 1.1 to 1.7 GB in all (proportional set size, headless
+Chromium), skating at most about 200 MB more than the same minute of play
+without the data, within its run-to-run spread. The engine's own thread
+(and, while a level loads, one that prepares its collision) fits the 16
+workers Emscripten keeps ready (`PTHREAD_POOL_SIZE`; a debug build says when it runs
 out, and the test checks). Each game tick waits up to 250 ms for the
 engine's pose (`halo_skate_step`); with `PROXY_TO_PTHREAD` that wait is on
 the game's worker, never the page's thread.
