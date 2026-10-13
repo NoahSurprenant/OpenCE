@@ -902,6 +902,10 @@ skater pushed into a wall goes nowhere, as anyone would */
 many metres a second of their velocity */
 #define SKATE_FREE_TICKS 10
 #define SKATE_FREE_SPEED 0.4f
+/* and nearly still, slower than that many metres a second: a grenade bounced
+off their chest goes off a second and a half on, and a skater riding at
+8 m/s is 4 world units away by then, unhurt */
+#define SKATE_STILL_SPEED 1.5f
 
 static struct
 {
@@ -948,7 +952,7 @@ static struct
 the last SKATE_FREE_TICKS ticks (still, or riding freely): not pinned, their
 engine's board going on against something while they go nowhere, as a
 skater put down by a teleporter or the duel can be. A pinned skater a blast
-pushes goes nowhere either */
+pushes goes nowhere either. And nearly still (SKATE_STILL_SPEED) */
 static boolean skate_shoot_free(struct object_datum const *watcher)
 {
 	real_point3d const *first = &skate_shoot.own_places[0];
@@ -960,7 +964,8 @@ static boolean skate_shoot_free(struct object_datum const *watcher)
 		(watcher->object.position.y - first->y) * (watcher->object.position.y - first->y)) / (SKATE_FREE_TICKS - 1);
 	speed = (real)sqrt(watcher->object.translational_velocity.i * watcher->object.translational_velocity.i +
 		watcher->object.translational_velocity.j * watcher->object.translational_velocity.j);
-	return fabs(went - speed) * TICKS_PER_SECOND * 3.048f < SKATE_FREE_SPEED;
+	return fabs(went - speed) * TICKS_PER_SECOND * 3.048f < SKATE_FREE_SPEED &&
+		speed * TICKS_PER_SECOND * 3.048f < SKATE_STILL_SPEED;
 }
 
 static boolean skate_shoot_alive(long object_index)
