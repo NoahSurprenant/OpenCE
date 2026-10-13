@@ -49,8 +49,8 @@ diagnose() {
 }
 # the newest pod (an old one may still be going)
 pod_name() {
-  kubectl -n "$ns" get pods -l app.kubernetes.io/instance=$release --sort-by=.metadata.creationTimestamp \
-    -o jsonpath='{.items[-1:].metadata.name}'
+  kubectl -n "$ns" get pods -l app.kubernetes.io/instance=$release --sort-by=.metadata.creationTimestamp -o name \
+    | tail -n 1 | sed 's|^pod/||'
 }
 # a field of the server container's status in the pod
 status() { kubectl -n "$ns" get pod "$1" -o jsonpath="{.status.containerStatuses[?(@.name=='opence-server')]$2}"; }

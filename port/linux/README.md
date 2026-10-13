@@ -787,6 +787,13 @@ No X, Wayland or `SDL_VIDEO_DRIVER` is necessary. The server:
   with status 128 plus the number of the signal (143 for SIGTERM). This
   applies to every game, not only to a server.
 - Does not use the clipboard, Discord or the self-updater.
+- Needs no Skate 3 data, and no build with `--skate`. A server built
+  without the mode still sends each skater's state to the other players,
+  holds the skaters to a board's bounds and decides their hits (refer to
+  `port/skate/README.md`, "Multiplayer"). The players who skate need the
+  mode and its data on their own machines. `test_dedicated_server_skaters`
+  in `tools/test_linux_port.py` tests this with a server built without
+  `--skate` and two skating clients.
 
 For internet play (`network.online`), it makes an invite link as other
 hosts do. If `network.host_public` is `true`, the server browser lists it

@@ -484,7 +484,8 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_skate_block", _config_boolean, "false", "HALO_NETWORK_TEST_SKATE_BLOCK",
 		_environment_set_is_true, _platform_all,
 		"With debug.network_test_skate_watch on a host, its player steps into the\n"
-		"skater's way every five seconds, for them to ride into (port/skate/README.md)." },
+		"skater's way every five seconds, for them to ride into; on a dedicated\n"
+		"server, another machine's player on foot (port/skate/README.md)." },
 	{ "debug.network_test_skate_duel", _config_real, "0.0", "HALO_NETWORK_TEST_SKATE_DUEL", _environment_value,
 		_platform_all,
 		"This many seconds into an automated test game this machine's player gets\n"

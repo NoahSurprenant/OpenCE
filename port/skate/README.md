@@ -993,7 +993,10 @@ units away`), and the engine each hit with what followed (above,
 machine's player on a board that many seconds into the game, standing on it
 (Y stepping back on after a fall); with the block on a host, the five-second
 step into the skater's way is then on the board (`skate_put`: on the board
-again there, facing them), skater into skater. A test player who should be
+again there, facing them), skater into skater. On a dedicated server, which has no
+player of its own, the block steps another machine's player on foot (the last
+there is) into the skater's way in the same way: the host places a joining
+machine's player on foot. A test player who should be
 on a board and is not (dead, or a J that failed) gets on again every two
 seconds once alive (the log tells of a death: `skate test: this machine's
 player died at ...`), and the watcher is only ever put where nothing of the
@@ -1068,11 +1071,30 @@ the test sets); on a machine without a display or sound, add
 under the null renderer, so the test stops both at a deadline, and whatever
 happens.
 
+`test_dedicated_server_skaters` checks that a dedicated server needs neither
+Skate 3 mode nor its data. The server is built without `--skate` (as the
+server image is; `HALO_TEST_SERVER`) and has only the Halo maps. Two clients
+with the mode join it: the first skates from 15 seconds in, the server's
+block steps the second, on foot, into the first's way, and the second skates
+too from 55 seconds in. The test checks that the server poses both skaters
+and takes their places (refusing a stray few at most), that each client sees
+the other skate, posed with their board, and that the server decides the
+hits (messages 92 and 93) and both clients hear every verdict in the same
+words (about two minutes):
+
+```text
+HALO_TEST_GAME=/path/to/skate-build/halo HALO_TEST_SERVER=/path/to/server-build/halo \
+HALO_SKATE_TEST_ASSETS=/path/to/skate-data/assets HALO_SKATE_TEST_HALO_MAPS=/path/to/halo/maps \
+    python -m pytest -q tools/test_linux_port.py -k dedicated_server_skaters
+```
+
 CI runs it on every push, in the workflow's `skate-multiplayer` job, on the
 owner's runner (`opence-k8s`, which has the data; see `skate-assets` in
 `.github/workflows/build.yml`): it builds the game as `tools/ci_build.py linux
 debug` does (`--skate --lto=off --pgo=off --portable`; the compile cache and
-the engine's cargo build are kept from run to run), runs the test headless,
+the engine's cargo build are kept from run to run), and the server for
+`test_dedicated_server_skaters` as the server image does (`--release --lto=off
+--pgo=off --portable`), runs the test headless,
 and fails if it skips. Like `skate-assets`, the release does not wait for it.
 
 To run it many times, `tools/skate_mp_loop.sh SLOT RUNS OUT [LOAD]` runs it
