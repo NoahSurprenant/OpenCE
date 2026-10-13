@@ -994,11 +994,15 @@ static void *vertical_blank_thread(void *unused)
 			flip_count++;
 		}
 		callback = vertical_blank_callback;
-		pthread_cond_broadcast(&vertical_blank_condition);
 		pthread_mutex_unlock(&vertical_blank_lock);
 
 		if (callback)
 			callback(0);
+		/* (the waiters woken once the callback has counted the blank:
+		main.c's throttle, waiting for its count, sleeps here without a window) */
+		pthread_mutex_lock(&vertical_blank_lock);
+		pthread_cond_broadcast(&vertical_blank_condition);
+		pthread_mutex_unlock(&vertical_blank_lock);
 	}
 	return NULL;
 }
@@ -1048,6 +1052,13 @@ void WINAPI D3DDevice_BlockUntilVerticalBlank(void)
 	while (vertical_blank_count == count)
 		pthread_cond_wait(&vertical_blank_condition, &vertical_blank_lock);
 	pthread_mutex_unlock(&vertical_blank_lock);
+}
+
+/* main.c's throttle, without a window (a dedicated server, debug.null_renderer):
+the next vertical blank slept for instead of spun on */
+void platform_wait_for_vertical_blank(void)
+{
+	D3DDevice_BlockUntilVerticalBlank();
 }
 
 /* ---------- GL helpers */

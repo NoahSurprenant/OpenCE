@@ -390,6 +390,20 @@ static const struct config_setting config_settings[] =
 		"invite find each other (its messages are encrypted), beside this file\n"
 		"unless a full path: one host:port on each line, up to 4. Updates\n"
 		"replace brokers.txt: keep a list of your own under another name." },
+	{ "network.server_name", _config_string, "\"\"", "HALO_NET_SERVER_NAME", _environment_value, _platform_all,
+		"The name a dedicated host's listing shows in everyone's server\n"
+		"browser (debug.network_test's host; a game the menus make takes\n"
+		"Server Setup's own). Empty leaves the game's own, which here is\n"
+		"none." },
+	{ "network.public_address", _config_string, "\"\"", "HALO_NET_PUBLIC_ADDRESS", _environment_value,
+		_platform_all,
+		"Hosting: the internet address a router forwards network.tunnel_port\n"
+		"to this machine at, offered to joining machines before the others\n"
+		"(they try it first): \"host:port\" or \"host\" (the port then\n"
+		"tunnel_port's), the host an IPv4 address or a name (a dynamic DNS one\n"
+		"is looked up again every few minutes). For a server behind a NAT that\n"
+		"gives each destination its own port, where STUN's address cannot be\n"
+		"reached. Empty for none." },
 	{ "network.stun_servers", _config_string, "\"stun.l.google.com:19302,stun.cloudflare.com:3478\"",
 		"HALO_NET_STUN", _environment_value, _platform_all,
 		"Public STUN servers that tell this machine its internet address;\n"
@@ -407,9 +421,31 @@ static const struct config_setting config_settings[] =
 		"Sentry project (port/windows/src/win32_crash.c): \"yes\" sends them, \"no\"\n"
 		"never does, \"ask\" asks at the next crash and writes the answer here." },
 
+	{ "server.dedicated", _config_boolean, "false", "HALO_DEDICATED", _environment_value, _platform_desktop,
+		"Run as a dedicated server: no window, no sound and no player of its own,\n"
+		"hosting the maps below in turn (debug.null_renderer and the rest are\n"
+		"set for it: port/linux/README.md's \"Dedicated server\"). SIGTERM or\n"
+		"SIGINT tells the players it is going and quits." },
+	{ "server.maps", _config_string, "\"bloodgulch\"", "HALO_SERVER_MAPS", _environment_value, _platform_desktop,
+		"The dedicated server's maps, played in turn, the first again past the\n"
+		"last: comma-separated names (bloodgulch, hangemhigh, ...), each\n"
+		"optionally \"<map>:<game type>\" for a game type of its own." },
+	{ "server.game_types", _config_string, "\"slayer\"", "HALO_SERVER_GAME_TYPES", _environment_value,
+		_platform_desktop,
+		"The game types each map without one of its own plays, in turn: built-in\n"
+		"ones (slayer, ctf, king, oddball, race, ...), comma-separated." },
+	{ "server.time_limit", _config_integer, "15", "HALO_SERVER_TIME_LIMIT", _environment_value, _platform_desktop,
+		"The minutes a dedicated server's game lasts at most, so that the next\n"
+		"map comes even when no one reaches the score; 0 keeps the game type's\n"
+		"own limit (a built-in one's is none)." },
+	{ "server.score_limit", _config_integer, "0", "HALO_SERVER_SCORE_LIMIT", _environment_value, _platform_desktop,
+		"The score a dedicated server's games play to; 0 the game type's own." },
+
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
-		"\"host:<map>\" hosts a game on that map, \"join\" joins the first game found;\n"
+		"\"host:<map>[:<variant>,<variant>...]\" hosts a game on that map with those\n"
+		"variants in turn, and \";\" between such entries rotates through the maps\n"
+		"(the first again past the last); \"join\" joins the first game found;\n"
 		"empty for none." },
 	{ "debug.network_test_start", _config_real, "15.0", "HALO_NETWORK_TEST_START", _environment_value, _platform_all,
 		"Seconds after hosting that an automated test game starts." },
@@ -418,6 +454,11 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_score", _config_integer, "0", "HALO_NETWORK_TEST_SCORE", _environment_value, _platform_all,
 		"The score an automated test host's game type plays to (a short game, to\n"
 		"test the next); 0 the game type's own." },
+	{ "debug.network_test_time", _config_integer, "0", "HALO_NETWORK_TEST_TIME", _environment_value, _platform_all,
+		"The minutes an automated test host gives a game, over the game type's own\n"
+		"limit (a built-in variant's is none, so its game ends only by the score it\n"
+		"plays to and a host that rotates maps would never move on); 0 the game\n"
+		"type's own." },
 	{ "debug.network_test_shoot", _config_real, "0.0", "HALO_NETWORK_TEST_SHOOT", _environment_value, _platform_all,
 		"Every this many seconds each automated test player hits the next with\n"
 		"their weapon, within its reach (the host brings far players near the\n"
@@ -969,6 +1010,8 @@ static void config_report_unknown_keys(toml_datum_t table)
 	}
 }
 
+static void config_apply_dedicated(void);
+
 static void config_load(void)
 {
 	char path[1024];
@@ -1050,6 +1093,105 @@ static void config_load(void)
 			break;
 		}
 	}
+	config_apply_dedicated();
+}
+
+/* a setting's value for this run only, from text (config_set_from_text);
+config.toml keeps its own */
+static void config_set_for_run(const char *name, const char *text)
+{
+	long index = config_setting_index(name);
+
+	if (index >= 0)
+		config_set_from_text(&config_values[index], config_settings[index].type, text);
+}
+
+/* text without its spaces, appended to list (of size bytes, used so far) */
+static void config_append_unspaced(char *list, size_t size, size_t *used, const char *text, size_t length)
+{
+	size_t index;
+
+	for (index = 0; index < length && *used + 1 < size; index++)
+	{
+		if (!isspace((unsigned char)text[index]))
+			list[(*used)++] = text[index];
+	}
+	list[*used] = 0;
+}
+
+/* server.dedicated: what a server nobody sits at needs, for this run (the
+file keeps its own). Its maps become debug.network_test's host list
+(network_test.c hosts them), unless that names its own: server.maps
+"a, b:ctf" with server.game_types "slayer,king" is "host:a:slayer,king;b:ctf" */
+static void config_apply_dedicated(void)
+{
+	char list[2048];
+	size_t used;
+	const char *maps;
+	const char *game_types;
+
+	if (!config_values[config_setting_index("server.dedicated")].boolean)
+		return;
+	config_set_for_run("debug.null_renderer", "true");
+	config_set_for_run("audio.enabled", "false");
+	config_set_for_run("audio.voice_chat", "off");
+	config_set_for_run("display.interpolation", "false");
+	config_set_for_run("network.join_from_clipboard", "false");
+	config_set_for_run("update.auto", "false");
+	config_set_for_run("discord.application_id", "");
+	if (!config_values[config_setting_index("debug.network_test")].string[0])
+	{
+		maps = config_values[config_setting_index("server.maps")].string;
+		game_types = config_values[config_setting_index("server.game_types")].string;
+		used = (size_t)snprintf(list, sizeof(list), "host:");
+		while (*maps)
+		{
+			size_t entry = strcspn(maps, ",");
+			const char *colon = memchr(maps, ':', entry);
+			size_t start = used;
+
+			if (used > 5 && used + 1 < sizeof(list))
+				list[used++] = ';';
+			config_append_unspaced(list, sizeof(list), &used, maps, colon ? (size_t)(colon - maps) : entry);
+			/* (an empty entry: none) */
+			if (used == start + (start > 5))
+			{
+				used = start;
+				list[used] = 0;
+			}
+			else
+			{
+				if (used + 1 < sizeof(list))
+					list[used++] = ':';
+				if (colon)
+					config_append_unspaced(list, sizeof(list), &used, colon + 1, entry - (size_t)(colon - maps) - 1);
+				else
+					config_append_unspaced(list, sizeof(list), &used, game_types, strlen(game_types));
+				if (list[used - 1] == ':')
+					config_append_unspaced(list, sizeof(list), &used, "slayer", 6);
+			}
+			maps += entry;
+			if (*maps == ',')
+				maps++;
+		}
+		config_set_for_run("debug.network_test", used > 5 ? list : "host:bloodgulch:slayer");
+	}
+	if (config_values[config_setting_index("debug.network_test_time")].integer <= 0)
+	{
+		char minutes[16];
+
+		snprintf(minutes, sizeof(minutes), "%ld", config_values[config_setting_index("server.time_limit")].integer);
+		config_set_for_run("debug.network_test_time", minutes);
+	}
+	if (config_values[config_setting_index("debug.network_test_score")].integer <= 0)
+	{
+		char score[16];
+
+		snprintf(score, sizeof(score), "%ld", config_values[config_setting_index("server.score_limit")].integer);
+		config_set_for_run("debug.network_test_score", score);
+	}
+	platform_log("settings: a dedicated server, hosting %s",
+		config_values[config_setting_index("debug.network_test")].string + 5);
 }
 
 static const struct config_value *config_value(const char *name, enum config_type type)

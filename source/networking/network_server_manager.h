@@ -41,9 +41,29 @@ boolean network_game_server_graceful_shutdown(
 	struct network_game_server *server);
 boolean network_game_server_reset_to_pregame(
 	struct network_game_server *server);
+word network_game_server_get_state(
+	struct network_game_server *server,
+	short *substate);
 void network_game_server_pause_countdown(
 	struct network_game_server *server,
 	boolean pause_countdown);
+/* port: the players a game a host runs asks for (network_test.c): a host
+given a map list asks for one, so it starts with nobody on it */
+void network_game_server_port_set_minimum_players(
+	struct network_game_server *server,
+	long minimum_players);
+/* port: a dedicated server (network_test.c): its own machine has no player,
+and its games start with nobody on them, for players to join in progress */
+void network_game_server_port_set_playerless(
+	boolean playerless);
+/* port: drop the joins a finished game left waiting, so the next one
+starts with none (network_test.c's host) */
+void network_game_server_port_clear_queued_players(
+	struct network_game_server *server);
+/* port: the players a host's game holds (a variant with teams asks for
+one on each: server_needs_more_teams) */
+long network_game_server_port_player_count(
+	struct network_game_server *server);
 void network_game_generate_join_game_token(
 	byte *join_token);
 void network_game_server_kick_machine(

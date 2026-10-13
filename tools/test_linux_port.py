@@ -479,10 +479,9 @@ def test_skate_multiplayer(tmp_path):
                          "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15",
                          "HALO_NETWORK_TEST_SKATE_SCENERY": "30"}}
     games = {}
-    # (each should exit after its seconds, debug.exit_after, but with the null
-    # renderer neither does, so both are stopped at a deadline - and stopped
-    # whatever happens, so that no game outlives the test, on a CI runner
-    # least of all)
+    # (each exits after its seconds, debug.exit_after, and is stopped at a
+    # deadline too, whatever happens, so that no game outlives the test, on a
+    # CI runner least of all)
     try:
         for name, settings in machines.items():
             folder = tmp_path / name
@@ -684,3 +683,81 @@ def test_skate_multiplayer(tmp_path):
     assert "skate test: this machine's skater put on a teleporter's entrance" in host, host[-4000:]
     exits = [t for t in teleports if abs(float(t[1]) - 82.83) < 1.5 and abs(float(t[2]) + 114.53) < 1.5]
     assert exits, f"the skater did not follow the teleporter to its exit: {teleports}"
+
+
+def test_dedicated_server(tmp_path):
+    """A dedicated server (server.dedicated) and a client on this machine: the
+    server starts with no display or SDL driver set and no player of its own,
+    its game starts empty, a client (debug.network_test "join") joins it in
+    progress and plays (its player in the same place on both machines), the
+    server sleeps between its frames, and SIGTERM ends it cleanly - status 0,
+    the client told the host has gone. It needs a Linux build
+    (HALO_TEST_GAME) and the Halo maps (HALO_SKATE_TEST_HALO_MAPS, as
+    test_skate_multiplayer), and skips without them; about a minute."""
+    game = os.environ.get("HALO_TEST_GAME")
+    maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
+    if not (game and maps and Path(game).is_file() and Path(maps, "bloodgulch.map").is_file()):
+        pytest.skip("needs HALO_TEST_GAME and HALO_SKATE_TEST_HALO_MAPS")
+    host_address, join_address = "127.0.0.212", "127.0.0.213"
+    machines = {"host": {"HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "5"},
+                "join": {"HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+                         "HALO_TEST_INPUT": "bot:7"}}
+    games = {}
+    try:
+        for name, settings in machines.items():
+            folder = tmp_path / name
+            (folder / "data").mkdir(parents=True)
+            (folder / "saves").mkdir()
+            (folder / "data" / "maps").symlink_to(maps)
+            env = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
+            env.update(settings, HALO_NET_ONLINE="false", HALO_UPDATE_ANSWER="never",
+                       HALO_NET_ADDRESS=host_address if name == "host" else join_address,
+                       HALO_NET_BROADCAST=join_address if name == "host" else host_address,
+                       HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
+            with open(folder / "run.log", "w") as log:
+                games[name] = subprocess.Popen([game], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+        host_log, join_log = tmp_path / "host" / "run.log", tmp_path / "join" / "run.log"
+        # the client's player in the game on both machines
+        deadline = time.monotonic() + 90
+        position = re.compile(r"network test: tick \d+ player 0: \(")
+        while time.monotonic() < deadline:
+            assert games["host"].poll() is None, host_log.read_text(errors="replace")[-4000:]
+            if (len(position.findall(join_log.read_text(errors="replace"))) >= 5 and
+                    "server: Player joined" in host_log.read_text(errors="replace")):
+                break
+            time.sleep(1)
+        host = host_log.read_text(errors="replace")
+        join = join_log.read_text(errors="replace")
+        assert "server: the game starts: slayer on bloodgulch" in host, host[-4000:]
+        assert "server: Player joined" in host, host[-4000:]
+        assert len(position.findall(join)) >= 5, f"the client's player never played:\n{join[-4000:]}"
+        assert "SDL_Init failed" not in host, host[-4000:]
+        # sleeping between frames: a fraction of a core (a busy runner gets a margin)
+        stat = Path(f"/proc/{games['host'].pid}/stat")
+        before = sum(int(field) for field in stat.read_text().rsplit(")", 1)[1].split()[11:13])
+        time.sleep(5)
+        after = sum(int(field) for field in stat.read_text().rsplit(")", 1)[1].split()[11:13])
+        cpu = (after - before) / os.sysconf("SC_CLK_TCK") / 5
+        print(f"the dedicated server used {cpu:.0%} of a core")
+        assert cpu < 0.5, f"the dedicated server used {cpu:.0%} of a core"
+        games["host"].terminate()
+        assert games["host"].wait(timeout=15) == 0
+        host = host_log.read_text(errors="replace")
+        assert "quitting on signal 15" in host and "server: closed; the players were told" in host, host[-4000:]
+        # the client is told and leaves the game
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            debug = tmp_path / "join" / "data" / "debug.txt"
+            text = debug.read_text(errors="replace") if debug.is_file() else ""
+            # (its connection closing, or the message saying so)
+            told = "the game host went down" in text or "the game host is shutting down" in text
+            if told:
+                break
+            time.sleep(1)
+        assert told, (tmp_path / "join" / "data" / "debug.txt").read_text(errors="replace")[-4000:]
+    finally:
+        for process in games.values():
+            if process.poll() is None:
+                process.kill()
+            process.wait()

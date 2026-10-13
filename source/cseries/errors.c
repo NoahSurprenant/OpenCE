@@ -134,14 +134,18 @@ static void write_to_debug_file(
 	{
 		FILE *opened = fopen("d:\\debug.txt", "a+b");
 
+		/* port: a data root the game cannot write to (a server's read-only
+		maps, a disc's folder): the lines to standard error, the log the
+		terminal or the service manager keeps, instead of none (tried once) */
 		if (!opened)
 		{
-			return;
+			opened = stderr;
 		}
 		file = __sync_val_compare_and_swap(&debug_file, (FILE *)NULL, opened);
 		if (file)
 		{
-			fclose(opened);
+			if (opened != stderr)
+				fclose(opened);
 		}
 		else
 		{
@@ -173,6 +177,24 @@ static void write_to_debug_file(
 		{
 			csstrcpy(prefix, "<TIME UNAVAILABLE>  ");
 		}
+	}
+	/* port: (standard error's lines without the file's carriage returns,
+	and without its empty lines) */
+	if (file == stderr)
+	{
+		char line[2048];
+		int length = 0;
+		int index;
+
+		for (index = 0; string[index] && length < (int)sizeof(line) - 1; index++)
+		{
+			if (string[index] != '\r')
+				line[length++] = string[index];
+		}
+		line[length] = 0;
+		if (length && strspn(line, "\n") != (size_t)length)
+			fprintf(file, "%s%s", prefix, line);
+		return;
 	}
 	fprintf(file, "%s%s", prefix, string);
 	fflush(file);

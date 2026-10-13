@@ -92,6 +92,9 @@ void platform_mouse_capture(BOOL capture);
 
 /* main thread only; a no-op elsewhere */
 void platform_pump_events(void);
+/* the signal that asked the game to quit (SIGTERM, SIGINT), or 0; -1 for
+debug.exit_after's time come without a window */
+int platform_quit_requested(void);
 /* a snapshot of the input state; consume_motion resets the mouse deltas */
 void platform_input_read(struct platform_input_state *state, BOOL consume_motion);
 #ifndef HALO_ANDROID

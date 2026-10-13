@@ -672,6 +672,24 @@ typedef char screenshot_and_framerate_globals_size_assert[
 	sizeof(struct _screenshot_and_framerate_globals) == 0x38B ? 1 : -1];
 
 void network_test_update(boolean main_menu_loaded, real seconds);
+/* port: a run without a window (port/linux/src/port_config.c's
+debug.null_renderer, which a dedicated server sets), and the next vertical
+blank waited for (d3d8_gl.c) */
+int config_boolean(char const *name);
+void platform_wait_for_vertical_blank(void);
+/* port: a dedicated server's log, and its quitting on SIGTERM
+(port/linux/game/dedicated_server.c) */
+void dedicated_server_update(void);
+
+static boolean main_port_headless(
+	void)
+{
+	static int headless = -1;
+
+	if (headless < 0)
+		headless = config_boolean("debug.null_renderer") ? 1 : 0;
+	return headless;
+}
 
 /* ---------- prototypes */
 
@@ -2723,6 +2741,13 @@ void main_rasterizer_throttle(
 				{
 					Sleep(1);
 				}
+				/* port: without a window (a dedicated server, debug.null_renderer)
+				the wait sleeps to the next vertical blank instead of spinning on
+				it, which kept a core busy for nobody to see */
+				else if (main_port_headless())
+				{
+					platform_wait_for_vertical_blank();
+				}
 				if (system_milliseconds() > start_milliseconds + 1000)
 				{
 					console_warning(
@@ -3435,6 +3460,9 @@ void main_loop(
 		shell_idle();
 		event_manager_update();
 		telnet_console_process();
+		/* port: a dedicated server's log, and quitting on SIGTERM
+		(port/linux/game/dedicated_server.c) */
+		dedicated_server_update();
 
 		if (!shell_application_is_paused())
 		{
