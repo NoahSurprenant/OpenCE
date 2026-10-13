@@ -19,8 +19,9 @@ name: Build
 # A successful build of main is also published as a GitHub release, the
 # newest marked latest, so that
 # https://github.com/<repository>/releases/latest/download/<file> always
-# gives the latest build; the last five are kept. Its web build is then the
-# site on GitHub Pages (https://halocombatevolved.com/, port/web/README.md).
+# gives the latest build; the last five are kept. Upstream's web build is then
+# the site on GitHub Pages (https://halocombatevolved.com/, port/web/README.md);
+# this fork (NoahSurprenant/OpenCE) has no Pages site, so the pages job skips.
 on:
   push:
     paths-ignore:
@@ -433,9 +434,9 @@ jobs:
     # the linux job.
     #
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
-    # --skate --lto=off --pgo=off --portable), and the server of
+    # --skate --lto=off --pgo=off), and the server of
     # test_dedicated_server_skaters the image's (docker/server/Dockerfile:
-    # --release --lto=off --pgo=off --portable), 32-bit, headless: the runner
+    # --release --lto=off --pgo=off), both without --portable (below), 32-bit, headless: the runner
     # has no display or sound, so SDL's dummy drivers and the null renderer
     # (HALO_NULL_RENDERER, which the test sets). Not needed by release or
     # notify, as skate-assets.
@@ -485,15 +486,20 @@ jobs:
           key: skate-mp-${{ hashFiles('port/skate/**/Cargo.lock', 'port/skate/**/*.rs', 'port/skate/**/Cargo.toml') }}
           restore-keys: skate-mp-
 
+      # (not --portable, as tools/ci_build.py builds: that builds its own SDL 3
+      # against a downloaded system root, which needs CMake and wayland-scanner,
+      # and the runner has neither; it has a 32-bit SDL 3 of its own. Built
+      # for this machine, which runs it)
       - name: Build
         run: |
-          python3 tools/ci_build.py linux debug
+          python3 configure.py --skate --lto=off --pgo=off --compiler-launcher ccache
+          ninja linux
           cp build/linux/halo "$RUNNER_TEMP/halo-skate"
 
       # the dedicated server as the server image builds it: no Skate 3 mode
       - name: Build the server
         run: |
-          python3 configure.py --release --lto=off --pgo=off --portable --compiler-launcher ccache
+          python3 configure.py --release --lto=off --pgo=off --compiler-launcher ccache
           ninja linux
           cp build/linux/halo "$RUNNER_TEMP/halo-server"
 

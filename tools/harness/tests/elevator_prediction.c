@@ -99,7 +99,14 @@ static struct
 	real ground_height;
 	real top_height;
 	long ground_time;
+	boolean skating;
 } distributed_host_speeds[MAXIMUM_TRACKED_PLAYERS];
+
+/* (Skate 3 mode's counts and its note on a skater, none here: no player
+skates) */
+static long distributed_skate_refused;
+static long distributed_skate_taken;
+#define distributed_skate_note_on_foot(player_index, unit_index, state) ((void)0)
 
 /* (every move within the limits; no higher than a player may be) */
 #define distributed_on_foot_move_valid(bound, from, to, ticks) TRUE
