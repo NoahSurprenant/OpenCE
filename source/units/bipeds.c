@@ -523,6 +523,8 @@ static void biped_update_jumping(
 	struct unit_animation_update_data *animation);
 static void biped_update_physics(
 	struct biped_physics *physics);
+/* units.c's: whether the unit gets the animation enhancements */
+boolean unit_animation_enhanced(long unit_index);
 static void biped_snap_facing(
 	long biped_index);
 
@@ -535,6 +537,17 @@ boolean debug_biped_limp_body_disable = FALSE;
 boolean rider_ejection = TRUE;
 
 static struct profile_section biped_update_section = {"biped_update", NONE, TRUE};
+
+/* port: coop_scripts.c sets this around one teleport */
+static boolean biped_fix_ignores_players;
+
+void biped_fix_ignore_players(
+	boolean ignore)
+{
+	biped_fix_ignores_players = ignore;
+
+	return;
+}
 
 extern boolean debug_objects_biped_autoaim_pills;
 extern boolean debug_objects_biped_physics_pills;
@@ -1159,8 +1172,10 @@ boolean biped_fix_position(
 				_collision_test_for_bipeds_passthrough_living_flags :
 				_collision_test_for_bipeds_living_flags;
 			/* port: (where it fits among the other players, as it moves:
-			_biped_physics_in_pass_through_players_bit) */
-			if (biped->unit.player_index != NONE && !network_coop_player_collisions())
+			_biped_physics_in_pass_through_players_bit). A scripted co-op
+			teleport can also stand on a teammate for this one call. */
+			if (biped_fix_ignores_players ||
+				(biped->unit.player_index != NONE && !network_coop_player_collisions()))
 				collision_flags |= FLAG(_collision_test_skip_player_bipeds_bit);
 		}
 
@@ -3341,6 +3356,14 @@ static void biped_update_turning(
 	{
 		boolean flaming =
 			biped->unit.animation.base_seat_index==_unit_base_seat_flaming;
+		/* port: a player throwing a grenade turns with the aim, as one
+		meleeing does: the melee plays over the moving or idle state, the
+		throw is a state of its own, which the original never turned in
+		(game.enhanced_animations: unit_animation_enhanced) */
+		boolean throwing_turn =
+			biped->unit.player_index!=NONE &&
+			biped->unit.animation.state==_unit_state_throw_grenade &&
+			unit_animation_enhanced(biped_index);
 		real_vector3d turn_axis;
 		real turn_error;
 		real facing_alignment;
@@ -3404,7 +3427,8 @@ static void biped_update_turning(
 		}
 
 		if (biped->biped.state==biped_state_moving ||
-			TEST_FLAG(flags, _biped_turns_without_animating_bit))
+			TEST_FLAG(flags, _biped_turns_without_animating_bit) ||
+			throwing_turn)
 		{
 			if (!TEST_FLAG(biped->unit.control_flags, _unit_control_look_dont_turn_bit))
 			{
