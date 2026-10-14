@@ -72,10 +72,19 @@ pod_name() {
     | tail -n 1 | sed 's|^pod/||'
 }
 in_pod() { kubectl -n "$ns" exec "$pod" -c nginx -- "$@"; }
-# a one-off pod in the other namespace (no NetworkPolicy there) running the image's curl
+# a one-off pod in the other namespace (no NetworkPolicy there) running the image's curl; its
+# status code read from the finished pod's log (kubectl run --rm -i's attach can lose or repeat it)
 other_curl() {
-  kubectl -n "$other" run "curl-$RANDOM" --rm -i --quiet --restart=Never --image="$image" --image-pull-policy=IfNotPresent \
-    --command -- curl -sS -k -m 10 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || true
+  local name="curl-$RANDOM" phase=""
+  kubectl -n "$other" run "$name" --restart=Never --image="$image" --image-pull-policy=IfNotPresent \
+    --command -- curl -s -k -m 10 -o /dev/null -w '%{http_code}' "$@" >/dev/null
+  for _ in $(seq 60); do
+    phase=$(kubectl -n "$other" get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    case "$phase" in Succeeded|Failed) break ;; esac
+    sleep 1
+  done
+  kubectl -n "$other" logs "$name" 2>/dev/null || true
+  kubectl -n "$other" delete pod "$name" --wait=false >/dev/null 2>&1 || true
 }
 
 step "install ($image): the plain site, no game data"
