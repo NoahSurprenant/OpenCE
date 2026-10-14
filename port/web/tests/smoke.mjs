@@ -10,7 +10,8 @@
 //
 // (with Playwright installed where Node finds it: .github/workflows/build.yml).
 // It checks that the page isolates itself after one reload, that every check
-// passes (threads, WebGL 2 in a worker, OPFS, the memory), that it reports no
+// passes (threads, WebGL 2 in a worker, OPFS, the memory), that it names the
+// GPU (SwiftShader here, software rendering: a warning, not a failure), no
 // game data, and that the game starts: with an empty maps folder marked
 // complete, the WebAssembly is compiled, its 2176 MiB memory made, its threads
 // started, the browser's storage mounted and WebGL 2 set up, and it looks for
@@ -50,7 +51,7 @@ try {
   page.on('pageerror', (error) => log.push('page error: ' + error));
 
   await page.goto(url);
-  await page.waitForFunction(() => window.crossOriginIsolated && document.querySelectorAll('#checks li').length >= 5,
+  await page.waitForFunction(() => window.crossOriginIsolated && document.querySelectorAll('#checks li').length >= 6,
     null, { timeout: 60000 });
   const scope = await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).scope);
   console.log('service worker: ' + scope);
@@ -63,9 +64,16 @@ try {
   if (manifest.url !== url + 'manifest.webmanifest') fail(`the manifest is ${manifest.url}, not ${url}manifest.webmanifest`);
   if (!manifest.data || !/"name": "OpenCE"/.test(manifest.data)) fail('the browser did not get the manifest');
   if (manifest.errors.length) fail('the manifest has errors: ' + JSON.stringify(manifest.errors));
-  const checks = await page.$$eval('#checks li', (items) => items.map((item) => [item.className, item.textContent]));
+  const checks = await page.$$eval('#checks li', (items) => items.map((item) => [item.className, item.textContent, item.dataset.check]));
   console.log(checks.map(([state, text]) => `${state}: ${text}`).join('\n'));
-  if (checks.some(([state]) => state !== 'good')) fail('a check did not pass');
+  if (checks.some(([state, , name]) => state !== 'good' && name !== 'gpu')) fail('a check did not pass');
+  // the GPU the game draws on: Chromium's software renderer here, which the
+  // line warns about (amber), with what to do; Play does not wait on it
+  const gpu = checks.find(([, , name]) => name === 'gpu');
+  if (!gpu) fail('no GPU line');
+  else if (gpu[0] !== 'warn' || !/^The GPU: SwiftShader/.test(gpu[1]) || !/software rendering/.test(gpu[1])) {
+    fail(`the GPU line should warn of SwiftShader's software rendering: ${gpu[0]}: ${gpu[1]}`);
+  }
   await page.waitForFunction(() => !/Looking/.test(document.querySelector('#data-status').textContent));
   const data = await page.textContent('#data-status');
   console.log('data: ' + data);

@@ -169,29 +169,58 @@ function addCheck(name, state, text, detail) {
   results[name] = state;
   const item = document.createElement('li');
   item.className = state;
-  item.append(text);
+  item.dataset.check = name;
+  // (the text and its detail in one box, which wraps as a paragraph does)
+  const label = document.createElement('span');
+  label.append(text);
   if (detail) {
     const span = document.createElement('span');
     span.className = 'detail';
     span.textContent = ' ' + detail;
-    item.append(span);
+    label.append(span);
   }
+  item.append(label);
   $('checks').append(item);
 }
 
+// a WebGL 2 context of an OffscreenCanvas in a worker, as the game draws
+// from its worker: { webgl2, renderer }, the renderer the GPU the game will
+// draw on (gpu.js). RENDERER first: Firefox reports the GPU there, and
+// deprecates WEBGL_debug_renderer_info; Chromium reports "WebKit WebGL",
+// and the GPU through the extension.
 function workerWebGL2() {
+  const none = { webgl2: false, renderer: null };
   return new Promise((resolve) => {
-    const source = "try { postMessage(!!new OffscreenCanvas(1, 1).getContext('webgl2')); } catch (e) { postMessage(false); }";
+    const source = `try {
+  const gl = new OffscreenCanvas(1, 1).getContext('webgl2');
+  let renderer = null;
+  if (gl) {
+    renderer = gl.getParameter(gl.RENDERER);
+    if (!renderer || /^(WebKit WebGL|Mozilla|WebKit)$/.test(renderer)) {
+      const info = gl.getExtension('WEBGL_debug_renderer_info');
+      if (info) renderer = gl.getParameter(info.UNMASKED_RENDERER_WEBGL) || renderer;
+    }
+    const lose = gl.getExtension('WEBGL_lose_context');
+    if (lose) lose.loseContext();
+  }
+  postMessage({ webgl2: !!gl, renderer: typeof renderer === 'string' ? renderer : null });
+} catch (e) {
+  postMessage({ webgl2: false, renderer: null });
+}`;
     let worker;
     try {
       worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
     } catch {
-      resolve(false);
+      resolve(none);
       return;
     }
-    const timer = setTimeout(() => { worker.terminate(); resolve(false); }, 5000);
-    worker.onmessage = (event) => { clearTimeout(timer); worker.terminate(); resolve(event.data === true); };
-    worker.onerror = () => { clearTimeout(timer); worker.terminate(); resolve(false); };
+    const timer = setTimeout(() => { worker.terminate(); resolve(none); }, 5000);
+    worker.onmessage = (event) => {
+      clearTimeout(timer);
+      worker.terminate();
+      resolve(event.data && typeof event.data === 'object' ? { webgl2: event.data.webgl2 === true, renderer: event.data.renderer } : none);
+    };
+    worker.onerror = () => { clearTimeout(timer); worker.terminate(); resolve(none); };
   });
 }
 
@@ -210,8 +239,16 @@ async function runChecks() {
   addCheck('secure', window.isSecureContext ? 'good' : 'bad', 'A secure page (https)');
   addCheck('isolated', window.crossOriginIsolated ? 'good' : 'bad', 'Threads (cross-origin isolation)',
     window.crossOriginIsolated ? '' : 'reload the page; a private window may not allow it');
-  const webgl = typeof OffscreenCanvas !== 'undefined' && await workerWebGL2();
+  const { webgl2: webgl, renderer } = typeof OffscreenCanvas !== 'undefined' ? await workerWebGL2() : { webgl2: false };
   addCheck('webgl', webgl ? 'good' : 'bad', 'WebGL 2 from a worker');
+  // (a warning, not a failure: the game runs, if slowly)
+  if (webgl) {
+    const gpu = window.HaloGpu.describe(renderer);
+    addCheck('gpu', gpu.state, 'The GPU: ' + gpu.name, window.HaloGpu.hint(gpu.kind));
+    if (gpu.raw) $('checks').lastElementChild.title = gpu.raw;
+  } else {
+    addCheck('gpu', 'bad', 'The GPU', 'none: WebGL 2 did not start');
+  }
   const opfs = !!(navigator.storage && navigator.storage.getDirectory);
   addCheck('opfs', opfs ? 'good' : 'bad', "The site's private storage (OPFS)");
   const memory = window.crossOriginIsolated && memoryAvailable();
