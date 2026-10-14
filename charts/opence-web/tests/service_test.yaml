@@ -1,0 +1,15 @@
+suite: service
+templates:
+  - templates/service.yaml
+tests:
+  - it: exposes port 80 to nginx's http port
+    asserts:
+      - equal: { path: 'spec.type', value: ClusterIP }
+      - equal: { path: 'spec.ports', value: [{ name: http, port: 80, targetPort: http, protocol: TCP }] }
+
+  - it: takes a load balancer and a node port
+    set:
+      service: { type: LoadBalancer, nodePort: 30880, loadBalancerSourceRanges: [192.0.2.0/24] }
+    asserts:
+      - equal: { path: 'spec.ports[0].nodePort', value: 30880 }
+      - equal: { path: 'spec.loadBalancerSourceRanges', value: [192.0.2.0/24] }

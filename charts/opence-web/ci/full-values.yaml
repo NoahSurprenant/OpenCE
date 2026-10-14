@@ -1,0 +1,123 @@
+# Every option the chart has, for lint and the schema check (not installed: the NFS server is made
+# up). The game data's files here would be the operator's own copy, on a private network.
+image:
+  tag: latest@sha256:0000000000000000000000000000000000000000000000000000000000000000
+imagePullSecrets:
+  - name: registry-credentials
+replicaCount: 2
+gameData:
+  volume:
+    nfs:
+      server: nfs.example.com
+      path: /exports/games
+      readOnly: true
+  maps:
+    subPath: halo/maps
+  skate:
+    enabled: true
+    assetsSubPath: skate/assets
+    soundsSubPath: skate/sounds
+manifest:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 32Mi
+    limits:
+      cpu: "1"
+      memory: 128Mi
+service:
+  type: LoadBalancer
+  port: 8080
+  nodePort: 30880
+  annotations:
+    example.com/address: 192.0.2.10
+  labels:
+    team: games
+  loadBalancerClass: example.com/lb
+  loadBalancerSourceRanges: [192.0.2.0/24]
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: example-issuer
+  labels:
+    team: games
+  hosts:
+    - host: halo.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: halo-tls
+      hosts: [halo.example.com]
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    memory: 256Mi
+nodeSelector:
+  kubernetes.io/os: linux
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: node-role.kubernetes.io/control-plane
+              operator: DoesNotExist
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: games
+    effect: NoSchedule
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: opence-web
+priorityClassName: ""
+podAnnotations:
+  example.com/scrape: "false"
+podLabels:
+  team: games
+terminationGracePeriodSeconds: 60
+probes:
+  liveness:
+    periodSeconds: 30
+  readiness:
+    initialDelaySeconds: 1
+defaultServiceAccount:
+  manage: true
+networkPolicy:
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  extraIngress:
+    - from:
+        - ipBlock:
+            cidr: 192.0.2.0/24
+      ports:
+        - protocol: TCP
+          port: 8080
+  extraEgress:
+    - to:
+        - ipBlock:
+            cidr: 203.0.113.0/24
+      ports:
+        - protocol: TCP
+          port: 443
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: '{{ .Release.Name }}-extra'
+    data:
+      hello: world

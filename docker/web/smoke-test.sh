@@ -74,6 +74,8 @@ echo "=== a private server (placeholder data in tmpfs folders)"
 data=uid=101,gid=101
 start --tmpfs "/srv/game-data/maps:$data" --tmpfs "/srv/game-data/skate-data/assets:$data" \
   --tmpfs "/srv/game-data/skate-data/sounds:$data" --tmpfs "/srv/generated:$data"
+# (expanded in the container)
+# shellcheck disable=SC2016
 in_web sh -euc '
   cd /srv/game-data
   head -c 300000 /dev/urandom > maps/ui.map

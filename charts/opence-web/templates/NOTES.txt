@@ -1,0 +1,31 @@
+OpenCE web {{ .Chart.Version }}: {{ include "opence-web.fullname" . }} in namespace {{ .Release.Namespace }}.
+{{- $gameData := include "opence-web.hasGameData" . }}
+{{ if .Values.ingress.enabled }}
+The site:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}/
+{{- end }}
+{{- else }}
+The site, through Service {{ include "opence-web.fullname" . }} ({{ .Values.service.type }}, port {{ .Values.service.port }}). To try it from this
+machine (localhost counts as a secure context):
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "opence-web.fullname" . }} 8080:{{ .Values.service.port }}
+  # then http://localhost:8080/
+{{- end }}
+
+The game needs a secure context (HTTPS, or localhost) and cross-origin isolation, whose headers nginx
+sends with every response.
+{{- if $gameData }}
+
+A private server: the game data from {{ if .Values.gameData.existingClaim }}claim {{ .Values.gameData.existingClaim }}{{ else }}gameData.volume{{ end }} (maps: {{ .Values.gameData.maps.subPath }}{{ if .Values.gameData.skate.enabled }}; skate: {{ .Values.gameData.skate.assetsSubPath }}, {{ .Values.gameData.skate.soundsSubPath }}{{ end }}), served
+read-only under /game-data/, listed in /game-data/manifest.json and named by /server-data.json. Serve
+it on a private network only, and only your own copy of the game: never publicly.
+
+The manifest init container hashes every file at each pod start (about 30-60 s for 2 GB):
+
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "opence-web.fullname" . }} -c manifest
+{{- else }}
+
+No game data (gameData not set): the plain site, whose players import their own. /server-data.json
+is a 404.
+{{- end }}
