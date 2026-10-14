@@ -900,8 +900,18 @@ off their chest goes off a second and a half on, and a skater riding at
 8 m/s is 4 world units away by then, unhurt */
 #define SKATE_STILL_SPEED 1.5f
 /* world units further from a blast than their course a third of a second on
-that a skater pushed must go */
+that a skater pushed must go (a push of 4.3 m/s, 1.4 world units a second,
+would take them 0.47 in that third unhindered; the board's grip and the
+ground leave as little as a fifth of that) */
 #define SKATE_PUSH_AWAY 0.08f
+/* ticks from the throw that a grenade on its fuse (a second and a half) goes
+off in, as tools/test_linux_port.py counts one */
+#define SKATE_FUSE_FROM 40
+#define SKATE_FUSE_UNTIL 60
+/* the log's hundredth: a skater hurt by at least that, and alive by at least
+that, reads so in it (the test reads the log, and a grenade counted here
+that it cannot see hurt them would not be thrown again) */
+#define SKATE_LOGGED 0.01f
 
 static struct
 {
@@ -1260,11 +1270,12 @@ static void skate_network_test_shoot(void)
 				}
 				skate_shoot.own_hurt = FALSE;
 				/* (and on its fuse: one that went off at once, on something in its
-				way, is tried again) */
-				if (skate_shoot.local && target->object.body_vitality > 0.f &&
-					now - skate_shoot.grenade_time >= TICKS_PER_SECOND &&
-					(target->object.shield_vitality < skate_shoot.grenade_shield ||
-					target->object.body_vitality < skate_shoot.grenade_body))
+				way, or late, is tried again) */
+				if (skate_shoot.local && target->object.body_vitality >= SKATE_LOGGED &&
+					now - skate_shoot.grenade_time >= SKATE_FUSE_FROM &&
+					now - skate_shoot.grenade_time <= SKATE_FUSE_UNTIL &&
+					(target->object.shield_vitality <= skate_shoot.grenade_shield - SKATE_LOGGED ||
+					target->object.body_vitality <= skate_shoot.grenade_body - SKATE_LOGGED))
 				{
 					skate_shoot.own_hurt = TRUE;
 				}
@@ -1305,7 +1316,7 @@ static void skate_network_test_shoot(void)
 				target->object.shield_vitality, target->object.body_vitality, past,
 				magnitude3d(&skate_shoot.detonated_course) * TICKS_PER_SECOND * 3.048f, faster, away.i, away.j);
 			/* (one at the host's own skater, alive still, pushed away: done) */
-			if (skate_shoot.local && skate_shoot.own_hurt && target->object.body_vitality > 0.f &&
+			if (skate_shoot.local && skate_shoot.own_hurt && target->object.body_vitality >= SKATE_LOGGED &&
 				past > SKATE_PUSH_AWAY)
 			{
 				skate_shoot.own_grenades++;

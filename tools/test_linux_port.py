@@ -796,12 +796,14 @@ def test_skate_multiplayer(tmp_path):
     # measurably further from it than their course. Not every one: a skater
     # left on Blood Gulch's teleporter exit by the teleport test can stand
     # unmoved by a blast pushed into the engine, and the host throws again
-    # till one moves them, skate_network.c)
+    # till one moves them more than SKATE_PUSH_AWAY, 0.08, skate_network.c.
+    # The log rounds to the hundredth, so a push the game counted (say 0.083)
+    # reads 0.08: at least that, then, or it would fail one it stopped on)
     for t in blown:
         assert len(t["blast"]) == 1, f"the blast did not push the host's skater once: {t}"
         (x, y), (ax, ay) = t["blast"][0][3], t["away"]
         assert x * ax + y * ay > 0.7 * math.hypot(x, y), f"the blast did not push the skater away from it: {t}"
-    assert any(t["further"] > 0.08 for t in blown), f"no blast moved the skater away from it: {blown}"
+    assert any(t["further"] >= 0.08 for t in blown), f"no blast moved the skater away from it: {blown}"
     assert not undone, f"a push was undone: {undone}"
     # (the client pushes its own skater for a blast the host's grenade gave
     # them, replaying the host's damage, once: a push a little after each
