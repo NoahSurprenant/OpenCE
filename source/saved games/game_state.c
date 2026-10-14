@@ -161,6 +161,9 @@ static void game_state_set_revert_time(
 boolean recover_saved_games_hack;
 
 static FILE* bss_004d27b0;
+/* port: whether gamestate.txt was opened, or failed to be: tried once, not
+again for every allocation (each was refused while it could not be) */
+static boolean game_state_allocation_record_opened;
 
 static struct
 {
@@ -522,9 +525,12 @@ static void game_state_allocation_record(
 	// retaining one out-of-line copy under its private address-derived name.
 	FILE *file = bss_004d27b0;
 
-	if (!file)
+	if (!file && !game_state_allocation_record_opened)
 	{
-		file = fopen("d:\\gamestate.txt", "w");
+		game_state_allocation_record_opened = TRUE;
+		/* port: in the save root (z:\), not the data root (d:\), which may be
+		read-only, as a dedicated server's is */
+		file = fopen("z:\\gamestate.txt", "w");
 		bss_004d27b0 = file;
 	}
 

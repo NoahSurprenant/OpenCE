@@ -2215,6 +2215,11 @@ BOOL WINAPI D3DDevice_IsBusy(void)
 	return FALSE;
 }
 
+int xgpu_gl_ready(void)
+{
+	return device.gl_ready;
+}
+
 void WINAPI D3DDevice_KickPushBuffer(void)
 {
 	if (device.gl_ready)

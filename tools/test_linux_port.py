@@ -1015,6 +1015,85 @@ def test_dedicated_server_skaters(tmp_path):
         assert all(heard[name][n] == decided.get(n) for n in heard[name]), f"verdicts differ: {decided}, {heard}"
 
 
+def test_dedicated_server_rotation(tmp_path):
+    """A dedicated server through two turns of its map list, as the server
+    image is run (server.maps "bloodgulch:slayer, bloodgulch:ctf,
+    hangemhigh:king", one-minute games, no score limit, nobody on it): each
+    game ends on its time, its scores are shown, and the next map's game
+    starts, till the third, and SIGTERM ends it with status 0. Before, it
+    crashed as each game ended: the scores drawn for nobody asked for their
+    buttons' high-res icons, and without a window OpenCE has no OpenGL to make
+    them with (hud_hires.c). Each game is set up once (the next was set up
+    over the one ending, twice, before its server left it), and the last
+    profile, which a server has none of, is looked for once, not every frame.
+    Its data root is read-only, as the image mounts it, and left untouched:
+    its log (debug.txt, on the standard error too), gamestate.txt and
+    custom_maps are in its save root.
+    The server is HALO_TEST_SERVER's (the image's build), else
+    HALO_TEST_GAME's, with the Halo maps (HALO_SKATE_TEST_HALO_MAPS); it skips
+    without them. About three minutes and a half."""
+    server = os.environ.get("HALO_TEST_SERVER") or os.environ.get("HALO_TEST_GAME")
+    maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
+    if not (server and maps and Path(server).is_file() and Path(maps, "bloodgulch.map").is_file() and
+            Path(maps, "hangemhigh.map").is_file()):
+        pytest.skip("needs HALO_TEST_SERVER or HALO_TEST_GAME, and HALO_SKATE_TEST_HALO_MAPS")
+    folder = tmp_path / "server"
+    (folder / "data").mkdir(parents=True)
+    (folder / "saves").mkdir()
+    (folder / "data" / "maps").symlink_to(maps)
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
+    env.update(HALO_DEDICATED="1", HALO_NETWORK_TEST_START="5", HALO_NET_ONLINE="false",
+               HALO_UPDATE_ANSWER="never", HALO_NET_ADDRESS="127.0.0.217", HALO_NET_BROADCAST="127.0.0.218",
+               HALO_SERVER_MAPS="bloodgulch:slayer, bloodgulch:ctf, hangemhigh:king",
+               HALO_SERVER_GAME_TYPES="slayer", HALO_SERVER_TIME_LIMIT="1", HALO_SERVER_SCORE_LIMIT="0",
+               HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
+    # (the data root read-only, as the server image mounts it; a run as root
+    # writes it all the same, and the listing below checks it is untouched)
+    (folder / "data").chmod(0o555)
+    log_path, debug_path = folder / "run.log", folder / "saves" / "debug.txt"
+    with open(log_path, "w") as log:
+        process = subprocess.Popen([server], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+    try:
+        # (two games of a minute, each with its scores and the next one's
+        # start, and the third's start: about three minutes)
+        deadline = time.monotonic() + 300
+        third = "server: the game starts: king on hangemhigh"
+        while time.monotonic() < deadline:
+            text = log_path.read_text(errors="replace")
+            assert process.poll() is None, f"the server stopped with status {process.returncode}:\n{text[-4000:]}"
+            if third in text:
+                break
+            time.sleep(1)
+        text = log_path.read_text(errors="replace")
+        debug = debug_path.read_text(errors="replace") if debug_path.is_file() else ""
+        started = re.findall(r"server: the game starts: (\w+)(?: \(teams\))? on (\w+)", text)
+        print(f"games started {started}; {text.count('server: the game is over')} ended")
+        assert started[:3] == [("slayer", "bloodgulch"), ("ctf", "bloodgulch"), ("king", "hangemhigh")], text[-4000:]
+        assert text.count("server: the game is over") >= 2, text[-4000:]
+        assert "network test: the next game (bloodgulch, ctf)" in text, text[-4000:]
+        assert "network test: the next game (hangemhigh, king)" in text, text[-4000:]
+        # (each game set up once: the first, and once for each next one)
+        setups = debug.count("setting up a net game")
+        assert setups == len(started), f"{setups} games set up for {len(started)} started:\n{debug[-4000:]}"
+        lastprof = debug.count("failed to open 'z:\\lastprof.txt'")
+        assert lastprof <= 1, f"the last profile was looked for {lastprof} times"
+        # the data root written to not at all: the log (debug.txt), gamestate.txt
+        # and custom_maps in the save root, and the log on the standard error
+        # too, as the image's log
+        written = sorted(path.name for path in (folder / "data").iterdir())
+        assert written == ["maps"], f"the server wrote to its data root: {written}"
+        assert text.count("setting up a net game") == setups, "the log did not go to the standard error too"
+        assert (folder / "saves" / "z" / "gamestate.txt").is_file() and (folder / "saves" / "custom_maps").is_dir()
+        process.terminate()
+        assert process.wait(timeout=15) == 0, log_path.read_text(errors="replace")[-4000:]
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        (folder / "data").chmod(0o755)
+
+
 def test_dedicated_server_without_maps(tmp_path):
     """A dedicated server whose data root lacks the maps it is to host (no maps
     folder, an empty one, one with ui.map but not the map of its list, a file
@@ -1093,3 +1172,4 @@ def test_dedicated_server_without_maps(tmp_path):
         assert not bound, f"{name}: the tunnel port was bound"
         assert "Internet play" not in stderr, f"{name}: the network started:\n{stderr[-3000:]}"
         assert not (root / "debug.txt").exists(), f"{name}: the game started (it wrote debug.txt)"
+        assert not (tmp_path / f"saves{index}" / "debug.txt").exists(), f"{name}: the game started (it wrote debug.txt)"

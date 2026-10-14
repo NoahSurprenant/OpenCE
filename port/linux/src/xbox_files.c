@@ -122,7 +122,11 @@ const char *platform_data_root(void)
 				platform_log("no maps/ folder found; set paths.data in config.toml to the folder that holds maps/");
 		}
 		trim_separators(root);
-		platform_log("data root: %s (the game's log: debug.txt there)", root);
+		/* (the log elsewhere is said where it is: platform_log_root) */
+		if (config_string("paths.logs")[0] || config_boolean("server.dedicated"))
+			platform_log("data root: %s", root);
+		else
+			platform_log("data root: %s (the game's log: debug.txt there)", root);
 	}
 	return root;
 }
@@ -224,8 +228,18 @@ void platform_dedicated_maps_check(void)
 	for (index = 0; !has_folder && index < (int)(sizeof(folders) / sizeof(folders[0])); index++)
 		has_folder = posix_find_entry_case_insensitive(root, folders[index], folder_name, sizeof(folder_name));
 	snprintf(folder, sizeof(folder), "%s/%s", root, has_folder ? folder_name : preferred);
-	has_custom_maps = posix_find_entry_case_insensitive(root, "custom_maps", folder_name, sizeof(folder_name));
-	snprintf(custom_maps, sizeof(custom_maps), "%s/%s", root, has_custom_maps ? folder_name : "custom_maps");
+	/* (custom_maps where the game reads it: paths.custom_maps, else the data
+	root's, else none, as the save root's is made empty) */
+	if (platform_custom_maps_root()[0])
+	{
+		snprintf(custom_maps, sizeof(custom_maps), "%s", platform_custom_maps_root());
+		has_custom_maps = directory_exists(custom_maps);
+	}
+	else
+	{
+		has_custom_maps = posix_find_entry_case_insensitive(root, "custom_maps", folder_name, sizeof(folder_name));
+		snprintf(custom_maps, sizeof(custom_maps), "%s/%s", root, has_custom_maps ? folder_name : "custom_maps");
+	}
 	looked_for[0] = 0;
 	problems[0] = 0;
 	snprintf(seen, sizeof(seen), "|");
@@ -374,11 +388,72 @@ const char *platform_custom_edition_root(void)
 	return root;
 }
 
+/* paths.custom_maps, or a dedicated server's default: the data root's
+custom_maps if it has one, else the save root's (a read-only data root
+refused the folder made at each start, shell.c) */
+const char *platform_custom_maps_root(void)
+{
+	static char root[MAX_PATH];
+	static int found;
+
+	if (!found)
+	{
+		char folder_name[256];
+
+		found = 1;
+		snprintf(root, sizeof(root), "%s", config_string("paths.custom_maps"));
+		trim_separators(root);
+		if (!root[0] && config_boolean("server.dedicated") &&
+			!posix_find_entry_case_insensitive(platform_data_root(), "custom_maps", folder_name, sizeof(folder_name)))
+		{
+			snprintf(root, sizeof(root), "%s/custom_maps", platform_save_root());
+		}
+		if (root[0])
+			platform_log("custom maps: %s", root);
+	}
+	return root;
+}
+
+/* paths.logs, or a dedicated server's default: its save root (a read-only
+data root refused debug.txt, and the log went to standard error alone) */
+const char *platform_log_root(void)
+{
+	static char root[MAX_PATH];
+	static int found;
+
+	if (!found)
+	{
+		found = 1;
+		snprintf(root, sizeof(root), "%s", config_string("paths.logs"));
+		trim_separators(root);
+		if (!root[0] && config_boolean("server.dedicated"))
+			snprintf(root, sizeof(root), "%s", platform_save_root());
+		if (root[0])
+		{
+			make_directories(root);
+			platform_log("the game's log: %s/debug.txt", root);
+		}
+	}
+	return root;
+}
+
+/* port: whether the game's log goes to standard error too (errors.c): a
+dedicated server's, whose log a service manager or `kubectl logs` keeps */
+int halo_debug_log_echo(void)
+{
+	static int echo = -1;
+
+	if (echo < 0)
+		echo = config_boolean("server.dedicated") ? 1 : 0;
+	return echo;
+}
+
 void platform_translate_path(const char *xbox_path, char *host_path, unsigned long host_path_size)
 {
 	char resolved[1024];
 	const char *cursor = xbox_path;
 	unsigned long length;
+	int in_data_root = 1;
 
 	snprintf(resolved, sizeof(resolved), "%s", platform_data_root());
 	if (((cursor[0] >= 'a' && cursor[0] <= 'z') || (cursor[0] >= 'A' && cursor[0] <= 'Z')) && cursor[1] == ':')
@@ -387,10 +462,12 @@ void platform_translate_path(const char *xbox_path, char *host_path, unsigned lo
 
 		if (drive == 'h' && platform_custom_edition_root()[0])
 		{
+			in_data_root = 0;
 			snprintf(resolved, sizeof(resolved), "%s", platform_custom_edition_root());
 		}
 		else if (drive != 'd')
 		{
+			in_data_root = 0;
 			struct posix_file_information information;
 
 			snprintf(resolved, sizeof(resolved), "%s/%c", platform_save_root(), drive);
@@ -399,6 +476,23 @@ void platform_translate_path(const char *xbox_path, char *host_path, unsigned lo
 				posix_make_directory(resolved);
 		}
 		cursor += 2;
+	}
+	/* the data root's custom_maps folder and debug.txt, where they are kept
+	instead (paths.custom_maps, paths.logs) */
+	if (in_data_root)
+	{
+		const char *first = cursor + strspn(cursor, "\\/");
+		size_t first_length = strcspn(first, "\\/");
+
+		if (first_length == 11 && starts_with_any_case(first, "custom_maps") && platform_custom_maps_root()[0])
+		{
+			snprintf(resolved, sizeof(resolved), "%s", platform_custom_maps_root());
+			cursor = first + first_length;
+		}
+		else if (first_length == 9 && !first[9] && starts_with_any_case(first, "debug.txt") && platform_log_root()[0])
+		{
+			snprintf(resolved, sizeof(resolved), "%s", platform_log_root());
+		}
 	}
 
 	while (*cursor)

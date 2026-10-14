@@ -25,6 +25,13 @@ telnetConsole:
 extraEnv:
   - name: HALO_NET_VOTEKICK
     value: "false"
+customMaps:
+  existingClaim: halo-custom-maps
+  subPath: ce
+logs:
+  volume:
+    emptyDir:
+      sizeLimit: 256Mi
 persistence:
   enabled: true
   storageClass: standard

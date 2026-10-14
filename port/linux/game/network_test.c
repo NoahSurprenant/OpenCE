@@ -981,7 +981,10 @@ void network_test_update(
 	/* the next game of the list: once the scores have been shown a while,
 	the host's button (the bots may press it first). In a headless dedicated server,
 	the server state moves to postgame even if game_engine is stopped or non-deterministic
-	updates halted */
+	updates halted. The scores are timed from the server's postgame (the game
+	engine's, game_engine.c, a few seconds after the game's end), not from the
+	end: a reset before it, the server still in the game, set the next game
+	up over the one ending, twice, without leaving it */
 	{
 		struct network_game_server *server = global_network_game_server_get();
 		boolean is_postgame = server && (network_game_server_get_state(server, NULL) == NETWORK_TEST_SERVER_POSTGAME);
@@ -990,7 +993,7 @@ void network_test_update(
 		if (network_test.mode == _network_test_host && network_test.started && game_ended)
 		{
 			network_test.game_over = TRUE;
-			if (server)
+			if (is_postgame)
 			{
 				network_test.postgame_seconds += seconds;
 				if (network_test.postgame_seconds >= 3.0f && network_test_has_next_game())

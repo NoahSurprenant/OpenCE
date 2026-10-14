@@ -168,7 +168,7 @@ These files are in the data root:
 
 | File | Contents |
 | --- | --- |
-| `debug.txt` | The log of the game. At start-up, the game shows the data root in the terminal. A crash writes its report (the faulting address and the calls that led to it) here as well; the `reference address` line at the top of each session places those addresses in the build. |
+| `debug.txt` | The log of the game (in the folder of `paths.logs` instead, if it is set; a dedicated server's is in the save root). At start-up, the game shows the data root in the terminal. A crash writes its report (the faulting address and the calls that led to it) here as well; the `reference address` line at the top of each session places those addresses in the build. |
 | `init.txt` | Console commands that the game does at start-up. For example, `map_name levels\a10\a10` starts the first campaign level. |
 | `tags/` | Sound tag files that replace the sounds of the maps (`audio.loose_sounds`). |
 
@@ -375,6 +375,8 @@ the setting for one start of the game. It has priority over the file.
 | `game.enhanced_animations` | `true` | `HALO_ENHANCED_ANIMATIONS` | `true`: the player bipeds' grenade throws keep their legs moving, blended by speed and direction (crouched throws stay crouched, throws in the air use the jump's legs), Warthog and Scorpion riders stay seated to throw and let go of the grips to throw and reload, and a player turns with the aim while throwing, as while meleeing. `false`: the original animations, which freeze the legs during a throw and stand a rider up. Only in config.toml, not in the menus. |
 | `paths.data` | `""` | `HALO_DATA_ROOT` | The data root. Refer to "Start the game". |
 | `paths.saves` | `""` | `HALO_SAVE_ROOT` | The save root. Refer to "Files and folders". |
+| `paths.custom_maps` | `""` | `HALO_CUSTOM_MAPS_ROOT` | The `custom_maps` folder (Custom Edition maps, and the maps that other hosts share). Empty: `custom_maps` in the data root; on a dedicated server, `custom_maps` in the save root if the data root has none. |
+| `paths.logs` | `""` | `HALO_LOG_ROOT` | The folder of `debug.txt`, the log of the game. Empty: the data root; on a dedicated server, the save root. |
 | `network.address` | `""` | `HALO_NET_ADDRESS` | The IPv4 address of this machine for system link. Refer to "Play on one computer". |
 | `network.broadcast` | `""` | `HALO_NET_BROADCAST` | IPv4 addresses, with commas between them, that get the broadcasts of the game. Empty: 255.255.255.255. |
 | `network.online` | `true` | `HALO_NET_ONLINE` | `true`: internet play. `false`: system link on the local network only. |
@@ -1001,8 +1003,11 @@ No X, Wayland or `SDL_VIDEO_DRIVER` is necessary. The server:
   of the game and sleeps between them: about 1-2% of a CPU core and 120 MB
   of memory with two players.
 - Writes its log to the standard error: players who join and leave, the
-  start of each game, its end and its scores. If the data root is
-  read-only, the lines of `debug.txt` go to the standard error too.
+  start of each game, its end and its scores, and every line of
+  `debug.txt`.
+- Writes nothing to the data root, which can be read-only: `debug.txt`
+  (`paths.logs`), `gamestate.txt` and `custom_maps` (`paths.custom_maps`,
+  unless the data root has its own) are in the save root.
 - Checks its maps before it starts. The maps folder of the data root
   must have `ui.map` and a map file for each map of `server.maps`. If one
   is missing or is not a map, the server writes one line to the standard

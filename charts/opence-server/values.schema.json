@@ -69,6 +69,33 @@
         "subPath": { "type": "string" }
       }
     },
+    "customMaps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingClaim": { "type": "string" },
+        "nfs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "server": { "type": "string" },
+            "path": { "type": "string" }
+          }
+        },
+        "volume": { "$ref": "#/definitions/k8sObject" },
+        "subPath": { "type": "string" },
+        "readOnly": { "type": "boolean" }
+      }
+    },
+    "logs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingClaim": { "type": "string" },
+        "volume": { "$ref": "#/definitions/k8sObject" },
+        "subPath": { "type": "string" }
+      }
+    },
     "server": {
       "type": "object",
       "additionalProperties": false,

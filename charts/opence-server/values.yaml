@@ -33,6 +33,30 @@ gameData:
   # The folder within the volume that contains maps/. Empty: the volume's root.
   subPath: ""
 
+# The custom_maps folder (Halo Custom Edition maps, and their bitmaps.map and sounds.map), mounted at
+# /custom_maps (HALO_CUSTOM_MAPS_ROOT). Optional; at most one source. Without one, the server uses
+# gameData's custom_maps folder if it has one, else an empty folder in the save root, so it never
+# writes to /data.
+customMaps:
+  existingClaim: ""
+  nfs:
+    server: ""
+    path: ""
+  # Any other volume source, as in a pod's volumes (without the name), e.g. {emptyDir: {}}.
+  volume: {}
+  subPath: ""
+  # The server only reads the maps; false lets the volume be written (copying maps in with kubectl cp).
+  readOnly: true
+
+# The folder of the server's log, debug.txt, mounted at /logs (HALO_LOG_ROOT). Optional. Without
+# one, debug.txt goes to the save root in the state volume (/state/saves/debug.txt). Every line goes
+# to the standard error as well, so `kubectl logs` shows the same either way.
+logs:
+  existingClaim: ""
+  # Any other volume source, as in a pod's volumes (without the name).
+  volume: {}
+  subPath: ""
+
 # The server's settings, as the HALO_* environment variables (port/linux/README.md, "Settings").
 # The server writes config.toml with the defaults into the state volume; these take priority over
 # it for each start.

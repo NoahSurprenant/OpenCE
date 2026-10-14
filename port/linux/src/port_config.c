@@ -344,6 +344,13 @@ static const struct config_setting config_settings[] =
 		"A Halo Custom Edition install whose maps folder is looked in after the\n"
 		"custom_maps folder for Custom Edition maps and their bitmaps.map,\n"
 		"sounds.map and loc.map (game.custom_edition); empty for none." },
+	{ "paths.custom_maps", _config_string, "\"\"", "HALO_CUSTOM_MAPS_ROOT", _environment_value, _platform_desktop,
+		"The custom_maps folder (Custom Edition maps, and the maps other hosts\n"
+		"share); empty for the one in the data root (a dedicated server's: the\n"
+		"save root's, when the data root has none)." },
+	{ "paths.logs", _config_string, "\"\"", "HALO_LOG_ROOT", _environment_value, _platform_desktop,
+		"The folder of the game's log, debug.txt; empty for the data root (a\n"
+		"dedicated server's: the save root)." },
 
 	{ "network.address", _config_string, "\"\"", "HALO_NET_ADDRESS", _environment_value, _platform_all,
 		"This machine's IPv4 address for system link, for a machine on several\n"

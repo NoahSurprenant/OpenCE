@@ -101,6 +101,14 @@ const char *platform_data_root(void);
 /* the Halo Custom Edition install the Xbox drive h:\ is (paths.custom_edition),
 or "" when none is set or it has no maps folder */
 const char *platform_custom_edition_root(void);
+/* the folders two of the data root's entries are kept in instead, so that a
+data root can be read-only (xbox_files.c): the custom_maps folder
+(paths.custom_maps) and the folder of the game's log, debug.txt
+(paths.logs); "" for the data root's, the default but on a dedicated server,
+which keeps both in its save root (its custom_maps in the data root still,
+if that has one) */
+const char *platform_custom_maps_root(void);
+const char *platform_log_root(void);
 /* server.dedicated: exits with status 2, saying so, when the data root lacks
 ui.map or a map the server is to host (xbox_files.c); called first */
 void platform_dedicated_maps_check(void);
