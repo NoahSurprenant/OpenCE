@@ -162,8 +162,7 @@ boolean recover_saved_games_hack;
 
 static FILE* bss_004d27b0;
 /* port: whether gamestate.txt was opened, or failed to be: tried once, not
-again for every allocation (a read-only data root, as a dedicated server's
-can be, refused each) */
+again for every allocation (each was refused while it could not be) */
 static boolean game_state_allocation_record_opened;
 
 static struct
@@ -529,7 +528,9 @@ static void game_state_allocation_record(
 	if (!file && !game_state_allocation_record_opened)
 	{
 		game_state_allocation_record_opened = TRUE;
-		file = fopen("d:\\gamestate.txt", "w");
+		/* port: in the save root (z:\), not the data root (d:\), which may be
+		read-only, as a dedicated server's is */
+		file = fopen("z:\\gamestate.txt", "w");
 		bss_004d27b0 = file;
 	}
 
