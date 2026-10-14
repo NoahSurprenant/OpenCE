@@ -19,7 +19,11 @@
 // rolling, carving and stepped off. With none for the skate data it imports
 // none, and J must say there is none and the game play on. It reports the
 // frame rate (frames shown a second, read from the page) and the browser's
-// memory, before and after J. About two minutes, most of it the imports and
+// memory, before and after J. The browser's own WebGL errors (which reach
+// no console API: CDP's Log domain has them, the game's worker's too) are
+// listed, and a glBlitFramebuffer one fails the test (the display blit's
+// read and draw framebuffers were once the same at each screen change:
+// d3d8_gl.c D3DDevice_Present). About two minutes, most of it the imports and
 // the skater's preload (in a software renderer, as headless Chromium has).
 // A browser that stalls for long (a busy runner) can drop the game: its own
 // connection to itself times out and it goes back to the main menu; the
@@ -93,6 +97,7 @@ function browserMemory() {
 }
 let context = null;
 const lines = [];
+const glErrors = [];
 try {
   children.push(spawn('python3', [path.join(root, 'tools/web_serve.py'), site, '--port', String(sitePort)],
     { stdio: 'ignore', env: { ...process.env, WEB_SERVE_QUIET: '1' } }));
@@ -141,6 +146,11 @@ try {
     };
   });
   const page = context.pages()[0] || await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  cdp.on('Log.entryAdded', ({ entry }) => {
+    if (/GL_INVALID|GL_OUT_OF_MEMORY/.test(entry.text)) glErrors.push(entry.text.replace(/\[\.WebGL-0x[0-9a-f]+\]\s*/i, ''));
+  });
+  await cdp.send('Log.enable');
   await page.goto(pageUrl);
   await page.waitForFunction(() => document.querySelectorAll('#checks li').length >= 5, null, { timeout: 60000 });
   await page.waitForSelector('#skate-panel', { state: 'visible', timeout: 30000 }).catch(() => {
@@ -326,6 +336,10 @@ try {
     }
   }
   if (has(/Tried to spawn a new thread, but the thread pool is exhausted/)) fail("the game's thread pool ran out");
+  const distinct = [...new Set(glErrors)];
+  console.log(`WebGL errors: ${glErrors.length}${distinct.length ? '' : ' (none)'}`);
+  for (const text of distinct.slice(0, 8)) console.log(`  ${glErrors.filter((other) => other === text).length}x ${text.slice(0, 200)}`);
+  if (glErrors.some((text) => /glBlitFramebuffer/.test(text))) fail('the game made a glBlitFramebuffer the browser refused');
   const fps = (value) => (value == null ? 'unknown' : value.toFixed(1));
   const after = withoutData ? 'after J' : 'skating';
   console.log(`frames a second: ${fps(before.fps)} on foot, ${fps(during.fps)} ${after}`);

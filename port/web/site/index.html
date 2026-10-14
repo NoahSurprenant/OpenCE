@@ -6,7 +6,9 @@
 <title>OpenCE</title>
 <meta name="description" content="Halo: Combat Evolved in your browser, from your own Xbox disc image. OpenCE, the decompilation's port.">
 <meta name="theme-color" content="#0a0e14">
-<link rel="manifest" href="manifest.webmanifest">
+<!-- (with the cookies: behind an auth proxy, a manifest fetched without them is
+     sent to the login page; same-origin, so they go nowhere else) -->
+<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
 <link rel="icon" href="icons/icon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="stylesheet" href="style.css">
@@ -161,6 +163,7 @@
 <script src="net.js"></script>
 <script src="p2p.js"></script>
 <script src="server-data.js"></script>
+<script src="gpu.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
