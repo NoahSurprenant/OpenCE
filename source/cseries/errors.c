@@ -178,9 +178,15 @@ static void write_to_debug_file(
 			csstrcpy(prefix, "<TIME UNAVAILABLE>  ");
 		}
 	}
+	if (file != stderr)
+	{
+		fprintf(file, "%s%s", prefix, string);
+		fflush(file);
+	}
 	/* port: (standard error's lines without the file's carriage returns,
-	and without its empty lines) */
-	if (file == stderr)
+	and without its empty lines); a dedicated server's go there as well as
+	to the file, the log its service manager keeps (xbox_files.c) */
+	if (file == stderr || halo_debug_log_echo())
 	{
 		char line[2048];
 		int length = 0;
@@ -193,11 +199,9 @@ static void write_to_debug_file(
 		}
 		line[length] = 0;
 		if (length && strspn(line, "\n") != (size_t)length)
-			fprintf(file, "%s%s", prefix, line);
+			fprintf(stderr, "%s%s", prefix, line);
 		return;
 	}
-	fprintf(file, "%s%s", prefix, string);
-	fflush(file);
 #ifdef HALO_WEB
 	/* port: and to the page's log (port/web/README.md) */
 	fputs(string, stderr);

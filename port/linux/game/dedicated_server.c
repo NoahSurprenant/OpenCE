@@ -285,7 +285,7 @@ void dedicated_server_fatal(
 			}
 		}
 		text[index] = 0;
-		platform_log("server: a fatal error (%s); exiting (debug.txt in the data root has the rest)",
+		platform_log("server: a fatal error (%s); exiting (debug.txt, in the save root or paths.logs, has the rest)",
 			index ? text : "no message");
 	}
 	platform_exit_deadline(DEDICATED_SERVER_EXIT_FATAL, DEDICATED_SERVER_EXIT_SECONDS);

@@ -1026,6 +1026,9 @@ def test_dedicated_server_rotation(tmp_path):
     them with (hud_hires.c). Each game is set up once (the next was set up
     over the one ending, twice, before its server left it), and the last
     profile, which a server has none of, is looked for once, not every frame.
+    Its data root is read-only, as the image mounts it, and left untouched:
+    its log (debug.txt, on the standard error too), gamestate.txt and
+    custom_maps are in its save root.
     The server is HALO_TEST_SERVER's (the image's build), else
     HALO_TEST_GAME's, with the Halo maps (HALO_SKATE_TEST_HALO_MAPS); it skips
     without them. About three minutes and a half."""
@@ -1045,7 +1048,10 @@ def test_dedicated_server_rotation(tmp_path):
                HALO_SERVER_MAPS="bloodgulch:slayer, bloodgulch:ctf, hangemhigh:king",
                HALO_SERVER_GAME_TYPES="slayer", HALO_SERVER_TIME_LIMIT="1", HALO_SERVER_SCORE_LIMIT="0",
                HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
-    log_path, debug_path = folder / "run.log", folder / "data" / "debug.txt"
+    # (the data root read-only, as the server image mounts it; a run as root
+    # writes it all the same, and the listing below checks it is untouched)
+    (folder / "data").chmod(0o555)
+    log_path, debug_path = folder / "run.log", folder / "saves" / "debug.txt"
     with open(log_path, "w") as log:
         process = subprocess.Popen([server], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
     try:
@@ -1072,12 +1078,20 @@ def test_dedicated_server_rotation(tmp_path):
         assert setups == len(started), f"{setups} games set up for {len(started)} started:\n{debug[-4000:]}"
         lastprof = debug.count("failed to open 'z:\\lastprof.txt'")
         assert lastprof <= 1, f"the last profile was looked for {lastprof} times"
+        # the data root written to not at all: the log (debug.txt), gamestate.txt
+        # and custom_maps in the save root, and the log on the standard error
+        # too, as the image's log
+        written = sorted(path.name for path in (folder / "data").iterdir())
+        assert written == ["maps"], f"the server wrote to its data root: {written}"
+        assert text.count("setting up a net game") == setups, "the log did not go to the standard error too"
+        assert (folder / "saves" / "z" / "gamestate.txt").is_file() and (folder / "saves" / "custom_maps").is_dir()
         process.terminate()
         assert process.wait(timeout=15) == 0, log_path.read_text(errors="replace")[-4000:]
     finally:
         if process.poll() is None:
             process.kill()
         process.wait()
+        (folder / "data").chmod(0o755)
 
 
 def test_dedicated_server_without_maps(tmp_path):
@@ -1158,3 +1172,4 @@ def test_dedicated_server_without_maps(tmp_path):
         assert not bound, f"{name}: the tunnel port was bound"
         assert "Internet play" not in stderr, f"{name}: the network started:\n{stderr[-3000:]}"
         assert not (root / "debug.txt").exists(), f"{name}: the game started (it wrote debug.txt)"
+        assert not (tmp_path / f"saves{index}" / "debug.txt").exists(), f"{name}: the game started (it wrote debug.txt)"
