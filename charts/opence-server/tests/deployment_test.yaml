@@ -141,3 +141,46 @@ tests:
   - it: uses the appVersion as the default tag
     asserts:
       - equal: { path: 'spec.template.spec.containers[0].image', value: "ghcr.io/noahsurprenant/opence-server:latest" }
+
+  - it: mounts no custom_maps or logs volume by default (the server keeps both under /state)
+    asserts:
+      - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_CUSTOM_MAPS_ROOT, value: /custom_maps } }
+      - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_LOG_ROOT, value: /logs } }
+      - lengthEqual: { path: 'spec.template.spec.volumes', count: 3 }
+      - lengthEqual: { path: 'spec.template.spec.containers[0].volumeMounts', count: 3 }
+
+  - it: mounts a custom_maps claim read-only at /custom_maps, with its variable
+    set:
+      customMaps: { existingClaim: halo-custom-maps, subPath: ce }
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_CUSTOM_MAPS_ROOT, value: /custom_maps } }
+      - contains:
+          path: spec.template.spec.volumes
+          content: { name: custom-maps, persistentVolumeClaim: { claimName: halo-custom-maps, readOnly: true } }
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: { name: custom-maps, mountPath: /custom_maps, readOnly: true, subPath: ce }
+
+  - it: mounts a custom_maps NFS export, writable when asked
+    set:
+      customMaps: { nfs: { server: nfs.example.com, path: /custom }, readOnly: false }
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content: { name: custom-maps, nfs: { server: nfs.example.com, path: /custom, readOnly: false } }
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: { name: custom-maps, mountPath: /custom_maps, readOnly: false }
+
+  - it: mounts a logs volume at /logs, with its variable
+    set:
+      logs: { volume: { emptyDir: {} } }
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_LOG_ROOT, value: /logs } }
+      - contains: { path: 'spec.template.spec.volumes', content: { name: logs, emptyDir: {} } }
+      - contains: { path: 'spec.template.spec.containers[0].volumeMounts', content: { name: logs, mountPath: /logs } }
+  - it: mounts a logs claim
+    set:
+      logs: { existingClaim: halo-logs }
+    asserts:
+      - contains: { path: 'spec.template.spec.volumes', content: { name: logs, persistentVolumeClaim: { claimName: halo-logs } } }

@@ -6,6 +6,12 @@
 {{- $env = append $env (dict "name" "HALO_DEDICATED" "value" "1") }}
 {{- $env = append $env (dict "name" "HALO_DATA_ROOT" "value" "/data") }}
 {{- $env = append $env (dict "name" "HALO_SAVE_ROOT" "value" "/state/saves") }}
+{{- if include "opence-server.hasCustomMaps" . }}
+{{- $env = append $env (dict "name" "HALO_CUSTOM_MAPS_ROOT" "value" "/custom_maps") }}
+{{- end }}
+{{- if include "opence-server.hasLogs" . }}
+{{- $env = append $env (dict "name" "HALO_LOG_ROOT" "value" "/logs") }}
+{{- end }}
 {{- $env = append $env (dict "name" "HALO_SERVER_MAPS" "value" (join ", " .Values.server.maps)) }}
 {{- $env = append $env (dict "name" "HALO_SERVER_GAME_TYPES" "value" (join ", " .Values.server.gameTypes)) }}
 {{- $env = append $env (dict "name" "HALO_SERVER_TIME_LIMIT" "value" (toString (int .Values.server.timeLimit))) }}
@@ -113,6 +119,23 @@ spec:
             # config.toml (through the image's link), the save root and its map cache.
             - name: state
               mountPath: /state
+            {{- if include "opence-server.hasCustomMaps" . }}
+            # custom_maps (HALO_CUSTOM_MAPS_ROOT)
+            - name: custom-maps
+              mountPath: /custom_maps
+              readOnly: {{ .Values.customMaps.readOnly }}
+              {{- with .Values.customMaps.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+            {{- end }}
+            {{- if include "opence-server.hasLogs" . }}
+            # debug.txt (HALO_LOG_ROOT)
+            - name: logs
+              mountPath: /logs
+              {{- with .Values.logs.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+            {{- end }}
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -140,3 +163,27 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if include "opence-server.hasCustomMaps" . }}
+        - name: custom-maps
+          {{- if .Values.customMaps.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.customMaps.existingClaim }}
+            readOnly: {{ .Values.customMaps.readOnly }}
+          {{- else if and .Values.customMaps.nfs.server .Values.customMaps.nfs.path }}
+          nfs:
+            server: {{ .Values.customMaps.nfs.server }}
+            path: {{ .Values.customMaps.nfs.path }}
+            readOnly: {{ .Values.customMaps.readOnly }}
+          {{- else }}
+          {{- toYaml .Values.customMaps.volume | nindent 10 }}
+          {{- end }}
+        {{- end }}
+        {{- if include "opence-server.hasLogs" . }}
+        - name: logs
+          {{- if .Values.logs.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.logs.existingClaim }}
+          {{- else }}
+          {{- toYaml .Values.logs.volume | nindent 10 }}
+          {{- end }}
+        {{- end }}

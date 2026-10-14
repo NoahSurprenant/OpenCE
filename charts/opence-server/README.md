@@ -72,8 +72,10 @@ without one, and sets no default path:
 | `gameData.nfs.server`, `gameData.nfs.path` | An NFS export, mounted by the kubelet. |
 | `gameData.volume` | Any other volume source, as in a pod spec without its name (`hostPath`, `csi`, ...). |
 
-`gameData.subPath` picks a folder within the volume. The server only reads the data: if it cannot
-write `debug.txt` there, the log goes to the standard error, where `kubectl logs` shows it.
+`gameData.subPath` picks a folder within the volume. The server only reads the data and writes nothing
+to `/data`: its log (`debug.txt`), `gamestate.txt` and an empty `custom_maps` folder go to the save
+root under `/state`, and every line of the log goes to the standard error too, where `kubectl logs`
+shows it.
 
 The server needs `maps/ui.map` and a map file for each map of `server.maps`, and checks them before it
 starts. If one is missing or is not a map (a wrong volume, path or `subPath`, or an empty folder), it
@@ -84,6 +86,17 @@ halo-linux: server: no usable maps in /data/maps (looked for ui.map, bloodgulch.
 ```
 
 The pod goes into `CrashLoopBackOff` and never gets ready. `kubectl logs --previous` shows the line.
+
+## Custom maps and logs
+
+Two optional volumes, each with at most one source:
+
+| Value | Mounted at | Variable | Without it |
+| --- | --- | --- | --- |
+| `customMaps.existingClaim`, `customMaps.nfs`, `customMaps.volume` (`subPath`, `readOnly`, true by default) | `/custom_maps` | `HALO_CUSTOM_MAPS_ROOT` | `custom_maps` in the game data if it has one, else an empty folder in the save root |
+| `logs.existingClaim`, `logs.volume` (`subPath`) | `/logs` | `HALO_LOG_ROOT` | `debug.txt` in the save root, `/state/saves/debug.txt` |
+
+The log goes to the standard error either way.
 
 ## Networking
 
@@ -124,9 +137,10 @@ and `extraEgress` add rules.
 - One replica with `strategy: Recreate`: one server owns the port and the address, never two at once.
 - Non-root (uid 10001), read-only root filesystem, every capability dropped, no privilege
   escalation, seccomp `RuntimeDefault`, no service account token.
-- `/state` is the only writable folder: `config.toml` (the server writes the defaults at its first
+- `/state` is the only writable folder (with a `logs` volume, or a writable `customMaps` one, those
+  too): `config.toml` (the server writes the defaults at its first
   start; the `HALO_*` variables the chart sets take priority over it), the save root with its map
-  cache (about 115 MB for the multiplayer maps), and the key of the invite links. An emptyDir
+  cache (about 115 MB for the multiplayer maps) and `debug.txt`, and the key of the invite links. An emptyDir
   unless `persistence.enabled`.
 - Probes: the server holds a UDP socket on the tunnel port (the container's `/proc/net/udp`) from
   the start of internet play until it quits. The startup probe allows two minutes. A server without
@@ -158,7 +172,8 @@ The chart maps its values to the server's environment variables (port/linux/READ
 | `network.allowUpnp`, `network.online`, `network.stunServers` | `HALO_NET_ALLOW_UPNP`, `HALO_NET_ONLINE`, `HALO_NET_STUN` |
 | `telnetConsole.enabled`, `telnetConsole.port` | `HALO_TELNET_CONSOLE`, `HALO_TELNET_CONSOLE_PORT` |
 
-Always set: `HALO_DEDICATED=1`, `HALO_DATA_ROOT=/data`, `HALO_SAVE_ROOT=/state/saves`. Any other
+Always set: `HALO_DEDICATED=1`, `HALO_DATA_ROOT=/data`, `HALO_SAVE_ROOT=/state/saves`; with their
+volumes, `HALO_CUSTOM_MAPS_ROOT=/custom_maps` and `HALO_LOG_ROOT=/logs`. Any other
 setting goes in `extraEnv`, which comes last and so overrides the chart's.
 
 ## Tests

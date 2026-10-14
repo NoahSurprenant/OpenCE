@@ -60,3 +60,17 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if or .existingClaim (and .nfs.server .nfs.path) .volume }}true{{ end -}}
 {{- end -}}
 {{- end }}
+
+{{/* "true" when a custom_maps volume is configured. */}}
+{{- define "opence-server.hasCustomMaps" -}}
+{{- with .Values.customMaps -}}
+{{- if or .existingClaim (and .nfs.server .nfs.path) .volume }}true{{ end -}}
+{{- end -}}
+{{- end }}
+
+{{/* "true" when a logs volume is configured. */}}
+{{- define "opence-server.hasLogs" -}}
+{{- with .Values.logs -}}
+{{- if or .existingClaim .volume }}true{{ end -}}
+{{- end -}}
+{{- end }}
