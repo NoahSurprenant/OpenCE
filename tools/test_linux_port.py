@@ -1121,7 +1121,8 @@ def test_dedicated_server_without_maps(tmp_path):
                    "maps missing or unusable in {root}/maps: bloodgulch.map (not a map); exiting", ""),
     }
     # (a port no other test uses, which the server binds as soon as its
-    # network starts: internet play is on)
+    # network starts: internet play is on, without STUN, which a CI runner
+    # may not reach)
     port = 27315
     for index, (name, (files, expected, maps)) in enumerate(cases.items()):
         root = tmp_path / f"data{index}"
@@ -1137,7 +1138,8 @@ def test_dedicated_server_without_maps(tmp_path):
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
         env.update(HALO_DEDICATED="1", HALO_DATA_ROOT=str(root), HALO_SAVE_ROOT=str(tmp_path / f"saves{index}"),
-                   HALO_NET_ONLINE="true", HALO_NET_TUNNEL_PORT=str(port), HALO_UPDATE_ANSWER="never")
+                   HALO_NET_ONLINE="true", HALO_NET_TUNNEL_PORT=str(port), HALO_UPDATE_ANSWER="never",
+                   HALO_NET_STUN="")
         if maps:
             env["HALO_SERVER_MAPS"] = maps
         # (in a folder of its own: config.toml is written beside the
