@@ -1,0 +1,166 @@
+# opence-web chart: the OpenCE web build (port/web/README.md) behind nginx (docker/web/Dockerfile),
+# and optionally a private server of your own game data (gameData). The site is static: any number
+# of replicas serve it.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/noahsurprenant/opence-web
+  # Empty: the chart's appVersion (latest). Image Updater can write <tag>@sha256:... here.
+  tag: ""
+  # sha256:... ; replaces any digest in tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Secrets to pull the image with, if its registry needs them: [{name: my-pull-secret}].
+imagePullSecrets: []
+
+replicaCount: 1
+
+# The game data a private server serves (port/web/README.md, "Serving the game data privately"):
+# your own copy, on a private network only, never public. Not set (the default): the plain site,
+# whose players import their own data in the page; no init container, and /server-data.json is a
+# 404. Set existingClaim or volume (exactly one) and the pod's init container hashes the files into
+# a manifest that the page reads to copy them into the browser's storage.
+#
+# The volume is mounted read-only, by subPath only: the maps folder at /srv/game-data/maps and Skate
+# 3 mode's converted skate-data folders at /srv/game-data/skate-data/{assets,sounds}; nothing else of
+# the volume is visible to the pod, and nginx serves only those three folders, under /game-data/.
+gameData:
+  # An existing PersistentVolumeClaim (ReadOnlyMany, or any mode the volume allows), mounted
+  # read-only.
+  existingClaim: ""
+  # Or any volume source, as in a pod's volumes (without the name), e.g.
+  # {nfs: {server: nfs.example.com, path: /exports/games, readOnly: true}} or
+  # {hostPath: {path: /srv/games, type: Directory}}. Mounted read-only either way; give the source's
+  # own readOnly too where it has one.
+  volume: {}
+  maps:
+    # The folder within the volume that holds the maps (ui.map and the others; loading.tga too).
+    subPath: maps
+  skate:
+    # Skate 3 mode's converted data (tools/skate_data.py's skate-data folder). false: maps only, and
+    # the manifest has no skate part.
+    enabled: true
+    # The folders within the volume that hold skate-data's assets/ and sounds/.
+    assetsSubPath: skate-data/assets
+    soundsSubPath: skate-data/sounds
+
+# The init container that writes the manifest (tools/web_server_data_manifest.py) when gameData is
+# set: it reads and hashes every file it lists at each pod start, about 30-60 seconds for 2 GB of
+# maps and skate data (one core, the volume's read speed), before nginx starts. It streams the files
+# in 4 MB parts: little memory.
+manifest:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+service:
+  # ClusterIP behind an ingress (the usual); NodePort or LoadBalancer to reach nginx directly. The
+  # page needs a secure context (HTTPS, or localhost): put TLS in front of it.
+  type: ClusterIP
+  port: 80
+  # With NodePort or LoadBalancer: a fixed node port. Empty: one is assigned.
+  nodePort: ""
+  annotations: {}
+  labels: {}
+  loadBalancerClass: ""
+  loadBalancerSourceRanges: []
+
+ingress:
+  enabled: false
+  # Empty: the cluster's default IngressClass.
+  className: ""
+  # E.g. cert-manager's cluster-issuer. The game data are big (a map is up to about 100 MB): an
+  # ingress that buffers or limits responses may need its own settings for them.
+  annotations: {}
+  labels: {}
+  hosts:
+    - host: halo.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  # [{secretName: halo-tls, hosts: [halo.example.com]}]
+  tls: []
+
+# The rollout of a new image: one at a time, never fewer than the replicas.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# nginx serving static files: a few MB resident.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+nodeSelector:
+  kubernetes.io/os: linux
+affinity: {}
+tolerations: []
+topologySpreadConstraints: []
+priorityClassName: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# nginx's graceful stop (SIGQUIT) lets the downloads in progress finish.
+terminationGracePeriodSeconds: 30
+
+# No fsGroup: the pod writes only to its emptyDirs (/tmp, and /srv/generated with game data), and an
+# fsGroup could have the kubelet change the ownership of the game data's files.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+
+# For nginx and the init container.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# HTTP GET /healthz on nginx. Each probe's fields (other than its httpGet) override the defaults
+# here; enabled: false drops it.
+probes:
+  readiness:
+    enabled: true
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 2
+  liveness:
+    enabled: true
+    periodSeconds: 20
+    failureThreshold: 3
+    timeoutSeconds: 2
+
+# Manage the namespace's default ServiceAccount with automountServiceAccountToken: false. The pod
+# never calls the Kubernetes API, and mounts no token either way. Every namespace already has a
+# default ServiceAccount: Argo CD adopts it, but plain helm install needs --take-ownership.
+defaultServiceAccount:
+  manage: false
+
+networkPolicy:
+  enabled: true
+  # Who may reach nginx's port (8080), as a NetworkPolicy's peers. Empty: anyone; narrow it to the
+  # ingress controller's pods, e.g.
+  # [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}].
+  ingressFrom: []
+  # No egress at all: nginx and the manifest script need no network (not even DNS). More rules, as
+  # in a NetworkPolicy's ingress and egress.
+  extraIngress: []
+  extraEgress: []
+
+# More objects to render with the release (templated).
+extraObjects: []

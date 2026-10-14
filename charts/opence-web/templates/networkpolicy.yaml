@@ -1,0 +1,35 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+# HTTP in on nginx's port, from networkPolicy.ingressFrom (anyone when empty); nothing out: nginx and
+# the manifest script need no network, not even DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opence-web.fullname" . }}
+  labels:
+    {{- include "opence-web.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opence-web.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+      {{- with $np.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- with $np.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $np.extraEgress }}
+  egress:
+    {{- toYaml . | nindent 4 }}
+  {{- else }}
+  egress: []
+  {{- end }}
+{{- end }}

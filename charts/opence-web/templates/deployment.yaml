@@ -1,0 +1,136 @@
+{{- $fullname := include "opence-web.fullname" . }}
+{{- $gameData := include "opence-web.hasGameData" . }}
+{{- $probe := dict "httpGet" (dict "path" "/healthz" "port" "http") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "opence-web.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    {{- toYaml .Values.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "opence-web.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "opence-web.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # nginx and the manifest script never call the Kubernetes API.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $gameData }}
+      # The manifest of the game data (tools/web_server_data_manifest.py): every file hashed, at each
+      # start, into the emptyDir that nginx serves /server-data.json and /game-data/manifest.json from.
+      initContainers:
+        - name: manifest
+          image: {{ include "opence-web.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python3
+            - /opt/opence-web/web_server_data_manifest.py
+            - --maps
+            - /srv/game-data/maps
+            {{- if .Values.gameData.skate.enabled }}
+            - --skate-data
+            - /srv/game-data/skate-data
+            {{- end }}
+            - --output
+            - /srv/generated/manifest.json
+            - --config
+            - /srv/generated/server-data.json
+            - --manifest-url
+            - game-data/manifest.json
+          resources:
+            {{- toYaml .Values.manifest.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            {{- include "opence-web.gameDataMounts" . | nindent 12 }}
+            - name: generated
+              mountPath: /srv/generated
+            - name: tmp
+              mountPath: /tmp
+      {{- end }}
+      containers:
+        - name: nginx
+          image: {{ include "opence-web.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          {{- range $name := list "readiness" "liveness" }}
+          {{- $p := index $.Values.probes $name }}
+          {{- if $p.enabled }}
+          {{ $name }}Probe:
+            {{- toYaml (merge (omit $p "enabled") $probe) | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            # nginx's pid and temporary files.
+            - name: tmp
+              mountPath: /tmp
+            {{- if $gameData }}
+            {{- include "opence-web.gameDataMounts" . | nindent 12 }}
+            - name: generated
+              mountPath: /srv/generated
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if $gameData }}
+        - name: generated
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: game-data
+          {{- if .Values.gameData.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.gameData.existingClaim }}
+            readOnly: true
+          {{- else }}
+          {{- toYaml .Values.gameData.volume | nindent 10 }}
+          {{- end }}
+        {{- end }}

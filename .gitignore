@@ -34,3 +34,8 @@ dist/
 # Skate 3 mode's data and sounds, converted from your own copy of the game
 # (port/skate/README.md); never commit
 skate-data/
+
+# A private server's game data and its config (port/web/README.md, "Serving the
+# game data privately"): never commit, never part of the site
+server-data.json
+game-data/

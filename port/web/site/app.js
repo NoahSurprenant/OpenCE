@@ -26,6 +26,11 @@ then fills the page.
 - ?join=<invite> (a halo://join/ link's code, which native builds and the
   game here make: port/linux/src/p2p.c) joins that internet game once the
   game starts.
+- A private server of the owner's own copy can provide the game data
+  itself (server-data.js): with a server-data.json beside this page, the
+  page downloads the files its manifest lists into the same places as the
+  imports, instead of offering them, and later only what changed. Without
+  one (the public site, the release zips) nothing changes.
 */
 
 'use strict';
@@ -226,7 +231,8 @@ function formatBytes(bytes) {
 
 async function refreshData() {
   dataReady = false;
-  let text = 'No game data yet: choose your disc image of Halo: Combat Evolved for the Xbox.';
+  let text = serverData ? 'No game data yet: this server provides it.' :
+    'No game data yet: choose your disc image of Halo: Combat Evolved for the Xbox.';
   try {
     const root = await navigator.storage.getDirectory();
     const maps = await root.getDirectoryHandle('maps');
@@ -314,7 +320,7 @@ async function refreshSkate() {
     // none, or a copy that did not finish
   }
   $('skate-status').textContent = text;
-  $('skate-delete').hidden = !ready;
+  $('skate-delete').hidden = !ready || !!serverData;
 }
 
 function importSkate(files) {
@@ -365,6 +371,107 @@ $('skate-delete').addEventListener('click', async () => {
   await refreshSkate();
   await refreshStorage();
 });
+
+// ---------- the game data from this site's own server (server-data.js):
+// opt-in, only where a server-data.json is beside the page
+
+// the server's manifest (server-data.js parseManifest), when it provides the
+// game data
+let serverData = null;
+// where the server's data stands: '' (no server-data.json), 'checking' (the
+// copy in this browser is being compared or downloaded: what is there may be
+// stale, so Play waits), 'done', 'failed' or 'refused' (a server-data.json that
+// cannot be followed). Also the page's data-server-data attribute, for tests
+// and anything else that drives the page.
+let serverState = '';
+
+function setServerState(state) {
+  serverState = state;
+  document.documentElement.dataset.serverData = state;
+}
+
+const SAME_ORIGIN = { mode: 'same-origin', credentials: 'same-origin', redirect: 'error', cache: 'no-store' };
+
+// the manifest, or null: no server-data.json (a 404, as on the public site),
+// or a file that is not one (a server that answers every address with a
+// page); an error when there is one that cannot be followed
+async function loadServerData() {
+  let response;
+  try {
+    response = await fetch(window.HaloServerData.CONFIG_NAME, SAME_ORIGIN);
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  let value;
+  try {
+    value = await response.json();
+  } catch {
+    return null;
+  }
+  const config = window.HaloServerData.parseConfig(value, location.href);
+  if (!config) return null;
+  const manifest = await fetch(config.manifestUrl, SAME_ORIGIN);
+  if (!manifest.ok) throw new Error(`The server did not give its manifest (HTTP ${manifest.status}).`);
+  let parsed;
+  try {
+    parsed = await manifest.json();
+  } catch {
+    throw new Error("The server's manifest is not JSON.");
+  }
+  return window.HaloServerData.parseManifest(parsed, config.manifestUrl);
+}
+
+// the import panels say where the data comes from, without their buttons
+function showServerData() {
+  for (const id of ['image-label', 'folder-label', 'skate-label', 'skate-delete']) $(id).hidden = true;
+  $('data-note').textContent = 'This server provides the game data: the page copies it into this browser\'s ' +
+    'storage for this site, once, and again only what the server changes.';
+  $('skate-note').textContent = 'In a game, J (or both sticks clicked in) drops Master Chief onto a skateboard driven ' +
+    "by Skate 3's own physics. This server provides its data too, when it has it; without it the game plays as usual.";
+}
+
+function syncServerData() {
+  return new Promise((resolve) => {
+    const worker = new Worker('xiso-worker.js');
+    $('import-progress').hidden = false;
+    $('import-bar').style.width = '0';
+    $('import-text').textContent = 'Checking the game data…';
+    setImporting(true);
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    const finish = async (text, state) => {
+      worker.terminate();
+      setServerState(state);
+      setImporting(false);
+      $('import-text').textContent = text;
+      await refreshData();
+      await refreshSkate();
+      resolve();
+    };
+    worker.onmessage = async (event) => {
+      const data = event.data;
+      if (data.type === 'progress') {
+        $('import-bar').style.width = (100 * data.done / data.total).toFixed(1) + '%';
+        $('import-text').textContent = `Downloading ${data.file}: ${formatBytes(data.done)} of ${formatBytes(data.total)}`;
+        return;
+      }
+      if (data.type === 'done') {
+        const skate = data.skate ? `, skate data ${data.skate.downloaded} of ${data.skate.files}` : '';
+        logLine(`server data: downloaded maps ${data.maps.downloaded} of ${data.maps.files}${skate}, ${data.bytes} bytes`);
+        $('import-bar').style.width = '100%';
+        await finish(data.bytes ? `Downloaded ${formatBytes(data.bytes)} from this server.` : 'Up to date with this server.', 'done');
+      } else {
+        logLine('server data failed: ' + data.message);
+        await finish('The game data could not be downloaded: ' + data.message, 'failed');
+      }
+    };
+    worker.onerror = (event) => {
+      logLine('server data failed: ' + event.message);
+      finish('The game data could not be downloaded: ' + event.message, 'failed');
+    };
+    worker.postMessage({ type: 'server', manifest: serverData, skate: !!stamp.skate });
+  });
+}
 
 $('image-input').addEventListener('change', (event) => {
   const file = event.target.files[0];
@@ -500,7 +607,7 @@ let gameStopped = false;
 let wakeLock = null;
 
 function canPlay() {
-  return checksPassed && dataReady && !gameStarted;
+  return checksPassed && dataReady && !gameStarted && serverState !== 'checking';
 }
 
 function updatePlay() {
@@ -790,8 +897,30 @@ document.addEventListener('visibilitychange', async () => {
     $('checks-note').hidden = false;
   }
   if (results.opfs === 'good') {
+    let serverProblem = null;
+    try {
+      serverData = await loadServerData();
+    } catch (error) {
+      serverProblem = String(error && error.message ? error.message : error);
+    }
+    if (serverData) showServerData();
+    // (until the copy here is checked against the server's, Play waits)
+    if (serverData && checksPassed) {
+      setServerState('checking');
+      $('import-progress').hidden = false;
+      $('import-text').textContent = 'Checking the game data…';
+    }
     await refreshData();
     await refreshSkate();
+    if (serverProblem) {
+      // (the imports stay: the player can still bring their own)
+      logLine('server data: ' + serverProblem);
+      setServerState('refused');
+      $('import-progress').hidden = false;
+      $('import-text').textContent = "This server's game data cannot be used: " + serverProblem;
+    } else if (serverData && checksPassed) {
+      await syncServerData();
+    }
   } else {
     updatePlay();
   }

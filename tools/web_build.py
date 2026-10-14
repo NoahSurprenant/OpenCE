@@ -166,9 +166,19 @@ def find_emcc(sln: Any) -> Optional[str]:
     return None
 
 
+# What only a private server of the game data has beside the page
+# (port/web/README.md, "Serving the game data privately"): never part of the
+# site, its release zips or GitHub Pages, even if a copy is left in
+# port/web/site while trying it.
+SERVER_ONLY = ("server-data.json", "game-data")
+
+
 def site_sources() -> List[Path]:
-    """the page's files (port/web/site), copied beside halo.js"""
-    return sorted(path for path in (PORT_DIR / "site").rglob("*") if path.is_file())
+    """the page's files (port/web/site), copied beside halo.js; never
+    SERVER_ONLY's"""
+    site = PORT_DIR / "site"
+    return sorted(path for path in site.rglob("*")
+                  if path.is_file() and path.relative_to(site).parts[0] not in SERVER_ONLY)
 
 
 def web_configure_inputs() -> List[Path]:

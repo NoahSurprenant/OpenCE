@@ -1,0 +1,40 @@
+suite: ingress
+templates:
+  - templates/ingress.yaml
+release:
+  name: web
+tests:
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments: { count: 0 }
+
+  - it: routes each host to the Service, with TLS
+    set:
+      service.port: 8081
+      ingress:
+        enabled: true
+        className: nginx
+        annotations: { cert-manager.io/cluster-issuer: example-issuer }
+        hosts: [{ host: halo.example.com, paths: [{ path: '/', pathType: Prefix }] }]
+        tls: [{ secretName: halo-tls, hosts: [halo.example.com] }]
+    asserts:
+      - equal: { path: 'spec.ingressClassName', value: nginx }
+      - equal: { path: 'metadata.annotations', value: { cert-manager.io/cluster-issuer: example-issuer } }
+      - equal:
+          path: spec.rules
+          value:
+            - host: halo.example.com
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend: { service: { name: web-opence-web, port: { number: 8081 } } }
+      - equal: { path: 'spec.tls', value: [{ secretName: halo-tls, hosts: [halo.example.com] }] }
+
+  - it: defaults a host's paths to / (Prefix) and leaves out an empty class
+    set:
+      ingress: { enabled: true, hosts: [{ host: halo.example.com }] }
+    asserts:
+      - notExists: { path: 'spec.ingressClassName' }
+      - equal: { path: 'spec.rules[0].http.paths[0].path', value: / }
+      - equal: { path: 'spec.rules[0].http.paths[0].pathType', value: Prefix }

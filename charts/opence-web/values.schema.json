@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "opence-web values",
+  "description": "Strict where the chart defines the structure (unknown keys and wrong types fail the render); free-form where values pass through to Kubernetes. values.yaml describes each value.",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "stringMap": { "type": "object", "additionalProperties": { "type": "string" } },
+    "k8sObject": { "type": "object" },
+    "k8sList": { "type": "array" },
+    "subPath": { "type": "string", "minLength": 1, "pattern": "^[^/]" },
+    "probe": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "exec": false,
+        "httpGet": false,
+        "tcpSocket": false,
+        "grpc": false,
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 },
+        "successThreshold": { "type": "integer", "minimum": 1 },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "global": { "type": "object" },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": ["string", "number"] },
+        "digest": { "type": "string", "pattern": "^(sha256:[0-9a-f]{64})?$" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": { "name": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "replicaCount": { "type": "integer", "minimum": 0 },
+    "gameData": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingClaim": { "type": "string" },
+        "volume": { "$ref": "#/definitions/k8sObject" },
+        "maps": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "subPath": { "$ref": "#/definitions/subPath" } }
+        },
+        "skate": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "assetsSubPath": { "$ref": "#/definitions/subPath" },
+            "soundsSubPath": { "$ref": "#/definitions/subPath" }
+          }
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "resources": { "$ref": "#/definitions/k8sObject" } }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "$ref": "#/definitions/port" },
+        "nodePort": { "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 65535 }, { "const": "" }] },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "labels": { "$ref": "#/definitions/stringMap" },
+        "loadBalancerClass": { "type": "string" },
+        "loadBalancerSourceRanges": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "labels": { "$ref": "#/definitions/stringMap" },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host"],
+            "properties": {
+              "host": { "type": "string" },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["path"],
+                  "properties": {
+                    "path": { "type": "string", "pattern": "^/" },
+                    "pathType": { "enum": ["Prefix", "Exact", "ImplementationSpecific"] }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "secretName": { "type": "string" },
+              "hosts": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "properties": { "type": { "enum": ["Recreate", "RollingUpdate"] } }
+    },
+    "resources": { "$ref": "#/definitions/k8sObject" },
+    "nodeSelector": { "$ref": "#/definitions/stringMap" },
+    "affinity": { "$ref": "#/definitions/k8sObject" },
+    "tolerations": { "$ref": "#/definitions/k8sList" },
+    "topologySpreadConstraints": { "$ref": "#/definitions/k8sList" },
+    "priorityClassName": { "type": "string" },
+    "podAnnotations": { "$ref": "#/definitions/stringMap" },
+    "podLabels": { "$ref": "#/definitions/stringMap" },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+    "podSecurityContext": { "$ref": "#/definitions/k8sObject" },
+    "securityContext": { "$ref": "#/definitions/k8sObject" },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "readiness": { "$ref": "#/definitions/probe" },
+        "liveness": { "$ref": "#/definitions/probe" }
+      }
+    },
+    "defaultServiceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "manage": { "type": "boolean" } }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingressFrom": { "type": "array", "items": { "type": "object" } },
+        "extraIngress": { "type": "array", "items": { "type": "object" } },
+        "extraEgress": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "extraObjects": { "type": "array", "items": { "type": "object" } }
+  }
+}
