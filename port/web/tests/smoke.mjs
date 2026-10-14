@@ -55,6 +55,14 @@ try {
   const scope = await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).scope);
   console.log('service worker: ' + scope);
   if (scope !== url) fail(`the service worker's scope is ${scope}, not ${url}`);
+  // the web app manifest, as the browser fetched it (with the cookies, under
+  // the service worker: index.html)
+  const cdp = await page.context().newCDPSession(page);
+  const manifest = await cdp.send('Page.getAppManifest');
+  console.log(`manifest: ${manifest.url} (${manifest.data ? manifest.data.length + ' bytes' : 'none'})`);
+  if (manifest.url !== url + 'manifest.webmanifest') fail(`the manifest is ${manifest.url}, not ${url}manifest.webmanifest`);
+  if (!manifest.data || !/"name": "OpenCE"/.test(manifest.data)) fail('the browser did not get the manifest');
+  if (manifest.errors.length) fail('the manifest has errors: ' + JSON.stringify(manifest.errors));
   const checks = await page.$$eval('#checks li', (items) => items.map((item) => [item.className, item.textContent]));
   console.log(checks.map(([state, text]) => `${state}: ${text}`).join('\n'));
   if (checks.some(([state]) => state !== 'good')) fail('a check did not pass');
