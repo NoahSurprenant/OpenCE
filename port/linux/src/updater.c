@@ -551,6 +551,11 @@ void updater_start(void)
 {
 	char *slash;
 
+	/* (not a dedicated server's: its new versions come as a new image, and
+	its install folder may be read-only, where even the clean-up's deletes
+	are refused) */
+	if (config_boolean("server.dedicated"))
+		return;
 	if (!update_executable_path(updater_executable, sizeof(updater_executable)))
 		return;
 	snprintf(updater_directory, sizeof(updater_directory), "%s", updater_executable);
