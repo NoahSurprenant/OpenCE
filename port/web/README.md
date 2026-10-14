@@ -542,7 +542,10 @@ file beside `index.html` that only such a server has: `server-data.json`.
   the manifest lists into the browser's storage where the importers put them
   (`maps/`, and `skate-data/assets` and `skate-data/sounds`), checks each
   one's size and SHA-256, and hides the import buttons; progress shows under
-  **Game data**. A later visit downloads only the files whose hash changed
+  **Game data**, and **Play** waits until the copy in the browser is checked
+  against the server's (the page's `data-server-data` attribute says where
+  that stands: `checking`, `done`, `failed`, or `refused` for a config
+  that cannot be followed). A later visit downloads only the files whose hash changed
   (and removes those the manifest no longer lists): the hashes of what it
   downloaded are kept beside them (`.server-files`). A server-data.json
   that cannot be followed is reported there, and the imports stay.

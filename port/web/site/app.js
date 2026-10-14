@@ -378,6 +378,17 @@ $('skate-delete').addEventListener('click', async () => {
 // the server's manifest (server-data.js parseManifest), when it provides the
 // game data
 let serverData = null;
+// where the server's data stands: '' (no server-data.json), 'checking' (the
+// copy in this browser is being compared or downloaded: what is there may be
+// stale, so Play waits), 'done', 'failed' or 'refused' (a server-data.json that
+// cannot be followed). Also the page's data-server-data attribute, for tests
+// and anything else that drives the page.
+let serverState = '';
+
+function setServerState(state) {
+  serverState = state;
+  document.documentElement.dataset.serverData = state;
+}
 
 const SAME_ORIGIN = { mode: 'same-origin', credentials: 'same-origin', redirect: 'error', cache: 'no-store' };
 
@@ -428,8 +439,9 @@ function syncServerData() {
     $('import-text').textContent = 'Checking the game data…';
     setImporting(true);
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-    const finish = async (text) => {
+    const finish = async (text, state) => {
       worker.terminate();
+      setServerState(state);
       setImporting(false);
       $('import-text').textContent = text;
       await refreshData();
@@ -447,15 +459,15 @@ function syncServerData() {
         const skate = data.skate ? `, skate data ${data.skate.downloaded} of ${data.skate.files}` : '';
         logLine(`server data: downloaded maps ${data.maps.downloaded} of ${data.maps.files}${skate}, ${data.bytes} bytes`);
         $('import-bar').style.width = '100%';
-        await finish(data.bytes ? `Downloaded ${formatBytes(data.bytes)} from this server.` : 'Up to date with this server.');
+        await finish(data.bytes ? `Downloaded ${formatBytes(data.bytes)} from this server.` : 'Up to date with this server.', 'done');
       } else {
         logLine('server data failed: ' + data.message);
-        await finish('The game data could not be downloaded: ' + data.message);
+        await finish('The game data could not be downloaded: ' + data.message, 'failed');
       }
     };
     worker.onerror = (event) => {
       logLine('server data failed: ' + event.message);
-      finish('The game data could not be downloaded: ' + event.message);
+      finish('The game data could not be downloaded: ' + event.message, 'failed');
     };
     worker.postMessage({ type: 'server', manifest: serverData, skate: !!stamp.skate });
   });
@@ -595,7 +607,7 @@ let gameStopped = false;
 let wakeLock = null;
 
 function canPlay() {
-  return checksPassed && dataReady && !gameStarted;
+  return checksPassed && dataReady && !gameStarted && serverState !== 'checking';
 }
 
 function updatePlay() {
@@ -892,11 +904,18 @@ document.addEventListener('visibilitychange', async () => {
       serverProblem = String(error && error.message ? error.message : error);
     }
     if (serverData) showServerData();
+    // (until the copy here is checked against the server's, Play waits)
+    if (serverData && checksPassed) {
+      setServerState('checking');
+      $('import-progress').hidden = false;
+      $('import-text').textContent = 'Checking the game data…';
+    }
     await refreshData();
     await refreshSkate();
     if (serverProblem) {
       // (the imports stay: the player can still bring their own)
       logLine('server data: ' + serverProblem);
+      setServerState('refused');
       $('import-progress').hidden = false;
       $('import-text').textContent = "This server's game data cannot be used: " + serverProblem;
     } else if (serverData && checksPassed) {

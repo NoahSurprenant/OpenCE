@@ -104,9 +104,11 @@ async function waitForLauncher(page) {
   await page.waitForFunction(() => document.querySelectorAll('#checks li').length >= 5, null, { timeout: 60000 });
 }
 
+// the server's data checked and downloaded (or not): the page's
+// data-server-data attribute (app.js setServerState), then what it says
 async function waitForData(page, seconds) {
-  await page.waitForFunction(() => /ready|cannot|could not/.test(document.querySelector('#data-status').textContent) &&
-    !/Checking|Downloading/.test(document.querySelector('#import-text').textContent), null, { timeout: seconds * 1000 });
+  await page.waitForFunction(() => ['done', 'failed', 'refused'].includes(document.documentElement.dataset.serverData),
+    null, { timeout: seconds * 1000 });
   return { status: await page.textContent('#data-status'), text: await page.textContent('#import-text') };
 }
 
@@ -165,7 +167,8 @@ async function testStandIn(site) {
       manifest: `http://127.0.0.1:${set.port}/game-data/manifest.json` }));
     await page.goto(set.url);
     await waitForLauncher(page);
-    await page.waitForFunction(() => /cannot be used/.test(document.querySelector('#import-text').textContent), null, { timeout: 30000 });
+    await waitForData(page, 30);
+    if (await page.evaluate(() => document.documentElement.dataset.serverData) !== 'refused') fail('the page did not refuse the config');
     console.log('another origin: ' + await page.textContent('#import-text'));
     if (!/not this site/.test(await page.textContent('#import-text'))) fail('a config naming another origin was not refused as such');
     if (await page.isHidden('#image-label')) fail('the imports were hidden for a config that was refused');
@@ -235,6 +238,7 @@ async function testStandIn(site) {
     await page.waitForFunction(() => !/Looking/.test(document.querySelector('#data-status').textContent));
     if (await page.isHidden('#image-label') || await page.isHidden('#folder-label')) fail('without server-data.json the imports are hidden');
     if (!(await page.isHidden('#import-progress'))) fail('without server-data.json the page still said something of it');
+    if (await page.evaluate(() => document.documentElement.dataset.serverData)) fail('without server-data.json the page has a server state');
     console.log('without server-data.json: the imports are back');
   } finally {
     await context.close().catch(() => {});
@@ -288,7 +292,7 @@ async function testServer(url) {
     await sleep(150);
     await page.keyboard.up('KeyJ');
     if (!await until(() => has(/skate: (on|off)/), 240)) fail('J did nothing');
-    for (const line of lines.filter((text) => /^skate: |halo-skate: preloading/.test(text)).slice(0, 4)) console.log('log: ' + line);
+    for (const line of lines.filter((text) => /skate: (on|off)|halo-skate: preloading/.test(text)).slice(0, 4)) console.log('log: ' + line);
     if (!has(/skate: on/)) fail('J did not put the player on the board');
     await sleep(3000);
     if (shot) await page.screenshot({ path: shot.replace(/(\.png)?$/, '-skate.png') });
