@@ -234,6 +234,11 @@ static struct
 } player_ui_edit_options;
 static struct game_variant_options player_ui_multiplayer_options;
 static char player1_profile_path[0x100] = { 0 };
+/* port: whether lastprof.txt was read, or failed to be: read once, not every
+frame the menus ask while it is not there (a dedicated server's, which has
+no profile: thousands of failed opens a minute on its log). Only this game
+writes it, and it keeps the path it writes */
+static boolean player1_profile_path_read;
 
 /* ---------- public code */
 
@@ -638,12 +643,15 @@ void player_ui_set_single_player_local_player_controller(
 long player_ui_get_player1_last_used_profile_index(
 	void)
 {
-	if (!player1_profile_path[0] &&
-		saved_game_file_retrieve_player1_last_used_profile_directory(
-			player1_profile_path))
+	if (!player1_profile_path[0] && !player1_profile_path_read)
 	{
-		player1_last_used_profile_index = saved_game_file_find_profile_index_for_directory_path(
-			player1_profile_path, _saved_game_file_type_player_profile);
+		player1_profile_path_read = TRUE;
+		if (saved_game_file_retrieve_player1_last_used_profile_directory(
+			player1_profile_path))
+		{
+			player1_last_used_profile_index = saved_game_file_find_profile_index_for_directory_path(
+				player1_profile_path, _saved_game_file_type_player_profile);
+		}
 	}
 	return player1_last_used_profile_index;
 }
