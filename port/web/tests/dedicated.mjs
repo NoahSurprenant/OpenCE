@@ -142,6 +142,9 @@ try {
       // (no STUN: the browser joins through the forward, on this machine, and
       // the machine's internet address would only end up in the log)
       HALO_NET_STUN: '',
+      // (and its LAN announcements on this machine only: a CI runner's network
+      // policy drops broadcasts, and the browser joins over WebRTC)
+      HALO_NET_BROADCAST: '127.0.0.1',
       HALO_UPDATE_ANSWER: 'never', HALO_EXIT_AFTER: '600',
     });
     const server = spawn(halo, [], { cwd: path.join(work, 'server'), env });
@@ -171,6 +174,14 @@ try {
     // from a CI runner whose network policy drops it)
     args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist',
       '--disable-features=WebRtcHideLocalIpsWithMdns'],
+  });
+  // (no STUN servers either: the page joins over this machine, and a CI runner's
+  // network policy drops STUN, whose answer would be its public address)
+  await context.addInitScript(() => {
+    const Connection = window.RTCPeerConnection;
+    window.RTCPeerConnection = class extends Connection {
+      constructor(configuration, ...rest) { super({ ...configuration, iceServers: [] }, ...rest); }
+    };
   });
   // (each connection the page makes, so that its chosen path can be read)
   await context.addInitScript(() => {

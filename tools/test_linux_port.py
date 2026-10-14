@@ -612,7 +612,10 @@ def test_skate_multiplayer(tmp_path):
     seconds = int(os.environ.get("HALO_TEST_SKATE_SECONDS", "110"))
     common = {"HALO_FULLSCREEN": "0", "HALO_NO_AUDIO": "1", "HALO_EXIT_AFTER": str(seconds),
               "HALO_UPDATE_ANSWER": "never", "HALO_NULL_RENDERER": "1", "HALO_HIDDEN_WINDOW": "1",
-              "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75", "HALO_NETWORK_LOSS": "10"}
+              "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75", "HALO_NETWORK_LOSS": "10",
+              # (no STUN: the two play over loopback, and a CI runner may not
+              # reach the STUN servers)
+              "HALO_NET_STUN": ""}
     # (HALO_TEST_SKATE_NET: the host's and the client's loopback addresses,
     # "127.0.0.210,127.0.0.211" by default; other pairs let runs go side by
     # side, as tools/skate_mp_loop.sh runs them)
@@ -1121,7 +1124,8 @@ def test_dedicated_server_without_maps(tmp_path):
                    "maps missing or unusable in {root}/maps: bloodgulch.map (not a map); exiting", ""),
     }
     # (a port no other test uses, which the server binds as soon as its
-    # network starts: internet play is on)
+    # network starts: internet play is on, without STUN, which a CI runner
+    # may not reach)
     port = 27315
     for index, (name, (files, expected, maps)) in enumerate(cases.items()):
         root = tmp_path / f"data{index}"
@@ -1137,7 +1141,8 @@ def test_dedicated_server_without_maps(tmp_path):
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
         env.update(HALO_DEDICATED="1", HALO_DATA_ROOT=str(root), HALO_SAVE_ROOT=str(tmp_path / f"saves{index}"),
-                   HALO_NET_ONLINE="true", HALO_NET_TUNNEL_PORT=str(port), HALO_UPDATE_ANSWER="never")
+                   HALO_NET_ONLINE="true", HALO_NET_TUNNEL_PORT=str(port), HALO_UPDATE_ANSWER="never",
+                   HALO_NET_STUN="")
         if maps:
             env["HALO_SERVER_MAPS"] = maps
         # (in a folder of its own: config.toml is written beside the
