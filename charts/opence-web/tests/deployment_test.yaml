@@ -1,0 +1,159 @@
+suite: deployment
+templates:
+  - templates/deployment.yaml
+tests:
+  - it: serves the plain site without game data, with no init container and no data volume
+    asserts:
+      - notExists: { path: 'spec.template.spec.initContainers' }
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts
+          value: [{ name: tmp, mountPath: /tmp }]
+      - equal:
+          path: spec.template.spec.volumes
+          value: [{ name: tmp, emptyDir: { sizeLimit: 64Mi } }]
+
+  - it: refuses both an existing claim and a volume
+    set:
+      gameData: { existingClaim: games, volume: { emptyDir: {} } }
+    asserts:
+      - failedTemplate:
+          errorMessage: "gameData: set existingClaim or volume, not both"
+
+  - it: mounts an existing claim read-only, by subPath only, in nginx and the init container
+    set:
+      gameData.existingClaim: games
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content: { name: game-data, persistentVolumeClaim: { claimName: games, readOnly: true } }
+      - contains:
+          path: spec.template.spec.volumes
+          content: { name: generated, emptyDir: { sizeLimit: 16Mi } }
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts
+          value:
+            - { name: tmp, mountPath: /tmp }
+            - { name: game-data, mountPath: /srv/game-data/maps, subPath: maps, readOnly: true }
+            - { name: game-data, mountPath: /srv/game-data/skate-data/assets, subPath: skate-data/assets, readOnly: true }
+            - { name: game-data, mountPath: /srv/game-data/skate-data/sounds, subPath: skate-data/sounds, readOnly: true }
+            - { name: generated, mountPath: /srv/generated, readOnly: true }
+      - equal:
+          path: spec.template.spec.initContainers[0].volumeMounts
+          value:
+            - { name: game-data, mountPath: /srv/game-data/maps, subPath: maps, readOnly: true }
+            - { name: game-data, mountPath: /srv/game-data/skate-data/assets, subPath: skate-data/assets, readOnly: true }
+            - { name: game-data, mountPath: /srv/game-data/skate-data/sounds, subPath: skate-data/sounds, readOnly: true }
+            - { name: generated, mountPath: /srv/generated }
+            - { name: tmp, mountPath: /tmp }
+
+  - it: runs the manifest script with the maps and skate-data
+    set:
+      gameData.existingClaim: games
+    asserts:
+      - equal: { path: 'spec.template.spec.initContainers[0].name', value: manifest }
+      - equal:
+          path: spec.template.spec.initContainers[0].command
+          value:
+            - python3
+            - /opt/opence-web/web_server_data_manifest.py
+            - --maps
+            - /srv/game-data/maps
+            - --skate-data
+            - /srv/game-data/skate-data
+            - --output
+            - /srv/generated/manifest.json
+            - --config
+            - /srv/generated/server-data.json
+            - --manifest-url
+            - game-data/manifest.json
+      - equal: { path: 'spec.template.spec.initContainers[0].image', value: "ghcr.io/noahsurprenant/opence-web:latest" }
+      - exists: { path: 'spec.template.spec.initContainers[0].resources.limits.memory' }
+
+  - it: takes any volume source, with its own subPaths
+    set:
+      gameData:
+        volume: { nfs: { server: nfs.example.com, path: /exports/games, readOnly: true } }
+        maps: { subPath: halo/maps }
+        skate: { assetsSubPath: skate/a, soundsSubPath: skate/s }
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content: { name: game-data, nfs: { server: nfs.example.com, path: /exports/games, readOnly: true } }
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: { name: game-data, mountPath: /srv/game-data/maps, subPath: halo/maps, readOnly: true }
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: { name: game-data, mountPath: /srv/game-data/skate-data/assets, subPath: skate/a, readOnly: true }
+      - contains:
+          path: spec.template.spec.initContainers[0].volumeMounts
+          content: { name: game-data, mountPath: /srv/game-data/skate-data/sounds, subPath: skate/s, readOnly: true }
+
+  - it: leaves skate-data out when Skate 3 mode's data is off
+    set:
+      gameData: { existingClaim: games, skate: { enabled: false } }
+    asserts:
+      - notContains: { path: 'spec.template.spec.initContainers[0].command', content: --skate-data }
+      - lengthEqual: { path: 'spec.template.spec.initContainers[0].volumeMounts', count: 3 }
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts
+          value:
+            - { name: tmp, mountPath: /tmp }
+            - { name: game-data, mountPath: /srv/game-data/maps, subPath: maps, readOnly: true }
+            - { name: generated, mountPath: /srv/generated, readOnly: true }
+
+  - it: is hardened, nginx and the init container alike
+    set:
+      gameData.existingClaim: games
+    asserts:
+      - equal: { path: 'spec.template.spec.automountServiceAccountToken', value: false }
+      - equal: { path: 'spec.template.spec.enableServiceLinks', value: false }
+      - equal: { path: 'spec.template.spec.securityContext.runAsNonRoot', value: true }
+      - equal: { path: 'spec.template.spec.securityContext.runAsUser', value: 101 }
+      - equal: { path: 'spec.template.spec.securityContext.runAsGroup', value: 101 }
+      - notExists: { path: 'spec.template.spec.securityContext.fsGroup' }
+      - equal: { path: 'spec.template.spec.securityContext.seccompProfile.type', value: RuntimeDefault }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem', value: true }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation', value: false }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.capabilities.drop', value: [ALL] }
+      - equal: { path: 'spec.template.spec.initContainers[0].securityContext.readOnlyRootFilesystem', value: true }
+      - equal: { path: 'spec.template.spec.initContainers[0].securityContext.allowPrivilegeEscalation', value: false }
+      - equal: { path: 'spec.template.spec.initContainers[0].securityContext.capabilities.drop', value: [ALL] }
+      - exists: { path: 'spec.template.spec.containers[0].resources.limits.memory' }
+
+  - it: probes /healthz on the http port
+    asserts:
+      - equal: { path: 'spec.template.spec.containers[0].ports[0]', value: { name: http, containerPort: 8080, protocol: TCP } }
+      - equal: { path: 'spec.template.spec.containers[0].readinessProbe.httpGet', value: { path: /healthz, port: http } }
+      - equal: { path: 'spec.template.spec.containers[0].livenessProbe.httpGet', value: { path: /healthz, port: http } }
+      - equal: { path: 'spec.template.spec.containers[0].livenessProbe.periodSeconds', value: 20 }
+
+  - it: drops a probe that is turned off
+    set:
+      probes.liveness.enabled: false
+    asserts:
+      - notExists: { path: 'spec.template.spec.containers[0].livenessProbe' }
+      - exists: { path: 'spec.template.spec.containers[0].readinessProbe' }
+
+  - it: takes the replicas and the rollout
+    set:
+      replicaCount: 3
+    asserts:
+      - equal: { path: 'spec.replicas', value: 3 }
+      - equal: { path: 'spec.strategy', value: { type: RollingUpdate, rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } } }
+
+  - it: takes a tag with a digest, as Image Updater writes it
+    set:
+      image.tag: latest@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/noahsurprenant/opence-web:latest@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  - it: lets digest replace the tag's digest
+    set:
+      image.tag: latest@sha256:1111111111111111111111111111111111111111111111111111111111111111
+      image.digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/noahsurprenant/opence-web:latest@sha256:2222222222222222222222222222222222222222222222222222222222222222

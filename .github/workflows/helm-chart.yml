@@ -1,19 +1,19 @@
 name: Helm chart
 
-# The dedicated server's chart (charts/opence-server). Pull requests: lint, unit tests
-# (helm-unittest), every ci/*-values.yaml rendered and checked against the Kubernetes schemas, and an
-# end-to-end install on k3s (k3d) with the server image built from the checkout, on Kubernetes 1.34
-# to 1.37.
+# The dedicated server's chart (charts/opence-server; the web site's chart has helm-chart-web.yml).
+# Pull requests: lint, unit tests (helm-unittest), every ci/*-values.yaml rendered and checked against
+# the Kubernetes schemas, and an end-to-end install on k3s (k3d) with the server image built from the
+# checkout, on Kubernetes 1.34 to 1.37.
 # main: the same, then, if the chart changed, publish it to
 # oci://ghcr.io/noahsurprenant/charts/opence-server as <Chart.yaml's major.minor>.<run number>, signed
 # keyless with cosign.
 on:
   pull_request:
     branches: [main]
-    paths: ["charts/**", ".github/workflows/helm-chart.yml", "docker/server/**"]
+    paths: ["charts/opence-server/**", ".github/workflows/helm-chart.yml", "docker/server/**"]
   push:
     branches: [main]
-    paths: ["charts/**", ".github/workflows/helm-chart.yml", "docker/server/**"]
+    paths: ["charts/opence-server/**", ".github/workflows/helm-chart.yml", "docker/server/**"]
   workflow_dispatch:
 
 concurrency:
