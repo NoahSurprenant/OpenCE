@@ -612,7 +612,10 @@ def test_skate_multiplayer(tmp_path):
     seconds = int(os.environ.get("HALO_TEST_SKATE_SECONDS", "110"))
     common = {"HALO_FULLSCREEN": "0", "HALO_NO_AUDIO": "1", "HALO_EXIT_AFTER": str(seconds),
               "HALO_UPDATE_ANSWER": "never", "HALO_NULL_RENDERER": "1", "HALO_HIDDEN_WINDOW": "1",
-              "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75", "HALO_NETWORK_LOSS": "10"}
+              "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75", "HALO_NETWORK_LOSS": "10",
+              # (no STUN: the two play over loopback, and a CI runner may not
+              # reach the STUN servers)
+              "HALO_NET_STUN": ""}
     # (HALO_TEST_SKATE_NET: the host's and the client's loopback addresses,
     # "127.0.0.210,127.0.0.211" by default; other pairs let runs go side by
     # side, as tools/skate_mp_loop.sh runs them)

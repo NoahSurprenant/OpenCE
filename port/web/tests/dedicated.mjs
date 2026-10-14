@@ -142,6 +142,9 @@ try {
       // (no STUN: the browser joins through the forward, on this machine, and
       // the machine's internet address would only end up in the log)
       HALO_NET_STUN: '',
+      // (and its LAN announcements on this machine only: a CI runner's network
+      // policy drops broadcasts, and the browser joins over WebRTC)
+      HALO_NET_BROADCAST: '127.0.0.1',
       HALO_UPDATE_ANSWER: 'never', HALO_EXIT_AFTER: '600',
     });
     const server = spawn(halo, [], { cwd: path.join(work, 'server'), env });
