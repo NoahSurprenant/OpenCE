@@ -109,6 +109,14 @@ try {
     args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist',
       '--disable-features=WebRtcHideLocalIpsWithMdns'],
   });
+  // (no STUN servers either: the page joins over this machine, and a CI runner's
+  // network policy drops STUN, whose answer would be its public address)
+  await context.addInitScript(() => {
+    const Connection = window.RTCPeerConnection;
+    window.RTCPeerConnection = class extends Connection {
+      constructor(configuration, ...rest) { super({ ...configuration, iceServers: [] }, ...rest); }
+    };
+  });
   // a controller the page sees through the Gamepad API (navigator.getGamepads
   // and gamepadconnected), with the standard mapping, for the stick clicks:
   // SDL's Emscripten joystick makes buttons 10 and 11 the sticks
