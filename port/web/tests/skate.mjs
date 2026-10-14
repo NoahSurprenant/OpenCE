@@ -104,7 +104,10 @@ try {
   context = await chromium.launchPersistentContext(path.join(work, 'profile'), {
     headless: true, viewport: { width: 960, height: 720 },
     ...(process.env.HALO_SKATE_TEST_CHROMIUM ? { executablePath: process.env.HALO_SKATE_TEST_CHROMIUM } : {}),
-    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
+    // (its local addresses in the clear, as rooms.mjs: no mDNS names, so no multicast
+    // from a CI runner whose network policy drops it)
+    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist',
+      '--disable-features=WebRtcHideLocalIpsWithMdns'],
   });
   // a controller the page sees through the Gamepad API (navigator.getGamepads
   // and gamepadconnected), with the standard mapping, for the stick clicks:
