@@ -116,7 +116,15 @@ echo "ready, uid 101, read-only root, no token; headers, wasm, 206 and the 404s:
 
 step "the NetworkPolicy: in from another namespace, nothing out"
 kubectl -n "$ns" get networkpolicy "$release" >/dev/null || fail "no NetworkPolicy"
-expect "from another namespace" "$(other_curl "http://$release.$ns.svc/healthz")" 200
+# (k3s's NetworkPolicy controller programs a new pod's rules a little after it is ready, and the
+# first connection can time out meanwhile: a few tries, a deny would fail them all)
+reached_healthz=""
+for _ in 1 2 3 4 5 6; do
+  reached_healthz=$(other_curl "http://$release.$ns.svc/healthz")
+  [ "$reached_healthz" = 200 ] && break
+  sleep 5
+done
+expect "from another namespace" "$reached_healthz" 200
 api=$(kubectl -n default get svc kubernetes -o jsonpath='{.spec.clusterIP}')
 reached=$(other_curl "https://$api/version")
 case "$reached" in 2??|4??) ;; *) fail "the other namespace cannot reach the Kubernetes API ($reached): the check below would prove nothing" ;; esac
