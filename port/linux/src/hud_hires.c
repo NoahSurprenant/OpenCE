@@ -329,9 +329,14 @@ failed:
 unsigned int hud_hires_png_texture(const void *png, unsigned long size, unsigned long *levels)
 {
 	unsigned long width = 0, height = 0, largest;
-	unsigned char *pixels = png_decode(png, size, &width, &height);
+	unsigned char *pixels;
 	GLuint texture;
 
+	/* (none without OpenGL: a dedicated server's scores, drawn for nobody,
+	still ask for their buttons' icons) */
+	if (!xgpu_gl_ready())
+		return 0;
+	pixels = png_decode(png, size, &width, &height);
 	if (!pixels)
 		return 0;
 	*levels = 1;
@@ -354,7 +359,7 @@ unsigned int hud_hires_override_texture(long asset, unsigned long *levels)
 {
 	const struct hud_hires_embedded *embedded;
 
-	if (asset < 0 || asset >= hud_hires_asset_count() || textures[asset].failed)
+	if (asset < 0 || asset >= hud_hires_asset_count() || textures[asset].failed || !xgpu_gl_ready())
 		return 0;
 	if (textures[asset].texture)
 	{
