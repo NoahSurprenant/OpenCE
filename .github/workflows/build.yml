@@ -429,7 +429,10 @@ jobs:
     # (test_dedicated_server, port/linux/README.md's "Dedicated server"), and
     # a dedicated server built without --skate, as the server image is, with
     # two skating clients (test_dedicated_server_skaters: it relays their
-    # states and decides their hits with no Skate 3 data of its own). They
+    # states and decides their hits with no Skate 3 data of its own), and
+    # that server through two turns of its map list with one-minute games
+    # (test_dedicated_server_rotation: each game's end, scores and the next
+    # map's game, about three minutes and a half). They
     # need the converted Skate 3 data and the Halo maps - so on the owner's
     # runner, opence-k8s, for the reasons skate-assets gives above, and only
     # for this repository's own code, as skate-assets. The runner serves one
@@ -518,8 +521,8 @@ jobs:
           set -o pipefail
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
             tools/test_linux_port.py -k "test_skate_multiplayer or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log"
-          if ! grep -q '4 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
-            echo "::error::test_skate_multiplayer and the three test_dedicated_server tests did not all run and pass"
+          if ! grep -q '5 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
+            echo "::error::test_skate_multiplayer and the four test_dedicated_server tests did not all run and pass"
             exit 1
           fi
 
