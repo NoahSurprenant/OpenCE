@@ -41,6 +41,9 @@ pub struct HaloSkateObstacle {
     /// the engine (`KinematicObstacle::held`): the engine holds any bail it
     /// would have had by it, and tells of the hit (`halo_skate_take_held_hit`)
     pub held: i32,
+    /// non-zero: a person on foot the riding skater runs over
+    /// (`KinematicObstacle::run_over`, `halo_skate_set_run_over`)
+    pub run_over: i32,
 }
 
 pub const KIND_BIPED: i32 = 0;
@@ -121,6 +124,7 @@ impl HaloSkateObstacle {
             angular_velocity: w,
             tag: self.tag as u32,
             held: self.held != 0,
+            run_over: self.run_over != 0,
         })
     }
 }

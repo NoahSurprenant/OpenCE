@@ -123,6 +123,16 @@ pub(crate) struct GamePhysics {
     /// metres a second, while riding: faster than `obstacle_bail_speed`, a
     /// bail. Taken by the tick's wipeout check.
     pub(crate) blast_speed: f32,
+    /// halo-skate: running over a person on foot (`KinematicObstacle::run_over`,
+    /// `Session::set_run_over`): the least closing speed (m/s) that does,
+    /// none at first; the share of their speed the board and the skater keep
+    /// through them; the obstacles being gone through (their tags, and the
+    /// last tick with a contact: dropped until they part); and a slowing to
+    /// give after this tick (the share kept).
+    pub(crate) run_over_speed: f32,
+    pub(crate) run_over_keep: f32,
+    pub(crate) run_through: Vec<(u32, u64)>,
+    pub(crate) run_over_slowing: Option<f32>,
     clock: clock::SimulationClock,
     pub board: BoardRuntime,
     pub riding: RidingOutputs,
@@ -367,6 +377,10 @@ impl GamePhysics {
             forced_bail: None,
             obstacle_bail_speed: 6.0,
             blast_speed: 0.0,
+            run_over_speed: f32::INFINITY,
+            run_over_keep: 1.0,
+            run_through: Vec::new(),
+            run_over_slowing: None,
             clock: clock::SimulationClock::default(),
             board,
             riding,

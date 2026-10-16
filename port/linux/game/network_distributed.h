@@ -412,5 +412,10 @@ void network_damage_client_tick(void);
 void network_damage_handle_events(void const *entries, short count);
 void network_damage_handle_reports(long machine_index, void const *entries, short count);
 word network_damage_entry_size(byte type);
+/* the host: a unit hit by owner_index as a vehicle hits a person (a skater
+running them over: skate_authority.c), multiplier times the game globals'
+vehicle collision damage, owner_index's */
+boolean network_damage_vehicle_collision(long object_index, long owner_index, real multiplier,
+	real_point3d const *epicenter, real_vector3d const *direction);
 
 #endif // __NETWORK_DISTRIBUTED_H

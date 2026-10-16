@@ -45,6 +45,9 @@ pub struct HeldReport {
     pub bail_held_tick: u64,
     pub forced: Option<u64>,
     pub dropped: Option<String>,
+    /// ... and of a person run over (`KinematicObstacle::run_over`), the
+    /// closing speed (m/s) and the tick.
+    pub run_over: Option<(f32, u64)>,
 }
 /// halo-skate: what took a blast's push (`Session::apply_impulse`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,6 +200,8 @@ impl Session {
         self.physics.held = HeldReport::default();
         self.physics.held_contact_tick = None;
         self.physics.forced_bail = None;
+        self.physics.run_through.clear();
+        self.physics.run_over_slowing = None;
         self.markers.suspend();
         if self.physics.ticks == 0 {
             self.tick(Controls::default())?;
@@ -276,6 +281,41 @@ impl Session {
         self.physics.blast_speed = self.physics.blast_speed.max((x * x + y * y + z * z).sqrt());
         Impulse::Riding
     }
+    /// halo-skate: running over people on foot (`KinematicObstacle::run_over`):
+    /// a contact closing at `speed` (m/s) or faster goes through them, the
+    /// board and the skater keeping `keep` (0 to 1) of their speed; a speed
+    /// not finite or below 0 runs nobody over. Returns the speed kept.
+    pub fn set_run_over(&mut self, speed: f32, keep: f32) -> f32 {
+        self.physics.run_over_speed = if speed.is_finite() && speed >= 0.0 { speed } else { f32::INFINITY };
+        self.physics.run_over_keep = if keep.is_finite() { keep.clamp(0.0, 1.0) } else { 1.0 };
+        self.physics.run_over_speed
+    }
+    /// halo-skate: the riding board and skater slowed to `keep` of their
+    /// speed (a person run over), as `teleport` sets their velocity: the
+    /// board's and the body's alike, and the motion the animation reads.
+    /// Nothing off the board, or bailing.
+    fn slow(&mut self, keep: f32) {
+        if self.skater.player_input.physical.state.category_12 == 500
+            || format!("{:?}", self.skater.player_state.current()).starts_with("Wipeout")
+        {
+            return;
+        }
+        let scale = |v: &mut skate_core::math::Vector3| {
+            *v = skate_core::math::Vector3::new(v.x * keep, v.y * keep, v.z * keep)
+        };
+        for body in self.physics.board.bodies_mut() {
+            scale(&mut body.rates.linear_velocity);
+        }
+        for body in self.skater.skeleton.bodies_mut() {
+            scale(&mut body.rates.linear_velocity);
+        }
+        let w = &mut self.skater.animated_skeleton.motion.velocity_world;
+        *w = [w[0] * keep, w[1] * keep, w[2] * keep, w[3]];
+        let processed = &mut self.skater.player_input.processed.vectors_544_560_592_608[3];
+        *processed = std::array::from_fn(|i| {
+            if i < 3 { (f32::from_bits(processed[i]) * keep).to_bits() } else { processed[i] }
+        });
+    }
     pub fn collect(&mut self, frame: InputFrame, dt: f32) {
         self.input.collect(frame.samples);
         self.markers.collect_time(f64::from(dt));
@@ -314,6 +354,10 @@ impl Session {
         );
         // (a blast's push knocks over on the tick after it, once)
         self.physics.blast_speed = 0.0;
+        // (a person run over slows the board and the skater, once)
+        if let Some(keep) = self.physics.run_over_slowing.take() {
+            self.slow(keep);
+        }
         advanced
     }
     /// Deterministic raw-packet entry point for playback/diagnostics.

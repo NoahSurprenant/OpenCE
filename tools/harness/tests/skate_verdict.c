@@ -134,6 +134,55 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
+	/* a person on foot hit at the run-over speed or faster is run over, as by
+	a vehicle: the skater rides on, past the bail speed too, and the person
+	is dealt Halo's vehicle collision damage by the speed (none below 3 m/s,
+	a rising share to 6.1 m/s, Halo's lethal vehicle speed, the whole past
+	it); slower a bump as before; one gone through on the skater's machine
+	is run over whatever the host's speed; two skaters never */
+	CASE("run_over")
+	{
+		CHECK(skate_run_over_share(MS(2.f)) == 0.f, "a 2 m/s hit dealt %f", skate_run_over_share(MS(2.f)));
+		CHECK(skate_run_over_share(SKATE_RUN_OVER_SPEED) == 0.f, "the least run-over speed dealt damage");
+		CHECK(skate_run_over_share(MS(4.5f)) > 0.05f && skate_run_over_share(MS(4.5f)) < SKATE_RUN_OVER_HURT_MOST,
+			"a 4.5 m/s run-over dealt %f", skate_run_over_share(MS(4.5f)));
+		CHECK(skate_run_over_share(MS(4.f)) < skate_run_over_share(MS(5.f)), "a faster run-over did not deal more");
+		CHECK(skate_run_over_share(MS(6.f)) <= SKATE_RUN_OVER_HURT_MOST + 0.001f, "6 m/s, under Halo's 6.1, killed");
+		CHECK(skate_run_over_share(SKATE_RUN_OVER_LETHAL) == 1.f && skate_run_over_share(MS(13.9f)) == 1.f,
+			"a run-over past Halo's lethal vehicle speed did not deal it whole");
+		CHECK(skate_run_over_share(NAN) == 0.f && skate_run_over_share(-1.f) == 0.f, "no speed dealt damage");
+		/* (fast: run over, the skater rides on though past the bail speed and
+		though their engine wanted to bail; the person pushed) */
+		input = hit(MS(13.9f), MS(14.f));
+		input.parties[1].pushable = TRUE;
+		input.parties[0].wants_bail = TRUE;
+		skate_verdict_decide(&input, &out);
+		CHECK(out.believed && out.run_over && out.share == 1.f, "a 13.9 m/s hit on foot not run over whole: %d %f",
+			out.run_over, out.share);
+		CHECK(!out.bails[0] && !out.bails[1], "the skater bailed running a person over");
+		CHECK(out.push.i > 0.f, "the person run over was not pushed");
+		/* (slow: a bump, nobody hurt) */
+		input = hit(MS(2.f), MS(2.f));
+		input.parties[1].pushable = TRUE;
+		skate_verdict_decide(&input, &out);
+		CHECK(!out.run_over && out.share == 0.f, "a 2 m/s hit ran a person over");
+		/* (gone through on the skater's machine: run over, by the host's speed) */
+		input.run_over_told = TRUE;
+		skate_verdict_decide(&input, &out);
+		CHECK(out.run_over && out.share == 0.f && !out.bails[0], "a person gone through not run over, or hurt");
+		/* (two skaters, or a vehicle: no run-over, bails as before) */
+		input = hit(MS(13.9f), MS(14.f));
+		input.parties[1].skater = TRUE;
+		input.parties[1].riding = TRUE;
+		input.run_over_told = TRUE;
+		skate_verdict_decide(&input, &out);
+		CHECK(!out.run_over && out.bails[0] && out.bails[1], "two skaters at 13.9 m/s did not bump and bail");
+		input = hit(MS(13.9f), MS(14.f));
+		skate_verdict_decide(&input, &out);
+		CHECK(!out.run_over && out.bails[0], "a vehicle was run over");
+		return 0;
+	}
+
 	/* reports and verdicts written and read back as they were (within the
 	wire's steps), and the words of a verdict */
 	CASE("wire")
@@ -179,6 +228,19 @@ int main(int argc, char **argv)
 		skate_verdict_text(&verdict_back, text, sizeof(text));
 		CHECK(!strcmp(text, "player 1's skater bails; player 0 on foot pushed 2.1 m/s; at 7.3 m/s"), "the words: %s",
 			text);
+		/* (a run-over: its flag and its words, the share by the speed) */
+		verdict.flags = FLAG(_skate_verdict_second_pushed_bit) | FLAG(_skate_verdict_second_on_foot_bit) |
+			FLAG(_skate_verdict_second_run_over_bit);
+		verdict.closing = MS(4.5f);
+		skate_verdict_write(&verdict, bytes);
+		CHECK(skate_verdict_read(bytes, &verdict_back) && verdict_back.flags == verdict.flags,
+			"a run-over's flags changed");
+		skate_verdict_text(&verdict_back, text, sizeof(text));
+		CHECK(!strcmp(text, "player 1's skater rides on; player 0 on foot run over, 0.07 of a vehicle's hit, pushed "
+			"2.1 m/s; at 4.5 m/s"), "the words: %s", text);
+		report.flags = FLAG(_skate_report_run_over_bit);
+		skate_report_write(&report, bytes);
+		CHECK(skate_report_read(bytes, &report_back) && report_back.flags == report.flags, "a run-over report changed");
 		return 0;
 	}
 

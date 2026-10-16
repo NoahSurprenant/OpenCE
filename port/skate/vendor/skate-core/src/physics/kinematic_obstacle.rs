@@ -255,18 +255,27 @@ pub struct KinematicObstacle {
     /// thresholds while touching it (the wipeout requests are held:
     /// `wipeout.rs`); it tells of the hit instead (`HeldHit`).
     pub held: bool,
+    /// halo-skate: a person on foot the riding skater runs over, as a
+    /// vehicle runs one over in Halo (held too: the game's host decides
+    /// what it does to them). A contact with it closing at the run-over
+    /// speed or faster is no wall: the skater goes on through, slowed, its
+    /// contacts with it dropped until they part, and the hit is told as run
+    /// over (`HeldHit::run_over`). Slower, it is a held obstacle as any.
+    pub run_over: bool,
 }
 
 /// halo-skate: the fastest contact a tick had with a held obstacle
 /// (`KinematicObstacle::held`): its tag and kind, its closing speed (metres
 /// a second along the contact) and the contact's normal (a unit vector from
-/// the obstacle toward the board or the skater, the engine's space).
+/// the obstacle toward the board or the skater, the engine's space), and
+/// whether the skater ran it over (`KinematicObstacle::run_over`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HeldHit {
     pub tag: u32,
     pub kind: ObstacleKind,
     pub closing: f32,
     pub normal: Vector3,
+    pub run_over: bool,
 }
 
 impl KinematicObstacle {

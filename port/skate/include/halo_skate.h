@@ -163,6 +163,10 @@ struct halo_skate_obstacle
 		engine's (a network game's other players, their vehicles, other
 		skaters): the engine holds any bail it would have had by it, and tells
 		of the hit (halo_skate_take_held_hit) */
+	int run_over; /* non-zero (held ones): a person on foot the riding skater runs
+		over, as a vehicle does in Halo: a contact closing at the run-over speed
+		(halo_skate_set_run_over) or faster goes through them, slowed, and is told
+		as run over; slower, it is held as any */
 };
 
 /* the obstacles the board and the skater collide with from the next step,
@@ -179,6 +183,12 @@ a vehicle knocks the skater over: a bail (6 m/s at first); slower is a bump.
 Returns the speed kept */
 float halo_skate_set_obstacle_bail_speed(float speed);
 
+/* running over people on foot (halo_skate_obstacle's run_over): a contact
+closing at speed world units a second or faster goes through them, the board
+and the skater keeping keep (0 to 1) of their speed; below 0 (at first), nobody
+is run over. Returns the speed kept */
+float halo_skate_set_run_over(float speed, float keep);
+
 /* hits on held obstacles (halo_skate_obstacle's held), for the game's host to
 decide (../linux/game/skate_authority.c) */
 struct halo_skate_held_hit
@@ -189,6 +199,8 @@ struct halo_skate_held_hit
 	float normal[3]; /* the contact's, from the obstacle toward the skater */
 	int touched; /* the above are of a contact since the last call */
 	int bail_held; /* the engine held a bail it would have had since the last call */
+	int run_over; /* the contact above went through a person on foot
+		(halo_skate_obstacle's run_over) rather than stopping at them */
 };
 /* what the steps since the last call had to tell of hits on held obstacles:
 the fastest contact with one, and whether a bail was held. 1 with out filled,

@@ -695,6 +695,51 @@ def _assert_remote_skate_sounds(logs, hears):
         assert len(heard) <= len(made), f"the {name} machine heard {len(heard)} one-shots of {len(made)} made"
 
 
+SKATE_RUN_OVER_VERDICT = re.compile(r"player (\d+)'s skater (bails|rides on); player (\d+) on foot run over, "
+                                    r"([\d.]+) of a vehicle's hit")
+SKATE_RUN_OVER_DEALT = re.compile(r"skate verdict (\d+): player (\d+)'s skater ran over a player here, ([\d.]+) of "
+                                  r"Halo's vehicle collision damage: shield ([\d.-]+) to ([\d.-]+), body ([\d.-]+) "
+                                  r"to ([\d.-]+)"
+                                  r"(, killed)?")
+SKATE_RUN_OVER_DEATH = re.compile(r"skate verdict (\d+): the person run over died here, killed by player (-?\d+)"
+                                  r"(, friendly fire)? \(the skater, player (\d+)\): player -?\d+ has (\d+) kills, "
+                                  r"player (\d+) (\d+) deaths")
+
+
+def _assert_run_over(decided, host, skater_log, skater, logs):
+    """a skater (player skater, whose machine's log is skater_log) ran a
+    person on foot over as a vehicle does (skate_authority.c): the host
+    (host, its verdicts decided) decided a hit on them at speed a run-over,
+    and dealt them Halo's whole vehicle collision damage, which killed them;
+    on the skater's machine the engine went on through them. Every run-over
+    (of any skater: another, on foot a moment, may be run over too) has its
+    skater riding on, never bailing for it, its damage theirs, and the kill
+    theirs on every machine of logs (each saw one at least). No verdict on two
+    skaters is a run-over."""
+    runs = {n: m.groups() for n, text in decided.items() if (m := SKATE_RUN_OVER_VERDICT.search(text))}
+    dealt = SKATE_RUN_OVER_DEALT.findall(host)
+    deaths = {name: SKATE_RUN_OVER_DEATH.findall(log) for name, log in logs.items()}
+    gone_through = re.findall(r"halo-skate: ran over a person at ([\d.]+) m/s", skater_log)
+    print(f"run-overs decided {runs}; dealt {dealt}; deaths {deaths}; gone through on the skater's machine at "
+          f"{gone_through} m/s")
+    assert runs, f"no hit on a person on foot was a run-over: {decided}"
+    assert any(r[0] == skater for r in runs.values()), f"player {skater}'s skater ran nobody over: {runs}"
+    assert all(r[1] == "rides on" for r in runs.values()), f"a skater bailed running over: {runs}"
+    assert not any(re.search(r"; player \d+'s skater", text) and "run over" in text for text in decided.values()), \
+        f"a skater was run over: {decided}"
+    assert gone_through, f"the skater's engine never went through the person:\n{skater_log[-4000:]}"
+    killed = [d for d in dealt if d[7] and float(d[2]) == 1.0 and d[1] == skater]
+    assert killed, f"no run-over at speed killed with the whole of Halo's vehicle collision damage: {dealt}"
+    assert all(int(d[0]) in runs and d[1] == runs[int(d[0])][0] for d in dealt), \
+        f"damage dealt not of the skater's run-overs: {dealt}"
+    for name, seen in deaths.items():
+        assert seen, f"no death of a person run over seen on the {name} machine:\n{logs[name][-4000:]}"
+        assert all(int(d[0]) in runs and d[1] == d[3] == runs[int(d[0])][0] and not d[2] for d in seen), \
+            f"a person run over was not killed by their skater on the {name} machine: {seen}"
+    kills = [int(d[4]) for d in SKATE_RUN_OVER_DEATH.findall(host) if d[1] == skater]
+    assert kills == sorted(kills) and kills[-1] >= len(kills), f"the skater's kills did not count up: {kills}"
+
+
 def test_skate_multiplayer(tmp_path):
     """Skate 3 mode in a network game, two real games on this machine: a host
     and a client on Blood Gulch, the client getting on a board and riding a
@@ -705,7 +750,9 @@ def test_skate_multiplayer(tmp_path):
     client's skater from its state and draw their board, and take every place
     the client gives (but a stray few), the client's state must rebuild its
     own pose within a hair, the skater must hit the host's player (an obstacle
-    on the client: skate.c) rather than pass through, on foot and skating, and
+    on the client: skate.c) rather than pass by: on foot, fast, run over as by a
+    vehicle (on through them, the host's damage killing them, the kill the
+    skater's), and skating a bump or a bail, and
     the host's skater the client's (each machine's skater solid to the other's);
     and each loads Blood Gulch's scenery into the level's collision. With a
     round trip of 150 ms and a tenth of the datagrams lost. It needs a Linux build
@@ -790,17 +837,18 @@ def test_skate_multiplayer(tmp_path):
     _assert_remote_skate_sounds({"host": host, "join": join}, {"host": "join", "join": "host"})
     # the watcher steps into the skater's way every five seconds
     # (debug.network_test_skate_block): on the client it is another machine's
-    # biped, an obstacle (skate.c), which the skater must hit - bump or bail -
-    # rather than pass through
+    # biped, an obstacle (skate.c), which the skater must hit - bump, or run
+    # them over and go on through, as a vehicle does - rather than pass by
     blocks = re.findall(r"the watcher steps into the skater's way at", host)
     near = [int(n) for n in re.findall(r"skate test: (\d+) obstacles near", join)]
     hits = re.findall(r"halo-skate: hit a biped at ([\d.]+) m/s", join)
     outcomes = re.findall(r"halo-skate: hit a biped at [\d.]+ m/s [^\n]*: (bailed|rode on)", join)
+    run_overs = re.findall(r"halo-skate: ran over a person at ([\d.]+) m/s", join)
     print(f"{len(blocks)} blocks; obstacles near in {len(near)} logged seconds; {len(hits)} hits at {hits} m/s: "
-          f"{outcomes}")
+          f"{outcomes}; ran the watcher over at {run_overs} m/s")
     assert len(blocks) >= 3, f"the watcher stepped in {len(blocks)} times:\n{host[-4000:]}"
     assert near, f"the client never had the watcher as an obstacle:\n{join[-4000:]}"
-    assert hits, f"the skater never hit the watcher:\n{join[-4000:]}"
+    assert hits or run_overs, f"the skater never hit the watcher:\n{join[-4000:]}"
     # later the host's player skates too (debug.network_test_skate_duel) and
     # is put on its board in the skater's way: each machine has the other's
     # skater as their body and board (skate.c's skate_skater_obstacles), and
@@ -835,6 +883,11 @@ def test_skate_multiplayer(tmp_path):
     # (each machine's own player, whichever index the game gave it)
     players = {name: set(re.findall(r"skate network: player (\d+) skates here", log)) for name, log in
                (("host", host), ("join", join))}
+    # the client's skater riding fast into the watcher on foot runs them over,
+    # as a vehicle would: on through them, killed by the host's damage, the
+    # kill the skater's; two skaters still bump (the duel's verdicts above)
+    (skater,) = players["join"]
+    _assert_run_over(decided, host, join, skater, {"host": host, "join": join})
     for n, text in decided.items():
         for player, own in [(p, join) for p in players["join"]] + [(p, host) for p in players["host"]]:
             if f"player {player}'s skater bails" in text and n in heard:
@@ -1176,7 +1229,8 @@ def test_dedicated_server_skaters(tmp_path):
     which poses them with their board; it takes the skaters' places (a board's
     bounds, refusing a stray few at most) and decides each hit
     (skate_authority.c: the skater's report, message 92, and the verdict, 93),
-    which both clients hear alike. With a round trip of 150 ms and a tenth of
+    which both clients hear alike: the second on foot run over, killed by the
+    server's damage, the kill the first's. With a round trip of 150 ms and a tenth of
     the datagrams lost. Skips without the builds, the data and the maps
     (HALO_SKATE_TEST_HALO_MAPS); about two minutes."""
     game = os.environ.get("HALO_TEST_GAME")
@@ -1272,6 +1326,10 @@ def test_dedicated_server_skaters(tmp_path):
         missing = [n for n in decided if n not in heard[name] and n != max(decided)]
         assert not missing, f"the {name} client never heard verdicts {missing}: {decided}, {heard[name]}"
         assert all(heard[name][n] == decided.get(n) for n in heard[name]), f"verdicts differ: {decided}, {heard}"
+    # the first's skater riding fast into the second's player on foot runs
+    # them over: the server, with no skate engine, decides it and deals the
+    # damage, and every machine has the kill the first's
+    _assert_run_over(decided, host, first, first_player, {"server": host, "first": first, "second": second})
 
 
 def test_dedicated_server_rotation(tmp_path):

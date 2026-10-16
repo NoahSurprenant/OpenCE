@@ -1465,7 +1465,9 @@ static void skate_network_test_shoot(void)
 	{
 		struct object_datum *target = object_get(skate_shoot.target_index);
 
-		if (skate_shoot.bullet_time != NONE && now - skate_shoot.bullet_time == TICKS_PER_SECOND / 2)
+		/* (or later: a watcher dead meanwhile, run over, shoots and looks at nothing
+		till they are back, and what was about must not be left about for good) */
+		if (skate_shoot.bullet_time != NONE && now - skate_shoot.bullet_time >= TICKS_PER_SECOND / 2)
 		{
 			boolean harmed = target->object.shield_vitality < skate_shoot.shield ||
 				target->object.body_vitality < skate_shoot.body;
@@ -1552,7 +1554,7 @@ static void skate_network_test_shoot(void)
 					target->object.shield_vitality, skate_shoot.grenade_body, target->object.body_vitality);
 			}
 		}
-		if (skate_shoot.detonated_time != NONE && now - skate_shoot.detonated_time == TICKS_PER_SECOND / 3)
+		if (skate_shoot.detonated_time != NONE && now - skate_shoot.detonated_time >= TICKS_PER_SECOND / 3)
 		{
 			/* (how far they went from the blast, level, past where their
 			course would have had them, and how much faster away from it) */

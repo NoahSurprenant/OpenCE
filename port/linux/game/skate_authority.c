@@ -26,6 +26,15 @@ every machine applies that verdict:
   (halo_skate_force_bail) or lets the held bail go; a person on foot is
   pushed by the host on its copy, and by their own machine on theirs; every
   machine logs it alike.
+- A skater riding into a person on foot at SKATE_RUN_OVER_SPEED (skate.h)
+  or faster runs them over, as a vehicle does in Halo: their engine goes on
+  through them, slowed (skate.c marks such a person, the engine drops the
+  contacts), and tells so in the report. The host's verdict says so too: the
+  skater rides on, the person is pushed and the host deals them Halo's
+  vehicle collision damage by the speed (skate_run_over_share), the
+  skater's own, as a vehicle's driver's: the kill and its credit, friendly
+  fire as the game type has it, reach the clients as any damage does
+  (network_damage.c). Two skaters still bump: neither is on foot.
 
 A build without the mode decides and applies verdicts too (it skates not,
 but hosts skaters and is pushed). A build older than this drops both
@@ -50,12 +59,19 @@ decides), and its client's skater decides its own hits as before. */
 
 /* the platform layer's (the port's log) */
 void platform_log(const char *format, ...);
+/* network_distributed.c's: how a player died, as the host had it (its copy
+of the death on a client) */
+boolean distributed_get_death(short dead_player_index, byte *killing_player_index, boolean *friendly_fire,
+	boolean *killed_by_vehicle);
 
 /* the flags of a report */
 enum
 {
 	/* the skater's engine held a bail by the hit */
 	_skate_report_bail_held_bit,
+	/* the skater went through a person on foot, running them over
+	(SKATE_RUN_OVER_SPEED: the engine) */
+	_skate_report_run_over_bit,
 };
 
 /* the flags of a verdict */
@@ -72,6 +88,9 @@ enum
 	_skate_verdict_second_vehicle_bit,
 	/* no verdict: the host says it decides skaters' hits */
 	_skate_verdict_announce_bit,
+	/* the person on foot is run over by the skater (dealt Halo's vehicle
+	collision damage by the speed, by the host: skate_run_over_share) */
+	_skate_verdict_second_run_over_bit,
 };
 
 /* a closing speed's scale on the wire (1/1024 world units a second, to 32
@@ -101,6 +120,16 @@ many ticks (half a second: a client's skater a one-way trip late, a hit
 told a little after) */
 #define SKATE_VERDICT_REACH 1.5f
 #define SKATE_VERDICT_LAG_TICKS 15
+/* a person on foot run over (SKATE_RUN_OVER_SPEED, skate.h) is dealt Halo's
+vehicle collision damage (physics.c: the game globals' vehicle_collision,
+1000 on every stock map, past any unit's shield and body), as a vehicle
+deals it once the two close at 1 world unit a second (3 m/s) or the vehicle
+goes at 2 (6.1 m/s): from this speed (world units a second, Halo's 2) the
+whole of it, as a Warthog's; slower, a share rising from none at
+SKATE_RUN_OVER_SPEED to SKATE_RUN_OVER_HURT_MOST (140 of it: a Spartan
+whole, 75 shield and 75 body, lives through it, one hurt does not) */
+#define SKATE_RUN_OVER_LETHAL 2.f
+#define SKATE_RUN_OVER_HURT_MOST 0.14f
 
 /* ticks a report or a verdict goes in each message for (against a lost
 datagram: five lost in a row at a tenth lost is one in 100,000) */
@@ -119,6 +148,8 @@ it is the same collision, decided once */
 #define SKATE_AUTHORITY_HISTORY 16
 /* a push measured this many ticks on (half a second) */
 #define SKATE_AUTHORITY_MEASURE_TICKS 15
+/* a person run over watched this many ticks for their death (two seconds) */
+#define SKATE_RUN_OVER_WATCH_TICKS (2 * TICKS_PER_SECOND)
 /* the most verdicts a skater's hits get from the host in a second */
 #define SKATE_AUTHORITY_DECISIONS_PER_SECOND 4
 #define SKATE_AUTHORITY_HITS 8
@@ -157,6 +188,8 @@ struct skate_verdict_input
 	real bail_speed;
 	/* the contact's normal, from what was hit toward the skater */
 	real_vector3d normal;
+	/* the skater's engine went through the second (they told so) */
+	boolean run_over_told;
 };
 
 struct skate_verdict_outcome
@@ -168,11 +201,28 @@ struct skate_verdict_outcome
 	/* the push on the second, Halo's acceleration (world units a second; 0
 	for none) */
 	real_vector3d push;
+	/* the second, a person on foot, run over, and the share of Halo's vehicle
+	collision damage they are dealt (skate_run_over_share) */
+	boolean run_over;
+	real share;
 };
 
 static boolean skate_verdict_real_valid(real value)
 {
 	return value == value && value > -1e30f && value < 1e30f;
+}
+
+/* the share of Halo's vehicle collision damage a person on foot run over at
+closing (world units a second) is dealt: none below SKATE_RUN_OVER_SPEED,
+the whole from SKATE_RUN_OVER_LETHAL, between a share rising to
+SKATE_RUN_OVER_HURT_MOST */
+static real skate_run_over_share(real closing)
+{
+	if (!skate_verdict_real_valid(closing) || !(closing >= SKATE_RUN_OVER_SPEED))
+		return 0.f;
+	if (closing >= SKATE_RUN_OVER_LETHAL)
+		return 1.f;
+	return SKATE_RUN_OVER_HURT_MOST * (closing - SKATE_RUN_OVER_SPEED) / (SKATE_RUN_OVER_LETHAL - SKATE_RUN_OVER_SPEED);
 }
 
 /* the verdict on a hit: believed if the host had the two that near; the
@@ -199,6 +249,15 @@ static void skate_verdict_decide(struct skate_verdict_input const *input, struct
 
 		out->bails[index] = party->skater && party->riding && (out->closing > input->bail_speed ||
 			(party->wants_bail && out->closing >= SKATE_VERDICT_LEAST_BAIL));
+	}
+	/* a person on foot hit at the run-over speed or faster (or gone through
+	on the skater's machine) is run over, as by a vehicle, which goes on:
+	the skater rides on */
+	if (input->parties[1].pushable && (input->run_over_told || out->closing >= SKATE_RUN_OVER_SPEED))
+	{
+		out->run_over = TRUE;
+		out->share = skate_run_over_share(out->closing);
+		out->bails[0] = FALSE;
 	}
 	if (input->parties[1].pushable && out->closing >= SKATE_PUSH_LEAST && skate_verdict_real_valid(input->normal.i) &&
 		skate_verdict_real_valid(input->normal.j))
@@ -367,7 +426,7 @@ compares them): "player 1's skater bails; player 0 on foot pushed 2.1 m/s;
 at 7.3 m/s" */
 static void skate_verdict_text(struct skate_verdict const *verdict, char *text, size_t size)
 {
-	char second[64];
+	char second[96];
 	char first_player[16];
 	char second_player[16];
 	/* (the speed the person gets: half of Halo's acceleration, as biped_accelerate
@@ -392,6 +451,11 @@ static void skate_verdict_text(struct skate_verdict const *verdict, char *text, 
 		else
 			snprintf(second, sizeof(second), "%s's vehicle", second_player);
 	}
+	else if (TEST_FLAG(verdict->flags, _skate_verdict_second_run_over_bit))
+	{
+		snprintf(second, sizeof(second), "%s on foot run over, %.2f of a vehicle's hit, pushed %.1f m/s", second_player,
+			skate_run_over_share(verdict->closing), push);
+	}
 	else if (TEST_FLAG(verdict->flags, _skate_verdict_second_pushed_bit))
 		snprintf(second, sizeof(second), "%s on foot pushed %.1f m/s", second_player, push);
 	else
@@ -413,6 +477,8 @@ static struct skate_local_hit
 	real closing;
 	real_vector3d normal;
 	boolean bail_held;
+	/* ... and went through a person on foot, running them over */
+	boolean run_over;
 	/* its report goes in each message until this tick */
 	long send_until;
 	/* a verdict came (or none came in time), and whether it knocked this
@@ -453,12 +519,24 @@ static struct skate_push_measure
 	real_vector3d along;
 } skate_measures[SKATE_AUTHORITY_MEASURES];
 
+/* a person run over watched a while (every machine's log: the network test
+checks that they died, killed by the skater, as a vehicle's driver kills) */
+static struct skate_run_over_watch
+{
+	long object_index;
+	word number;
+	long time;
+	byte skater_player;
+	byte victim_player;
+} skate_run_over_watches[SKATE_AUTHORITY_MEASURES];
+
 static struct
 {
 	byte next_hit_number;
 	word next_verdict_number;
 	short next_heard;
 	short next_measure;
+	short next_run_over_watch;
 	/* (a client) when the host last said it decides */
 	long announced_time;
 	/* (the host) each player's unit's velocity, the last ticks, and the
@@ -474,6 +552,7 @@ void skate_authority_new_game(void)
 	memset(skate_collisions, 0, sizeof(skate_collisions));
 	memset(skate_heard, 0, sizeof(skate_heard));
 	memset(skate_measures, 0, sizeof(skate_measures));
+	memset(skate_run_over_watches, 0, sizeof(skate_run_over_watches));
 	memset(&skate_authority_globals, 0, sizeof(skate_authority_globals));
 	{
 		short index;
@@ -482,6 +561,8 @@ void skate_authority_new_game(void)
 			skate_local_hits[index].target_index = NONE;
 		for (index = 0; index < SKATE_AUTHORITY_MEASURES; index++)
 			skate_measures[index].object_index = NONE;
+		for (index = 0; index < SKATE_AUTHORITY_MEASURES; index++)
+			skate_run_over_watches[index].object_index = NONE;
 	}
 	skate_authority_globals.announced_time = NONE;
 }
@@ -649,10 +730,61 @@ static void skate_authority_settle(struct skate_verdict const *verdict)
 	}
 }
 
+/* a person on foot run over (the verdict's second): the host deals them
+Halo's vehicle collision damage by the speed (skate_run_over_share), the
+skater's as a vehicle's is its driver's (network_damage_vehicle_collision:
+the kill theirs, friendly fire as the game type has it; the clients have it
+from the host as any damage, a killing blow with its killer); every machine
+watches them a while (skate_authority_update) */
+static void skate_authority_run_over(struct skate_verdict const *verdict, boolean decided)
+{
+	long object_index = verdict->object_indices[1];
+	long skater_index = verdict->object_indices[0];
+	struct object_datum *object = object_try_and_get(object_index);
+	struct object_datum *skater = object_try_and_get(skater_index);
+	struct skate_run_over_watch *watch;
+	real share = skate_run_over_share(verdict->closing);
+
+	/* (one dead here already, the host's killing blow come first, is watched
+	too: its death is told at once) */
+	if (!object || object->object.type != _object_type_biped)
+		return;
+	watch =&skate_run_over_watches[skate_authority_globals.next_run_over_watch];
+	skate_authority_globals.next_run_over_watch = (short)((skate_authority_globals.next_run_over_watch + 1) %
+		SKATE_AUTHORITY_MEASURES);
+	watch->object_index = object_index;
+	watch->number = verdict->number;
+	watch->time = game_time_get();
+	watch->skater_player = verdict->player_indices[0];
+	watch->victim_player = verdict->player_indices[1];
+	if (decided && skater && share > 0.f && !TEST_FLAG(object->object.damage_flags, _object_dead_bit))
+	{
+		real shield = object->object.shield_vitality;
+		real body = object->object.body_vitality;
+		real_vector3d direction;
+		boolean dealt;
+
+		/* (from the skater to them, or the push's way) */
+		vector_from_points3d(&skater->object.bounding_sphere_center, &object->object.bounding_sphere_center,
+			&direction);
+		if (!(magnitude3d(&direction) > 0.001f))
+			direction = verdict->push;
+		dealt = network_damage_vehicle_collision(object_index, skater_index, share,
+			&skater->object.bounding_sphere_center, &direction);
+		object = object_try_and_get(object_index);
+		platform_log("skate verdict %u: player %d's skater ran over %s here, %.2f of Halo's vehicle collision damage%s: "
+			"shield %.2f to %.2f, body %.2f to %.2f%s", verdict->number, verdict->player_indices[0],
+			verdict->player_indices[1] == SKATE_AUTHORITY_NO_PLAYER ? "an AI" : "a player", share,
+			dealt ? "" : " (none in this map's globals)", shield, object ? object->object.shield_vitality : 0.f, body,
+			object ? object->object.body_vitality : 0.f,
+			!object || TEST_FLAG(object->object.damage_flags, _object_dead_bit) ? ", killed" : "");
+	}
+}
+
 /* a verdict decided (the host) or heard (a client), applied on this
 machine: its own skater settled (skate_authority_settle), a person on foot
-pushed (by the host on its copy, by their own machine on theirs), and logged
-alike on every machine */
+pushed (by the host on its copy, by their own machine on theirs) and, run
+over, hurt by the host, and logged alike on every machine */
 static void skate_authority_apply(struct skate_verdict const *verdict, boolean decided)
 {
 	char text[192];
@@ -690,6 +822,9 @@ static void skate_authority_apply(struct skate_verdict const *verdict, boolean d
 				magnitude3d(&verdict->push) * TICKS_PER_SECOND * 3.048f * 0.5f);
 		}
 	}
+	/* (pushed, as a vehicle pushes them, then hurt) */
+	if (TEST_FLAG(verdict->flags, _skate_verdict_second_run_over_bit))
+		skate_authority_run_over(verdict, decided);
 }
 
 /* (the host) the collision between two units, if one was decided within
@@ -819,6 +954,7 @@ static void skate_authority_decide(long machine_index, struct skate_report const
 		magnitude3d(&target->object.translational_velocity)) * SKATE_VERDICT_LAG_TICKS;
 	input.bail_speed = skate_obstacle_bail_speed();
 	input.normal = report->normal;
+	input.run_over_told = TEST_FLAG(report->flags, _skate_report_run_over_bit);
 	skate_verdict_decide(&input, &outcome);
 	if (!outcome.believed)
 	{
@@ -836,7 +972,8 @@ static void skate_authority_decide(long machine_index, struct skate_report const
 		(input.parties[1].skater ? FLAG(_skate_verdict_second_skater_bit) : 0) |
 		(target->object.type == _object_type_vehicle ? FLAG(_skate_verdict_second_vehicle_bit) : 0) |
 		(input.parties[1].pushable ? FLAG(_skate_verdict_second_on_foot_bit) : 0) |
-		(input.parties[1].pushable && magnitude3d(&outcome.push) > 0.f ? FLAG(_skate_verdict_second_pushed_bit) : 0));
+		(input.parties[1].pushable && magnitude3d(&outcome.push) > 0.f ? FLAG(_skate_verdict_second_pushed_bit) : 0) |
+		(outcome.run_over ? FLAG(_skate_verdict_second_run_over_bit) : 0));
 	verdict.player_indices[0] = report->player_index;
 	verdict.player_indices[1] = skate_authority_player_of(report->target_index);
 	verdict.object_indices[0] = skater_index;
@@ -864,15 +1001,16 @@ static void skate_authority_decide(long machine_index, struct skate_report const
 	collision->last_time = now;
 	collision->send_until = now + SKATE_AUTHORITY_REPEAT_TICKS;
 	collision->verdict = verdict;
-	platform_log("skate verdict %u: player %d's hit told at %.1f m/s (%s, its engine %s), the host's bound %.1f m/s, "
+	platform_log("skate verdict %u: player %d's hit told at %.1f m/s (%s, its engine %s%s), the host's bound %.1f m/s, "
 		"%.2f world units apart", verdict.number, report->player_index, report->closing * 3.048f,
 		machine_index == NONE ? "the host's own skater" : "another machine's skater",
-		input.parties[0].wants_bail ? "held a bail" : "held no bail", input.bound * 3.048f, input.distance);
+		input.parties[0].wants_bail ? "held a bail" : "held no bail",
+		input.run_over_told ? ", went through them" : "", input.bound * 3.048f, input.distance);
 	skate_authority_apply(&verdict, TRUE);
 }
 
 void skate_authority_engine_hit(long skater_index, long target_index, real closing, real_vector3d const *normal,
-	boolean touched, boolean bail_held)
+	boolean touched, boolean bail_held, boolean run_over)
 {
 	struct skate_local_hit *hit = NULL;
 	long now = game_time_get();
@@ -910,12 +1048,12 @@ void skate_authority_engine_hit(long skater_index, long target_index, real closi
 	{
 		hit = skate_authority_new_local_hit(target_index);
 		hit->send_until = now + SKATE_AUTHORITY_REPEAT_TICKS;
-		platform_log("skate hit %d: this machine's skater (player %d) hit %s at %.1f m/s, for the host to decide",
+		platform_log("skate hit %d: this machine's skater (player %d) hit %s at %.1f m/s%s, for the host to decide",
 			hit->number, skate_authority_player_of(skater_index) == SKATE_AUTHORITY_NO_PLAYER ? -1 :
 			skate_authority_player_of(skater_index),
 			skate_unit_is_skating(target_index) ? "a skater" : object_try_and_get(target_index) &&
 			object_get(target_index)->object.type == _object_type_vehicle ? "a vehicle" : "a person on foot",
-			closing * 3.048f);
+			closing * 3.048f, run_over ? " and went through them, running them over" : "");
 	}
 	if (touched)
 	{
@@ -925,6 +1063,12 @@ void skate_authority_engine_hit(long skater_index, long target_index, real closi
 			hit->closing = closing;
 			hit->normal = *normal;
 		}
+	}
+	if (run_over && !hit->run_over)
+	{
+		hit->run_over = TRUE;
+		if (!hit->resolved)
+			hit->send_until = now + SKATE_AUTHORITY_REPEAT_TICKS;
 	}
 	if (bail_held && !hit->bail_held)
 	{
@@ -943,7 +1087,8 @@ void skate_authority_engine_hit(long skater_index, long target_index, real closi
 			return;
 		memset(&report, 0, sizeof(report));
 		report.player_index = player_index;
-		report.flags = (byte)(hit->bail_held ? FLAG(_skate_report_bail_held_bit) : 0);
+		report.flags = (byte)((hit->bail_held ? FLAG(_skate_report_bail_held_bit) : 0) |
+			(hit->run_over ? FLAG(_skate_report_run_over_bit) : 0));
 		report.number = hit->number;
 		report.target_index = hit->target_index;
 		report.closing = hit->closing;
@@ -972,7 +1117,8 @@ short skate_authority_reports(byte *out, short capacity)
 			continue;
 		memset(&report, 0, sizeof(report));
 		report.player_index = player_index;
-		report.flags = (byte)(hit->bail_held ? FLAG(_skate_report_bail_held_bit) : 0);
+		report.flags = (byte)((hit->bail_held ? FLAG(_skate_report_bail_held_bit) : 0) |
+			(hit->run_over ? FLAG(_skate_report_run_over_bit) : 0));
 		report.number = hit->number;
 		report.target_index = hit->target_index;
 		report.closing = hit->closing;
@@ -1120,5 +1266,45 @@ void skate_authority_update(void)
 				(object->object.position.y - measure->from.y) * measure->along.j);
 		}
 		measure->object_index = NONE;
+	}
+	/* people run over: whether they died, and who killed them, as this
+	machine has it */
+	for (index = 0; index < SKATE_AUTHORITY_MEASURES; index++)
+	{
+		struct skate_run_over_watch *watch = &skate_run_over_watches[index];
+		struct object_datum *object;
+		struct player_datum *killer;
+		struct player_datum *victim;
+		byte killer_index = SKATE_AUTHORITY_NO_PLAYER;
+		boolean friendly_fire = FALSE;
+		boolean by_vehicle = FALSE;
+
+		if (watch->object_index == NONE)
+			continue;
+		object = object_try_and_get(watch->object_index);
+		if (object && !TEST_FLAG(object->object.damage_flags, _object_dead_bit))
+		{
+			if (now - watch->time > SKATE_RUN_OVER_WATCH_TICKS || now < watch->time)
+			{
+				platform_log("skate verdict %u: the person run over lived, shield %.2f, body %.2f", watch->number,
+					object->object.shield_vitality, object->object.body_vitality);
+				watch->object_index = NONE;
+			}
+			continue;
+		}
+		watch->object_index = NONE;
+		if (watch->victim_player == SKATE_AUTHORITY_NO_PLAYER ||
+			!distributed_get_death(watch->victim_player, &killer_index, &friendly_fire, &by_vehicle))
+		{
+			platform_log("skate verdict %u: the person run over died here", watch->number);
+			continue;
+		}
+		killer = killer_index != SKATE_AUTHORITY_NO_PLAYER ? distributed_player(killer_index) : NULL;
+		victim = distributed_player(watch->victim_player);
+		platform_log("skate verdict %u: the person run over died here, killed by player %d%s (the skater, player %d): "
+			"player %d has %d kills, player %d %d deaths", watch->number,
+			killer_index == SKATE_AUTHORITY_NO_PLAYER ? -1 : killer_index, friendly_fire ? ", friendly fire" : "",
+			watch->skater_player, killer_index == SKATE_AUTHORITY_NO_PLAYER ? -1 : killer_index,
+			killer ? killer->statistics.kills[0] : 0, watch->victim_player, victim ? victim->statistics.deaths : 0);
 	}
 }
