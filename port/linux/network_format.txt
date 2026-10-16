@@ -74,6 +74,8 @@ enum _distributed_message_player_statistics 3
 enum _distributed_message_relayed_actions 15
 enum _distributed_message_skate_down 91
 enum _distributed_message_skate_report 92
+enum _distributed_message_skate_sound_down 95
+enum _distributed_message_skate_sound_up 94
 enum _distributed_message_skate_up 90
 enum _distributed_message_skate_verdict 93
 enum _distributed_message_structure_bsp 65

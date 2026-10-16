@@ -314,6 +314,12 @@ its player skates, the host holds that player to a board's bounds (40 m/s
 across and up, a 15 m/s launch, as far from the last place it took as a board
 goes since) instead of a runner's, and takes none of their hits. Builds
 without them drop both kinds as unknown, so the network version is unchanged.
+Each skater's sounds go the same way, as messages of their own (a client's
+skater's to the host, `_distributed_message_skate_sound_up`, and the others'
+from the host as often as their states, `_distributed_message_skate_sound_down`):
+the loops' state and the one-shots of the last half second, numbered, so
+that every machine hears every skater; dropped as unknown kinds by builds
+without them, with no change of version either.
 
 ## Joining a game in progress
 

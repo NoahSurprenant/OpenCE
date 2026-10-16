@@ -85,6 +85,27 @@ void skate_network_update_after_objects(void);
 ticks: its unit, and its placement (halo_skate_board_vertices_at); FALSE for
 none */
 boolean skate_network_board(short player_index, real fraction, long *unit_index, real *placement);
+/* a player's sounds on the wire (skate_sound_write; port/skate/README.md,
+"Multiplayer"): its player's absolute index, the format, the loops' state
+(wheels down, the grind, a powerslide, the surface; the speed in quarters of
+a m/s), the newest one-shot's sequence number and how many follow, then the
+one-shots of the last SKATE_SOUND_EVENT_TICKS, oldest first, each its sound
+(halo_skate_sound.h's HALO_SKATE_SOUND_...), how hard (in 255ths), its speed
+(quarters of a m/s) and how many ticks before the entry was written it came.
+Sent every tick, so each one-shot goes several times and a lost datagram
+loses none; the sequence numbers play each once */
+#define SKATE_SOUND_FORMAT 1
+#define SKATE_SOUND_SIZE 24
+#define SKATE_SOUND_EVENTS 4
+#define SKATE_SOUND_EVENT_TICKS 15
+/* the player's latest sounds, if they are to be sent (fresh: this machine's
+skater's of this tick, or another machine's of the last few, which the host
+passes on), into entry (SKATE_SOUND_SIZE bytes): its size, 0 for none */
+short skate_network_sound_entry(short player_index, byte *entry);
+/* the sounds of a message (machine_index the sender's on the host, NONE on
+a client), taken as skate_network_handle_entries takes states */
+void skate_network_handle_sounds(long machine_index, byte const *data, byte const *end, short count);
+
 /* the most players there are (skate_network_board) */
 #define SKATE_NETWORK_PLAYERS HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* player_control.c: debug.network_test_skate_watch turns the local player

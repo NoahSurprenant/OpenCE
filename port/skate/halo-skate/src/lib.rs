@@ -31,6 +31,7 @@ mod recovery;
 mod rig;
 mod sound;
 mod sound_defaults;
+mod sound_remote;
 mod sound_set;
 
 use bevy_math::{Mat3, Mat4, Vec3};

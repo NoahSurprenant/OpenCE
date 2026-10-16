@@ -139,6 +139,13 @@ enum
 	drops both as kinds it does not know */
 	_distributed_message_skate_report = 92,
 	_distributed_message_skate_verdict = 93,
+	/* Skate 3 mode (skate_network.c): a client's own skater's sounds (its
+	loops' state and its one-shots of the last half second, numbered), every
+	tick while they skate (unreliable); and every other machine's players',
+	from the host, as often as their states. A build without them drops both
+	as kinds it does not know, and hears no other skater's board */
+	_distributed_message_skate_sound_up = 94,
+	_distributed_message_skate_sound_down = 95,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };

@@ -1852,6 +1852,66 @@ static void distributed_host_send_skate(
 	}
 }
 
+/* port: (a client) its own skaters' sounds, to the host; (the host) every
+player's sounds to each client but their own, as often as their states go
+(skate_network.c) */
+static void distributed_client_send_skate_sounds(
+	void)
+{
+	short player_index;
+
+	distributed_packer_begin(&distributed_packer, HOST_SENDER, _distributed_message_skate_sound_up, NULL, 0);
+	for (player_index = 0; player_index < MAXIMUM_TRACKED_PLAYERS; player_index++)
+	{
+		struct player_datum *player = distributed_player(player_index);
+		byte entry[SKATE_SOUND_SIZE];
+
+		if (player && player->local_player_index != NONE && skate_network_sound_entry(player_index, entry) > 0)
+			distributed_packer_add(&distributed_packer, entry, SKATE_SOUND_SIZE);
+	}
+	distributed_packer_flush(&distributed_packer);
+}
+
+static void distributed_host_send_skate_sounds(
+	void)
+{
+	long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+	short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
+	short machine_number;
+
+	for (machine_number = 0; machine_number < machine_count; machine_number++)
+	{
+		long machine_index = machine_indices[machine_number];
+		short player_index;
+
+		distributed_packer_begin(&distributed_packer, (short)machine_index, _distributed_message_skate_sound_down,
+			NULL, 0);
+		for (player_index = 0; player_index < MAXIMUM_TRACKED_PLAYERS; player_index++)
+		{
+			byte entry[SKATE_SOUND_SIZE];
+			long unit_index;
+
+			if (distributed_machine_has_player(machine_index, player_index) ||
+				skate_network_sound_entry(player_index, entry) <= 0)
+			{
+				continue;
+			}
+			/* (a far skater as often as their state: what they say carries
+			their one-shots of the last half second) */
+			unit_index = distributed_living_unit(distributed_player(player_index));
+			if (unit_index != NONE)
+			{
+				short period = network_objects_send_period(machine_index, &object_get(unit_index)->object.position);
+
+				if (period > 1 && (game_time_get() + player_index) % period)
+					continue;
+			}
+			distributed_packer_add(&distributed_packer, entry, SKATE_SOUND_SIZE);
+		}
+		distributed_packer_flush(&distributed_packer);
+	}
+}
+
 /* port: (a client) its skater's hits for the host to decide, and (the host)
 its verdicts on skaters' hits to every client (skate_authority.c) */
 static void distributed_client_send_skate_reports(
@@ -3650,6 +3710,7 @@ void network_distributed_tick(
 		}
 		profile_scope(distributed_tick_send_players_section, distributed_host_send_players();)
 		distributed_host_send_skate();
+		distributed_host_send_skate_sounds();
 		distributed_host_send_skate_verdicts();
 		profile_scope(distributed_tick_actors_host_tick_section, network_actors_host_tick();)
 		profile_scope(distributed_tick_coop_host_tick_section, network_coop_host_tick();)
@@ -3664,6 +3725,7 @@ void network_distributed_tick(
 		profile_scope(distributed_tick_send_inputs_section, distributed_client_send_inputs();)
 		profile_scope(distributed_tick_send_predictions_section, distributed_client_send_predictions();)
 		distributed_client_send_skate();
+		distributed_client_send_skate_sounds();
 		distributed_client_send_skate_reports();
 		profile_scope(distributed_tick_objects_client_tick_section, network_objects_client_tick();)
 		profile_scope(distributed_tick_damage_client_tick_section, network_damage_client_tick();)
@@ -3713,6 +3775,8 @@ static boolean distributed_message_stale(
 	case _distributed_message_skate_down:
 	case _distributed_message_skate_report:
 	case _distributed_message_skate_verdict:
+	case _distributed_message_skate_sound_up:
+	case _distributed_message_skate_sound_down:
 		break;
 	default:
 		return FALSE;
@@ -4287,6 +4351,8 @@ void network_distributed_handle_message(
 	case _distributed_message_skate_down: entry_size = SKATE_STATE_HEADER_SIZE; break;
 	case _distributed_message_skate_report: entry_size = SKATE_REPORT_SIZE; break;
 	case _distributed_message_skate_verdict: entry_size = SKATE_VERDICT_SIZE; break;
+	case _distributed_message_skate_sound_up:
+	case _distributed_message_skate_sound_down: entry_size = SKATE_SOUND_SIZE; break;
 	case _distributed_message_player_inputs: entry_size = sizeof(struct distributed_player_input); break;
 	case _distributed_message_relayed_actions: entry_size = DISTRIBUTED_RELAYED_ACTION_MINIMUM_SIZE; break;
 	case _distributed_message_game_state:
@@ -4333,6 +4399,7 @@ void network_distributed_handle_message(
 	case _distributed_message_votekick:
 	case _distributed_message_skate_up:
 	case _distributed_message_skate_report:
+	case _distributed_message_skate_sound_up:
 		if (machine_index == NONE || game_connection() != _game_connection_network_server)
 			return;
 		break;
@@ -4402,6 +4469,10 @@ void network_distributed_handle_message(
 		break;
 	case _distributed_message_skate_verdict:
 		skate_authority_handle_verdicts((byte const *)entries, (byte const *)message + size, header.count);
+		break;
+	case _distributed_message_skate_sound_up:
+	case _distributed_message_skate_sound_down:
+		skate_network_handle_sounds(machine_index, (byte const *)entries, (byte const *)message + size, header.count);
 		break;
 	case _distributed_message_coop_device_groups:
 		network_coop_handle_device_groups(entries, header.count);
