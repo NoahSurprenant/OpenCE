@@ -2301,6 +2301,56 @@ void network_damage_client_tick(
 	damage_report_count = 0;
 }
 
+/* the host (or a game not networked): a unit hit as a vehicle hits a person
+in physics.c's biped and vehicle collision, by owner_index's unit, a skater
+who ran them over (skate_authority.c): the game globals' vehicle collision
+damage, multiplier times it, from epicenter along direction, its owner's
+(the kill theirs, friendly fire as the game type has it). Dealt here even
+for another machine's player, whose machine reports nothing of it: the host
+decided it. FALSE when the globals have no such damage. */
+boolean network_damage_vehicle_collision(
+	long object_index,
+	long owner_index,
+	real multiplier,
+	real_point3d const *epicenter,
+	real_vector3d const *direction)
+{
+	struct game_globals *globals = scenario_get_game_globals();
+	struct distributed_falling_damage *falling_damage;
+	struct object_datum *owner = object_try_and_get(owner_index);
+	struct object_datum *object = object_try_and_get(object_index);
+	struct damage_data damage;
+	boolean dealing = damage_dealing_report;
+
+	if (game_connection() == _game_connection_network_client || !globals || globals->falling_damage.count <= 0 ||
+		!owner || !object || !(multiplier > 0.0f))
+	{
+		return FALSE;
+	}
+	falling_damage = TAG_BLOCK_GET_ELEMENT(&globals->falling_damage, 0, struct distributed_falling_damage);
+	if (falling_damage->vehicle_collision_damage.index == NONE)
+		return FALSE;
+	/* (as physics.c makes it: the whole damage, an area's, the owner's) */
+	damage_data_new(&damage, falling_damage->vehicle_collision_damage.index);
+	damage.scale = 1.0f;
+	damage.multiplier = multiplier;
+	SET_FLAG(damage.flags, _damage_area_of_effect_bit, TRUE);
+	damage.owner_player_index = owner->object.owner_player_index;
+	if (damage.owner_player_index == NONE && TEST_FLAG(_object_mask_unit, owner->object.type))
+		damage.owner_player_index = ((struct unit_datum *)owner)->unit.player_index;
+	damage.owner_object_index = owner->object.owner_object_index != NONE ? owner->object.owner_object_index :
+		owner_index;
+	damage.owner_team_index = owner->object.owner_team_index;
+	damage.origin = object->object.bounding_sphere_center;
+	damage.epicenter = *epicenter;
+	damage.direction = *direction;
+	normalize3d(&damage.direction);
+	damage_dealing_report = TRUE;
+	object_cause_damage(&damage, object_index, NONE, NONE, NONE, NULL);
+	damage_dealing_report = dealing;
+	return TRUE;
+}
+
 void network_damage_statistics(
 	long *sent_reports,
 	long *dealt_reports,

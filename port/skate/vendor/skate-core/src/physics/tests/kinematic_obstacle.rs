@@ -30,6 +30,7 @@ fn wall(center: Vector3, velocity: Vector3) -> KinematicObstacle {
         angular_velocity: Vector3::ZERO,
         tag: 0,
         held: false,
+        run_over: false,
     }
 }
 
@@ -46,6 +47,7 @@ fn person(center: Vector3) -> KinematicObstacle {
         angular_velocity: Vector3::ZERO,
         tag: 0,
         held: false,
+        run_over: false,
     }
 }
 
@@ -245,6 +247,7 @@ fn a_board_rolling_into_a_standing_obstacle_stops_at_it_as_at_a_wall() {
         angular_velocity: Vector3::ZERO,
         tag: 0,
         held: false,
+        run_over: false,
         shape: ObstacleShape::Box {
             center: Vector3::new(0.0, 0.5, 2.0),
             basis: IDENTITY_BASIS,
@@ -279,6 +282,7 @@ fn a_moving_obstacle_carries_a_standing_board_with_it() {
         angular_velocity: Vector3::ZERO,
         tag: 0,
         held: false,
+        run_over: false,
     };
     let reported = ride(&mut b, &obstacle, 60);
     let v = deck_velocity(&b);
@@ -343,6 +347,7 @@ fn box_triangles(center: Vector3, half: Vector3) -> Vec<[Vector3; 3]> {
         angular_velocity: Vector3::ZERO,
         tag: 0,
         held: false,
+        run_over: false,
     };
     o.triangles_at(0.0)
 }
@@ -358,6 +363,7 @@ fn mesh_obstacle(triangles: &[[Vector3; 3]], velocity: Vector3) -> KinematicObst
         angular_velocity: Vector3::ZERO,
         tag: 0,
         held: false,
+        run_over: false,
     }
 }
 

@@ -8,6 +8,8 @@
 //! Off the board, walking into a wall sent as an obstacle stops the skater.
 //! A blast's push (`halo_skate_apply_impulse`) moves the skater riding or
 //! walking, and a strong one bails.
+//! A person on foot sent to be run over (`run_over`, `halo_skate_set_run_over`)
+//! is gone through fast, slowed, and told run over; slow, still a bump.
 //! Skipped unless `HALO_SKATE_TEST_ASSETS` is set; run with `--release`.
 
 mod common;
@@ -270,6 +272,59 @@ fn a_held_hit_is_told_not_bailed_by_and_the_hosts_bail_bails() {
     );
     assert!(log.iter().any(|l| l.contains("bailed by the host's verdict")), "{log:?}");
     assert_back_on_the_board(&mut engine, "held person");
+}
+
+/// A person on foot the skater runs over (held and run_over, as skate.c sends
+/// another player on foot in a network game while the skater rides, the
+/// run-over speed 1 world unit a second, 3 m/s): riding into them at full
+/// speed goes on through them, slowed to the share kept, no bail, and the hit
+/// is told run over; catching up with one walking away (closing under the
+/// run-over speed) is a bump still, the board stopped behind them.
+#[test]
+fn a_person_on_foot_is_run_over_fast_and_bumped_slow() {
+    let Some(assets) = assets("running a person over") else { return };
+    let mut engine = Engine::start(&assets);
+    let mut told = HaloSkateHeldHit::default();
+    unsafe { halo_skate_take_held_hit(&mut told) };
+    assert_eq!(halo_skate_set_run_over(1.0, 0.7), 1.0);
+    let on_foot = |x: f32, y: f32| vec![HaloSkateObstacle { tag: 78, held: 1, run_over: 1, ..person(x, y) }];
+    let fast = ride_into(&mut engine, TestMap::OPEN, 4, 12, &on_foot, 0.0);
+    let told_fast = unsafe { halo_skate_take_held_hit(&mut told) };
+    let fast_told = told;
+    let slow = ride_into(&mut engine, TestMap::OPEN, 1, 3, &on_foot, -3.0);
+    let told_slow = unsafe { halo_skate_take_held_hit(&mut told) };
+    let slow_told = told;
+    halo_skate_set_run_over(-1.0, 1.0);
+    eprintln!(
+        "run over: riding {:.2} m/s, {:.2} m past them, {:.2} m/s after, told {fast_told:?}, {:?}; slow: riding {:.2} \
+         m/s, {:.2} m past, told {slow_told:?}",
+        fast.speed,
+        fast.past,
+        fast.after,
+        fast.log.iter().filter(|l| l.contains("ran over")).collect::<Vec<_>>(),
+        slow.speed,
+        slow.past
+    );
+    assert!(fast.speed > 6.0, "fast: at speed: {:.2} m/s", fast.speed);
+    assert!(!fast.bailed, "fast: run over, no bail");
+    assert!(fast.past > 1.0, "fast: on through the person: {:.2} m past", fast.past);
+    assert!(
+        fast.after > 0.4 * fast.speed && fast.after < 0.85 * fast.speed,
+        "fast: slowed by the share kept: {:.2} m/s after {:.2}",
+        fast.after,
+        fast.speed
+    );
+    assert!(fast.log.iter().any(|l| l.contains("ran over a person at")), "{:?}", fast.log);
+    assert_eq!(told_fast, 1, "the hit is told");
+    assert_eq!((fast_told.tag, fast_told.kind, fast_told.touched, fast_told.run_over), (78, KIND_BIPED, 1, 1));
+    assert!(fast_told.closing * METRES > 3.0, "run over at speed: {fast_told:?}");
+    // (slower than the run-over speed: a held person as any, a bump)
+    let slow_closing = report("person on foot, slow", &slow, "biped");
+    assert!(slow_closing < 3.0, "slow: closing slowly: {slow_closing:.2} m/s");
+    assert!(!slow.bailed, "slow: a bump, not a bail");
+    assert!(slow.past < 0.0, "slow: the board stayed behind the person: {:.2} m past", slow.past);
+    assert_eq!(told_slow, 1, "the slow hit is told");
+    assert_eq!(slow_told.run_over, 0, "slow: not run over: {slow_told:?}");
 }
 
 /// Riding into a parked vehicle after one push (4.8 m/s): a bump, the board

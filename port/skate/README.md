@@ -923,7 +923,7 @@ the host, and every machine applies that verdict:
    has them); a player on foot is pushed away from the skater along the
    ground, by Halo's acceleration of the closing speed (so half of it, as
    `biped_accelerate` gives a living biped; 4 m/s at most), lifted a quarter
-   as much, and takes no damage. A later report of the same two within a
+   as much, and takes no damage unless run over (below). A later report of the same two within a
    second is the same hit: the same verdict is sent again, never a new one.
 4. The host sends every client the verdict
    (`_distributed_message_skate_verdict`, 93), for five ticks over, and
@@ -933,18 +933,53 @@ the host, and every machine applies that verdict:
    everyone sees the bail in the skater's state (it says so: the bailing
    flag) and the push in the unit the host sends.
 
+**A skater runs a player on foot over**, as a vehicle does in Halo. Halo's
+vehicle (`physics.c`, the biped and vehicle collision) pushes a person it
+touches aside and goes on; once the two close at 1 world unit a second
+(3 m/s), or the vehicle goes at 2 (6.1 m/s), it deals them the game globals'
+vehicle collision damage (`globals\vehicle_collision`: 1000 on every stock
+map, past any unit's 75 shield and 75 body), its driver's: the kill and its
+credit theirs, friendly fire as the game type has it. A skater does the same:
+
+- In a network game `skate.c` sends a person on foot (alive, not skating, on
+  no vehicle) as a held obstacle marked to be run over while the skater rides
+  (`halo_skate_obstacle`'s `run_over`). The engine
+  (`solve/obstacles.rs`'s `run_over`) takes a first contact with them closing
+  at `SKATE_RUN_OVER_SPEED` (1 world unit a second, Halo's 3 m/s) or faster
+  as going through: their contacts are dropped until the two part (half a
+  second without one), the board and the skater keep `SKATE_RUN_OVER_KEEP`
+  (0.7) of their speed, no bail, and the hit is told as run over
+  (`halo-skate: ran over a person at 8.4 m/s, keeping 70% of the speed`).
+  Slower, they are a held obstacle as before: a bump.
+- The report says so (its run-over flag). The host's verdict on a hit on a
+  person on foot at the run-over speed or faster (or one gone through on the
+  skater's machine) is a run-over: the skater rides on whatever the speed,
+  the person is pushed as above, and the host deals them Halo's vehicle
+  collision damage times `skate_run_over_share` of the speed decided: the
+  whole from 2 world units a second (6.1 m/s, Halo's vehicle speed that
+  always hurts), so a kill as a Warthog's; between 3 and 6.1 m/s a share
+  rising from none to 0.14 (140: a Spartan unhurt lives, one hurt dies);
+  below 3 m/s, none. It is the skater's, as a vehicle's driver's
+  (`network_damage_vehicle_collision`): the kill feed, the kills, friendly
+  fire, all as the game type has them, and the clients have it as any of the
+  host's damage. A dedicated server built without the mode decides and deals
+  it alike.
+- Two skaters never run each other over (neither is on foot): they bump or
+  bail as above.
+
+
 | message | bytes | what |
 | --- | --- | --- |
 | report (92), client to host | 1 | the format, 1: an entry of another format is skipped |
 | | 1 | the skater (their player's absolute index) |
-| | 1 | flags: the engine held a bail |
+| | 1 | flags: the engine held a bail; it went through a person on foot, running them over |
 | | 1 | the client's count of its skater's hits |
 | | 4 | what was hit (its object, as the netcode sends objects) |
 | | 2 | the closing speed, 1/1024 world units a second |
 | | 6 | the contact's normal, from what was hit toward the skater, 1/32767 a part |
 | | 4 | the client's tick of the first contact |
 | verdict (93), host to clients | 1 | the format, 1 |
-| | 1 | flags: the skater bails; what they hit, a skater, bails; it is pushed; it is a skater, a person on foot, a vehicle; or no verdict, only that the host decides |
+| | 1 | flags: the skater bails; what they hit, a skater, bails; it is pushed; it is a skater, a person on foot, a vehicle; or no verdict, only that the host decides; the person on foot is run over |
 | | 2 | the skater's player, and the other's (255 for an AI or none) |
 | | 2 | the verdict's number |
 | | 2 | the closing speed decided by, 1/1024 world units a second |
@@ -956,8 +991,12 @@ the host, and every machine applies that verdict:
 Every machine logs each verdict in the same words (`skate verdict 7
 decided: player 0's skater bails; player 1's skater bails; at 8.2 m/s` on the
 host, `... heard: ...` on a client), what it did with it (`skate verdict 7:
-this machine's skater bails`), and half a second after a push how far
-the person went along it.
+this machine's skater bails`), half a second after a push how far
+the person went along it, and of a run-over the damage the host dealt
+(`skate verdict 9: player 1's skater ran over a player here, 1.00 of Halo's
+vehicle collision damage: shield 1.00 to 0.00, body 1.00 to 0.00, killed`)
+and who killed them (`skate verdict 9: the person run over died here, killed
+by player 1 (the skater, player 1): player 1 has 1 kills, player 0 1 deaths`).
 
 What it costs and allows:
 

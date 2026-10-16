@@ -539,6 +539,7 @@ void skate_initialize(void)
 	halo_skate_set_board_scale(skate_settings.board_scale);
 	halo_skate_set_feet(skate_settings.ankle_height, skate_settings.feet_offset);
 	halo_skate_set_obstacle_bail_speed(skate_settings.obstacle_bail_speed);
+	halo_skate_set_run_over(SKATE_RUN_OVER_SPEED, SKATE_RUN_OVER_KEEP);
 	/* (the engine says when there is no assets folder; nothing more happens
 	until J) */
 	skate_globals.preloaded = halo_skate_preload(skate_assets()) == 0;
@@ -1465,7 +1466,10 @@ devices and scenery made later as their own collision: each node's BSP made
 into triangles once (skate_bsp_triangles), placed by the node as the object
 is now (a turret, a door, a lift moves with its node), the triangles near
 the skater only. Each carries on at its velocity until the next tick.
-Nothing is pushed back on Halo's side: the skater bumps or bails off them. */
+Nothing is pushed back on Halo's side: the skater bumps or bails off them;
+but in a network game a person on foot is run over by a skater riding into
+them fast enough, as by a vehicle: the skater goes through them and the host
+pushes and hurts them (skate_authority.c). */
 
 /* how far from the skater objects are looked for (world units, 24 m: a
 tick at any board speed is under 3 m) */
@@ -1642,6 +1646,9 @@ static void skate_biped_obstacle(long object_index, real_point3d const *skater, 
 	obstacle.shape = HALO_SKATE_OBSTACLE_CAPSULE;
 	obstacle.tag = object_index;
 	obstacle.held = skate_obstacles_held;
+	/* (a person on foot, held: run over by a skater riding into them fast
+	enough, as by a vehicle; skate_authority.c decides what it does to them) */
+	obstacle.run_over = skate_obstacles_held && skate_local_skater_riding();
 	obstacle.center[0] = base.x;
 	obstacle.center[1] = base.y;
 	obstacle.center[2] = base.z + segment / 2.f;
@@ -2014,7 +2021,7 @@ static void skate_take_held_hit(void)
 	normal.j = held.normal[1];
 	normal.k = held.normal[2];
 	skate_authority_engine_hit(skate_globals.unit_index, held.tag, held.closing, &normal, held.touched != 0,
-		held.bail_held != 0);
+		held.bail_held != 0, held.run_over != 0);
 }
 
 void skate_update_before_objects(void)

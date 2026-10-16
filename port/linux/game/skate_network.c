@@ -118,6 +118,11 @@ pushed speed, so the carve does not take them round it) */
 #define SKATE_NETWORK_BLOCK_TICKS (5 * TICKS_PER_SECOND)
 #define SKATE_NETWORK_BLOCK_SPEED 0.5f
 #define SKATE_NETWORK_BLOCK_AHEAD 1.5f
+/* ... on foot, waiting up to this many ticks (3 seconds) for one going faster than
+this (world units a second, 6.7 m/s: past Halo's 6.1, at which a skater running
+them over kills them, skate_authority.c) */
+#define SKATE_NETWORK_BLOCK_FAST_WAIT (3 * TICKS_PER_SECOND)
+#define SKATE_NETWORK_BLOCK_FAST 2.2f
 /* ... but not this many ticks either side of the host's own skater's
 teleport (debug.network_test_skate_teleport: a second) */
 #define SKATE_NETWORK_BLOCK_CLEAR TICKS_PER_SECOND
@@ -646,6 +651,8 @@ static struct
 	/* debug.network_test_skate_block, and when the watcher last stepped in */
 	boolean block;
 	long blocked_time;
+	/* ... and since when the next is due, on foot (NONE: not yet) */
+	long block_due_time;
 	long logged_time;
 } skate_network_globals;
 
@@ -672,6 +679,7 @@ void skate_network_new_game(void)
 	skate_network_globals.watch = config_boolean("debug.network_test_skate_watch");
 	skate_network_globals.block = config_boolean("debug.network_test_skate_block");
 	skate_network_globals.blocked_time = NONE;
+	skate_network_globals.block_due_time = NONE;
 	skate_network_globals.logged_time = NONE;
 }
 
@@ -1465,7 +1473,9 @@ static void skate_network_test_shoot(void)
 	{
 		struct object_datum *target = object_get(skate_shoot.target_index);
 
-		if (skate_shoot.bullet_time != NONE && now - skate_shoot.bullet_time == TICKS_PER_SECOND / 2)
+		/* (or later: a watcher dead meanwhile, run over, shoots and looks at nothing
+		till they are back, and what was about must not be left about for good) */
+		if (skate_shoot.bullet_time != NONE && now - skate_shoot.bullet_time >= TICKS_PER_SECOND / 2)
 		{
 			boolean harmed = target->object.shield_vitality < skate_shoot.shield ||
 				target->object.body_vitality < skate_shoot.body;
@@ -1552,7 +1562,7 @@ static void skate_network_test_shoot(void)
 					target->object.shield_vitality, skate_shoot.grenade_body, target->object.body_vitality);
 			}
 		}
-		if (skate_shoot.detonated_time != NONE && now - skate_shoot.detonated_time == TICKS_PER_SECOND / 3)
+		if (skate_shoot.detonated_time != NONE && now - skate_shoot.detonated_time >= TICKS_PER_SECOND / 3)
 		{
 			/* (how far they went from the blast, level, past where their
 			course would have had them, and how much faster away from it) */
@@ -2090,6 +2100,18 @@ boolean skate_network_block_spot(long unit_index, boolean on_board, real_point3d
 	speed = (real)sqrt(velocity->i * velocity->i + velocity->j * velocity->j);
 	if (!(speed * TICKS_PER_SECOND > SKATE_NETWORK_BLOCK_SPEED))
 		return FALSE;
+	/* (on foot, a while for a skater fast enough to run them over and kill
+	them, SKATE_NETWORK_BLOCK_FAST, before any going on will do) */
+	if (!on_board)
+	{
+		if (skate_network_globals.block_due_time == NONE || game_time_get() < skate_network_globals.block_due_time)
+			skate_network_globals.block_due_time = game_time_get();
+		if (game_time_get() - skate_network_globals.block_due_time < SKATE_NETWORK_BLOCK_FAST_WAIT &&
+			!(speed * TICKS_PER_SECOND > SKATE_NETWORK_BLOCK_FAST))
+		{
+			return FALSE;
+		}
+	}
 	spot->x = skater->object.position.x + velocity->i / speed * SKATE_NETWORK_BLOCK_AHEAD;
 	spot->y = skater->object.position.y + velocity->j / speed * SKATE_NETWORK_BLOCK_AHEAD;
 	spot->z = skater->object.position.z + 0.3f;
@@ -2104,6 +2126,7 @@ boolean skate_network_block_spot(long unit_index, boolean on_board, real_point3d
 			*yaw += 2.f * _pi;
 	}
 	skate_network_globals.blocked_time = game_time_get();
+	skate_network_globals.block_due_time = NONE;
 	platform_log("skate network: the watcher steps into the skater's way%s at (%.2f %.2f %.2f), "
 		"the skater going %.1f m/s", on_board ? " on a board" : "", spot->x, spot->y, spot->z,
 		speed * TICKS_PER_SECOND * 3.048f);

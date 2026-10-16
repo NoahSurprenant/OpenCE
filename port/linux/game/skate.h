@@ -131,6 +131,15 @@ is skipped */
 #define SKATE_REPORT_SIZE 20
 #define SKATE_VERDICT_FORMAT 1
 #define SKATE_VERDICT_SIZE 24
+/* a skater riding into a person on foot runs them over, as a vehicle does in
+Halo (physics.c's biped and vehicle collision), at a closing speed this fast
+or more (world units a second: Halo's own least, 1, 3 m/s, the speed apart
+within which a vehicle pushes a person aside unhurt): the skater goes on
+through them, keeping this share of their speed (skate.c, the engine), and the
+host deals them Halo's vehicle collision damage by the speed
+(skate_authority.c's skate_run_over_share). Slower, a bump, as before */
+#define SKATE_RUN_OVER_SPEED 1.f
+#define SKATE_RUN_OVER_KEEP 0.7f
 
 /* skate_network_new_game: nothing known of any hit */
 void skate_authority_new_game(void);
@@ -142,9 +151,10 @@ boolean skate_authority_holds(void);
 /* skate.c, after a step: what the skate engine told of its skater's hits on
 held obstacles (halo_skate_take_held_hit): the fastest contact this tick
 (touched; target_index the object hit, closing world units a second, normal
-from it toward the skater), and whether it held a bail */
+from it toward the skater), whether it held a bail, and whether the skater ran a
+person on foot over (went through them: SKATE_RUN_OVER_SPEED) */
 void skate_authority_engine_hit(long skater_index, long target_index, real closing, union real_vector3d const *normal,
-	boolean touched, boolean bail_held);
+	boolean touched, boolean bail_held, boolean run_over);
 /* network_distributed.c: (a client) its reports this tick, (the host) its
 verdicts this tick, the same to every client, into out (capacity entries
 of their size): how many; and the entries of each, as they come */

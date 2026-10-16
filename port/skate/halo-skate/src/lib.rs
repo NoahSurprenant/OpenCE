@@ -108,7 +108,7 @@ enum Job {
     /// so from the start, as a teleporter leaves a skater.
     Activate { sequence: u64, spawn: Vec3, yaw: f32, velocity: Option<Vec3> },
     /// The obstacles the next steps collide with (`obstacles.rs`).
-    Obstacles { obstacles: Vec<skate_host::bridge::KinematicObstacle>, bail_speed: f32 },
+    Obstacles { obstacles: Vec<skate_host::bridge::KinematicObstacle>, bail_speed: f32, run_over: (f32, f32) },
     /// A blast's push (metres a second) on the skater, before the next step
     /// (`halo_skate_apply_impulse`).
     Impulse { velocity: Vec3 },
@@ -202,6 +202,11 @@ static FEET_OFFSET: Setting = Setting::new(0.0);
 /// How fast (world units a second) running into a person or a vehicle
 /// knocks the skater over (`halo_skate_set_obstacle_bail_speed`): 6 m/s.
 static OBSTACLE_BAIL_SPEED: Setting = Setting::new(6.0 / METRES);
+/// Running over people on foot (`halo_skate_set_run_over`): the least
+/// closing speed (world units a second; below 0, nobody is run over, as at
+/// first) and the share of their speed the board and the skater keep.
+static RUN_OVER_SPEED: Setting = Setting::new(-1.0);
+static RUN_OVER_KEEP: Setting = Setting::new(1.0);
 
 fn with_host<T>(f: impl FnOnce(&mut Host) -> T) -> Option<T> {
     let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
@@ -289,7 +294,7 @@ impl Host {
     /// fastest hit, and any bail held.
     fn note_held(&mut self, held: skate_host::bridge::HeldReport) {
         if let Some(hit) = held.hit
-            && self.held.hit.is_none_or(|h| hit.closing > h.closing)
+            && self.held.hit.is_none_or(|h| (hit.run_over && !h.run_over) || (hit.run_over == h.run_over && hit.closing > h.closing))
         {
             self.held.hit = Some(hit);
         }
@@ -579,9 +584,10 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 }
                 None => Reply::Error("no map is loaded for skating".into()),
             },
-            Job::Obstacles { obstacles, bail_speed } => {
+            Job::Obstacles { obstacles, bail_speed, run_over } => {
                 if let Some((_, s)) = session.as_mut() {
                     s.set_obstacles(&obstacles, bail_speed);
+                    s.set_run_over(run_over.0, run_over.1);
                 }
                 continue;
             }
@@ -635,6 +641,12 @@ fn take_held(s: &mut Session) -> skate_host::bridge::HeldReport {
             format!(" (hit a {} at {:.1} m/s)", obstacles::kind_name(h.kind), h.closing)
         });
         eprintln!("halo-skate: a bail held for the host's verdict{hit}, engine tick {}", held.bail_held_tick);
+    }
+    if let Some((closing, tick)) = held.run_over {
+        eprintln!(
+            "halo-skate: ran over a person at {closing:.1} m/s, keeping {:.0}% of the speed, engine tick {tick}",
+            RUN_OVER_KEEP.get() * 100.0
+        );
     }
     if let Some(tick) = held.forced {
         eprintln!("halo-skate: bailed by the host's verdict, engine tick {tick}");
@@ -1335,7 +1347,9 @@ pub unsafe extern "C" fn halo_skate_set_obstacles(
     let sent = taken.len() as i32;
     with_host(|host| {
         let bail_speed = OBSTACLE_BAIL_SPEED.get() * METRES;
-        if host.jobs.send(Job::Obstacles { obstacles: taken, bail_speed }).is_err() {
+        let run_over = RUN_OVER_SPEED.get();
+        let run_over = (if run_over >= 0.0 { run_over * METRES } else { f32::INFINITY }, RUN_OVER_KEEP.get());
+        if host.jobs.send(Job::Obstacles { obstacles: taken, bail_speed, run_over }).is_err() {
             return -1;
         }
         sent
@@ -1442,6 +1456,20 @@ pub extern "C" fn halo_skate_set_obstacle_bail_speed(speed: f32) -> f32 {
     OBSTACLE_BAIL_SPEED.get()
 }
 
+/// Running over people on foot (`halo_skate_obstacle`'s run_over, a person on
+/// foot the game marks while the skater rides): a contact with one closing at
+/// `speed` world units a second or faster goes through them, the board and the
+/// skater keeping `keep` (0 to 1) of their speed, and the hit is told as held
+/// and run over (`halo_skate_take_held_hit`); slower, it is a held obstacle as
+/// any. A speed below 0 or not finite runs nobody over (as at first). Kept
+/// across engine restarts; returns the speed kept.
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_set_run_over(speed: f32, keep: f32) -> f32 {
+    RUN_OVER_SPEED.set(if speed.is_finite() { speed } else { -1.0 });
+    RUN_OVER_KEEP.set(if keep.is_finite() { keep.clamp(0.0, 1.0) } else { 1.0 });
+    RUN_OVER_SPEED.get()
+}
+
 /// A blast's push on Halo's world units a second (`x`, `y`, `z`) in the skate
 /// engine's metres a second; none for one not finite or nothing.
 pub(crate) fn impulse_to_skate(velocity: Vec3) -> Option<Vec3> {
@@ -1472,6 +1500,7 @@ pub struct HaloSkateHeldHit {
     pub normal: [f32; 3],
     pub touched: i32,
     pub bail_held: i32,
+    pub run_over: i32,
 }
 
 /// What the steps since the last call had to tell of hits on held obstacles
@@ -1505,6 +1534,7 @@ pub unsafe extern "C" fn halo_skate_take_held_hit(out: *mut HaloSkateHeldHit) ->
             told.closing = hit.closing / METRES;
             told.normal = direction_from_skate(Vec3::new(hit.normal.x, hit.normal.y, hit.normal.z)).to_array();
             told.touched = 1;
+            told.run_over = i32::from(hit.run_over);
         }
         unsafe { *out = told };
         1
