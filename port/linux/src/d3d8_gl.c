@@ -385,6 +385,13 @@ struct program_entry
 	GLuint vertex_shader;
 	GLuint fragment_shader;
 	GLuint program;
+#ifdef HALO_WEB
+	/* linking still (parallel_shader_compile): the frame of the latest
+	look at whether it has finished, and how many looks so far */
+	BOOL link_pending;
+	unsigned long link_checked_frame;
+	unsigned long link_checks;
+#endif
 	GLint constants;
 	GLint viewport_scale;
 	GLint viewport_offset;
@@ -1629,6 +1636,9 @@ static void gl_initialize(void)
 		xgpu_capabilities.border_clamp = es32 || host_gl_has_extension("GL_EXT_texture_border_clamp") ||
 			host_gl_has_extension("GL_OES_texture_border_clamp");
 		xgpu_capabilities.anisotropy = host_gl_has_extension("GL_EXT_texture_filter_anisotropic");
+#ifdef HALO_WEB
+		xgpu_capabilities.parallel_shader_compile = host_gl_has_extension("GL_KHR_parallel_shader_compile");
+#endif
 		/* ANGLE and many Android drivers report ES 3.0 or 3.1 and offer
 		glDrawElementsBaseVertex as an extension under another name; the renderer
 		calls the pointer it has, so it takes the extension's when the core one is
@@ -1662,10 +1672,10 @@ static void gl_initialize(void)
 			host_gl_has_extension("GL_ANGLE_texture_compression_dxt3") &&
 			host_gl_has_extension("GL_ANGLE_texture_compression_dxt5"));
 		platform_log("OpenGL ES %d.%d: copy image %d, border clamp %d, anisotropy %d, S3TC %d, sample counting %d, "
-			"base vertex %d (%s)",
+			"base vertex %d (%s), parallel shader compile %d",
 			(int)major, (int)minor, xgpu_capabilities.copy_image, xgpu_capabilities.border_clamp,
 			xgpu_capabilities.anisotropy, xgpu_capabilities.s3tc, xgpu_capabilities.atomic_counters,
-			xgpu_capabilities.base_vertex, base_vertex_source);
+			xgpu_capabilities.base_vertex, base_vertex_source, xgpu_capabilities.parallel_shader_compile);
 	}
 #else
 	if (config_boolean("debug.gl_debug"))
@@ -2751,6 +2761,25 @@ static BOOL words_equal(const void *a, const void *b, unsigned long size)
 	return difference == 0;
 }
 
+/* xgpu_compile_shader; on the web with parallel_shader_compile, not waited
+for: whether it compiled is known when a program of it links
+(program_link_finish), and asking now waited for the compiler */
+static GLuint shader_compile(GLenum type, const char *source, const char *what)
+{
+#ifdef HALO_WEB
+	if (xgpu_capabilities.parallel_shader_compile)
+	{
+		GLuint shader = glCreateShader(type);
+
+		(void)what;
+		glShaderSource(shader, 1, &source, NULL);
+		glCompileShader(shader);
+		return shader;
+	}
+#endif
+	return xgpu_compile_shader(type, source, what);
+}
+
 /* lit: the shader that hands the lighting's normal and position on
 (vertex_shader_object lit_shader) */
 static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immediate, BOOL lit)
@@ -2765,7 +2794,7 @@ static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immed
 			immediate ? 0 : device.vertex_shader->packed_mask, lit ? &program->lighting : NULL);
 
 		program->shaders_tried |= tried;
-		*shader = xgpu_compile_shader(GL_VERTEX_SHADER, source, "vertex");
+		*shader = shader_compile(GL_VERTEX_SHADER, source, "vertex");
 		if (debug_settings.dump_shaders)
 		{
 			char path[512];
@@ -2817,7 +2846,7 @@ static GLuint fragment_shader_get(const struct nv2a_pixel_shader_key *key)
 	entry->hash = hash;
 	entry->key = *key;
 	source = nv2a_pixel_shader_to_glsl(key);
-	entry->shader = xgpu_compile_shader(GL_FRAGMENT_SHADER, source, "pixel");
+	entry->shader = shader_compile(GL_FRAGMENT_SHADER, source, "pixel");
 	if (debug_settings.dump_shaders)
 	{
 		char path[512];
@@ -2837,38 +2866,11 @@ static GLuint fragment_shader_get(const struct nv2a_pixel_shader_key *key)
 	return entry->shader;
 }
 
-static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_shader)
+/* a linked program's uniforms: where they are, and its samplers' units */
+static void program_prepare(struct program_entry *entry)
 {
-	static struct program_entry *last;
-	unsigned long hash = (vertex_shader * 2654435761UL) ^ fragment_shader;
-	struct program_entry **bucket = &program_buckets[hash % PROGRAM_BUCKETS];
-	struct program_entry *entry;
 	int stage;
 
-	if (last && last->vertex_shader == vertex_shader && last->fragment_shader == fragment_shader)
-		return last;
-	for (entry = *bucket; entry; entry = entry->next)
-	{
-		if (entry->vertex_shader == vertex_shader && entry->fragment_shader == fragment_shader)
-		{
-			if (!entry->program)
-				return NULL;
-			last = entry;
-			return entry;
-		}
-	}
-	entry = calloc(1, sizeof(*entry));
-	entry->vertex_shader = vertex_shader;
-	entry->fragment_shader = fragment_shader;
-	memset(&entry->uniforms, 0xff, sizeof(entry->uniforms));
-	entry->next = *bucket;
-	*bucket = entry;
-	if (!vertex_shader || !fragment_shader)
-		return NULL;
-
-	entry->program = xgpu_link_program(vertex_shader, fragment_shader, "shader");
-	if (!entry->program)
-		return NULL;
 	state_program(entry->program);
 	entry->constants = glGetUniformLocation(entry->program, "c");
 	entry->constant_count = XGPU_VERTEX_CONSTANT_COUNT;
@@ -2923,6 +2925,127 @@ static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_s
 		snprintf(name, sizeof(name), "tex%d", stage);
 		glUniform1i(glGetUniformLocation(entry->program, name), stage);
 	}
+}
+
+#ifdef HALO_WEB
+#ifndef GL_COMPLETION_STATUS_KHR
+#define GL_COMPLETION_STATUS_KHR 0x91B1
+#endif
+
+/* port: WebGL asks the GPU process for a program's link status and waits
+for its answer, which comes once ANGLE has compiled and linked the program:
+tens of milliseconds for a new one on Direct3D, for which the game's thread
+stood still, a hitch each time an effect, a weapon or a particle first came
+on screen. With KHR_parallel_shader_compile the link goes on beside the
+draws: a program is asked whether it has finished at most once a frame (the
+first such question of a frame waits for the GPU process to catch up, the
+others no longer), and its draws are skipped until then, a frame or a few. */
+#define LINK_CHECKS_MAXIMUM 60
+
+static BOOL program_link_finish(struct program_entry *entry)
+{
+	GLint done = 0, status = 0;
+
+	if (entry->link_checked_frame == device.frame)
+		return FALSE;
+	entry->link_checked_frame = device.frame;
+	/* (after so many frames, waited for as before: a browser that offers the
+	extension but never says a link has finished would never draw with it) */
+	if (++entry->link_checks < LINK_CHECKS_MAXIMUM)
+	{
+		glGetProgramiv(entry->program, GL_COMPLETION_STATUS_KHR, &done);
+		if (!done)
+			return FALSE;
+	}
+	entry->link_pending = FALSE;
+	glGetProgramiv(entry->program, GL_LINK_STATUS, &status);
+	if (!status)
+	{
+		char log[4096];
+		GLuint shaders[2];
+		int index;
+
+		glGetProgramInfoLog(entry->program, sizeof(log), NULL, log);
+		platform_log("cannot link the shader program: %s", log);
+		/* (the shaders' own errors, which nothing asked for when they were
+		compiled: shader_compile) */
+		shaders[0] = entry->vertex_shader;
+		shaders[1] = entry->fragment_shader;
+		for (index = 0; index < 2; index++)
+		{
+			glGetShaderiv(shaders[index], GL_COMPILE_STATUS, &status);
+			if (!status)
+			{
+				glGetShaderInfoLog(shaders[index], sizeof(log), NULL, log);
+				platform_log("cannot compile the %s shader:\n%s", index ? "pixel" : "vertex", log);
+			}
+		}
+		glDeleteProgram(entry->program);
+		entry->program = 0;
+		return FALSE;
+	}
+	program_prepare(entry);
+	return TRUE;
+}
+#endif
+
+/* the program of two shaders, or NULL: with *pending, as it is still being
+linked (parallel_shader_compile), to draw with in a frame or a few;
+otherwise as it cannot be */
+static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_shader, BOOL *pending)
+{
+	static struct program_entry *last;
+	unsigned long hash = (vertex_shader * 2654435761UL) ^ fragment_shader;
+	struct program_entry **bucket = &program_buckets[hash % PROGRAM_BUCKETS];
+	struct program_entry *entry;
+
+	*pending = FALSE;
+	if (last && last->vertex_shader == vertex_shader && last->fragment_shader == fragment_shader)
+		return last;
+	for (entry = *bucket; entry; entry = entry->next)
+	{
+		if (entry->vertex_shader == vertex_shader && entry->fragment_shader == fragment_shader)
+		{
+#ifdef HALO_WEB
+			if (entry->link_pending && !program_link_finish(entry))
+			{
+				*pending = entry->link_pending;
+				return NULL;
+			}
+#endif
+			if (!entry->program)
+				return NULL;
+			last = entry;
+			return entry;
+		}
+	}
+	entry = calloc(1, sizeof(*entry));
+	entry->vertex_shader = vertex_shader;
+	entry->fragment_shader = fragment_shader;
+	memset(&entry->uniforms, 0xff, sizeof(entry->uniforms));
+	entry->next = *bucket;
+	*bucket = entry;
+	if (!vertex_shader || !fragment_shader)
+		return NULL;
+
+#ifdef HALO_WEB
+	if (xgpu_capabilities.parallel_shader_compile)
+	{
+		entry->program = glCreateProgram();
+		glAttachShader(entry->program, vertex_shader);
+		glAttachShader(entry->program, fragment_shader);
+		glLinkProgram(entry->program);
+		entry->link_pending = TRUE;
+		/* (first asked next frame) */
+		entry->link_checked_frame = device.frame;
+		*pending = TRUE;
+		return NULL;
+	}
+#endif
+	entry->program = xgpu_link_program(vertex_shader, fragment_shader, "shader");
+	if (!entry->program)
+		return NULL;
+	program_prepare(entry);
 	last = entry;
 	return entry;
 }
@@ -3758,6 +3881,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	struct program_entry *entry;
 	struct draw_uniforms uniforms;
 	BOOL has_depth = FALSE;
+	BOOL pending;
 	int stage;
 
 	if (!device.gl_ready || !program || !device.vertex_shader || !program->instructions)
@@ -3822,7 +3946,12 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	if (program->lighting.lights && !program->lighting_failed && per_pixel_lighting())
 	{
 		key.per_pixel_lighting = (unsigned char)program->lighting.lights;
-		entry = program_get(vertex_shader_get(program, immediate, TRUE), fragment_shader_get(&key));
+		entry = program_get(vertex_shader_get(program, immediate, TRUE), fragment_shader_get(&key), &pending);
+		if (!entry && pending)
+		{
+			stats.skipped_link++;
+			return NULL;
+		}
 		if (!entry)
 		{
 			/* drawn as the vertex shader lights it instead (not at all,
@@ -3834,7 +3963,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 		}
 	}
 	if (!entry)
-		entry = program_get(vertex_shader_get(program, immediate, FALSE), fragment_shader_get(&key));
+		entry = program_get(vertex_shader_get(program, immediate, FALSE), fragment_shader_get(&key), &pending);
 	if (!entry)
 	{
 		stats.skipped_link++;
