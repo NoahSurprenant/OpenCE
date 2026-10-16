@@ -9,6 +9,13 @@ under it) and how loud they are: audio.effects_volume times skate_volume
 (config.toml's audio.skate_volume, or the console's for the session), all
 under audio.volume.
 
+In a network game each machine's engine makes its own skater's sounds alone;
+skate_network.c sends them to the others (their one-shots and their loops'
+state, port/skate/README.md "Multiplayer"), and plays other machines'
+skaters' here, at their boards (halo-skate's sound_remote.rs), heard from the
+same camera. So the camera is told of every tick, skating or not. A
+dedicated server plays none.
+
 Halo's own footsteps never play on the board: they come from biped_update
 (bipeds.c: biped_try_to_make_footsteps, the landings' and jumps' material
 effects, and unit_update_animation, which plays the animations' sound
@@ -20,6 +27,7 @@ frames), which a skating biped skips. */
 #include "main/console.h"
 #include "physics/collisions.h"
 
+#include "skate.h"
 #include "skate_sound.h"
 
 #include <math.h>
@@ -31,6 +39,7 @@ frames), which a skating biped skips. */
 
 /* config.toml (port_config.c), and how often it changed */
 double config_real(const char *name);
+int config_boolean(const char *name);
 unsigned long config_changes(void);
 void platform_log(const char *format, ...);
 
@@ -119,24 +128,41 @@ void skate_sound_initialize(char const *assets)
 	halo_skate_sound_load(assets);
 }
 
+/* a dedicated server (server.dedicated) plays no sound */
+static boolean skate_sound_dedicated(void)
+{
+	static int dedicated = -1;
+
+	if (dedicated < 0)
+		dedicated = config_boolean("server.dedicated") ? 1 : 0;
+	return dedicated != 0;
+}
+
 void skate_sound_update(boolean skating, long unit_index, float const *position)
 {
 	struct observer_result const *camera;
 	float camera_position[3], forward[3], up[3];
 
-	if (!skating || !position)
-	{
-		if (skate_sound.playing)
-			halo_skate_sound_stop();
-		skate_sound.playing = FALSE;
+	if (skate_sound_dedicated())
 		return;
-	}
-	skate_sound.playing = TRUE;
 	if (skate_sound.config_read_at != config_changes())
 	{
 		skate_sound.config_read_at = config_changes();
 		skate_sound_send_volume();
 	}
+	if (!skating || !position)
+	{
+		if (skate_sound.playing)
+			halo_skate_sound_stop();
+		skate_sound.playing = FALSE;
+	}
+	else
+	{
+		skate_sound.playing = TRUE;
+		skate_sound_surface(unit_index, position);
+	}
+	/* (every skater's sounds are heard from the camera: this machine's, and
+	other machines' skaters' while this one is on foot) */
 	camera = observer_get_camera(0);
 	if (!camera)
 		return;
@@ -149,7 +175,80 @@ void skate_sound_update(boolean skating, long unit_index, float const *position)
 	up[0] = camera->up.i;
 	up[1] = camera->up.j;
 	up[2] = camera->up.k;
-	halo_skate_sound_listener(camera_position, forward, up, skate_sound_surface(unit_index, position));
+	halo_skate_sound_listener(camera_position, forward, up, skate_sound.surface);
+}
+
+short skate_sound_take_local(struct skate_sound_event *events, short capacity, struct skate_sound_loops *loops)
+{
+	struct halo_skate_sound_event taken[2 * SKATE_SOUND_EVENTS];
+	struct halo_skate_sound_loops state;
+	short count;
+	short index;
+
+	if (!events || capacity <= 0)
+	{
+		halo_skate_sound_take(NULL, 0, NULL);
+		return 0;
+	}
+	if (capacity > (short)NUMBEROF(taken))
+		capacity = (short)NUMBEROF(taken);
+	memset(&state, 0, sizeof(state));
+	count = (short)halo_skate_sound_take(taken, capacity, &state);
+	if (loops)
+	{
+		loops->wheels = (short)state.wheels;
+		loops->grind = (short)state.grind;
+		loops->powerslide = state.powerslide != 0;
+		loops->surface = (short)skate_sound.surface;
+		loops->speed = state.speed;
+	}
+	for (index = 0; index < count; index++)
+	{
+		events[index].sound = (short)taken[index].sound;
+		events[index].strength = taken[index].strength;
+		events[index].speed = taken[index].speed;
+	}
+	return count;
+}
+
+void skate_sound_remote_loops(short player_index, struct skate_sound_loops const *loops, real const *position)
+{
+	struct halo_skate_sound_loops state;
+	float at[3];
+
+	if (skate_sound_dedicated())
+		return;
+	state.wheels = loops->wheels;
+	state.speed = loops->speed;
+	state.grind = loops->grind;
+	state.powerslide = loops->powerslide ? 1 : 0;
+	at[0] = position[0];
+	at[1] = position[1];
+	at[2] = position[2];
+	halo_skate_sound_remote_loops(player_index, &state, at, loops->surface);
+}
+
+boolean skate_sound_remote_event(short player_index, struct skate_sound_event const *event, short surface,
+	real const *position)
+{
+	struct halo_skate_sound_event played;
+	float at[3];
+
+	if (skate_sound_dedicated())
+		return FALSE;
+	played.sound = event->sound;
+	played.strength = event->strength;
+	played.speed = event->speed;
+	at[0] = position[0];
+	at[1] = position[1];
+	at[2] = position[2];
+	return halo_skate_sound_remote_event(player_index, &played, at, surface) != 0;
+}
+
+void skate_sound_remote_stop(short player_index)
+{
+	if (!skate_sound_dedicated())
+		halo_skate_sound_remote_stop(player_index);
 }
 
 int skate_sound_console_setting(char const *word, real value, boolean valid, boolean given)
@@ -204,6 +303,25 @@ void skate_sound_update(boolean skating, long unit_index, float const *position)
 int skate_sound_console_setting(char const *word, real value, boolean valid, boolean given)
 {
 	return -1;
+}
+
+short skate_sound_take_local(struct skate_sound_event *events, short capacity, struct skate_sound_loops *loops)
+{
+	return 0;
+}
+
+void skate_sound_remote_loops(short player_index, struct skate_sound_loops const *loops, real const *position)
+{
+}
+
+boolean skate_sound_remote_event(short player_index, struct skate_sound_event const *event, short surface,
+	real const *position)
+{
+	return FALSE;
+}
+
+void skate_sound_remote_stop(short player_index)
+{
 }
 
 #endif

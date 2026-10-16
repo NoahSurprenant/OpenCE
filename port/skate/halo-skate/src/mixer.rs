@@ -12,6 +12,12 @@
 //!
 //! Each voice is placed at the board: panned by where it is from the camera
 //! (`halo_skate_sound_listener`) and quieter with distance past 1 m.
+//!
+//! Each voice is a source's: this machine's skater (`LOCAL`), or another
+//! machine's in a network game (`sound_remote.rs`: source 1 + their player
+//! index), whose loops and one-shots come from their machine's word on them
+//! (skate_network.c) and play at their board here. Each source's loops fade
+//! out on their own when it stops being told of.
 
 use crate::sound::{Event, Loops};
 use crate::sound_set::{Bank, Clip, Sound, Surface};
@@ -23,7 +29,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// The most voices at once; a one-shot past that takes the oldest one-shot's.
-const VOICES: usize = 24;
+const VOICES: usize = 32;
+/// The sources: this machine's skater, then each network player's
+/// (`sound_remote.rs`).
+pub(crate) const LOCAL: u8 = 0;
+pub(crate) const SOURCES: usize = 1 + 128;
+/// Another machine's skater's loop placed quieter than this (far away) does
+/// not start: it would take a voice for nothing.
+const INAUDIBLE: f32 = 0.003;
 /// How long volume and pan changes take, and pitch changes, seconds.
 const GAIN_GLIDE: f32 = 0.02;
 const PITCH_GLIDE: f32 = 0.06;
@@ -48,6 +61,8 @@ struct Listener {
 struct Voice {
     clip: Arc<Clip>,
     sound: Sound,
+    /// Whose (`LOCAL`, or 1 + another machine's player index).
+    source: u8,
     looped: bool,
     /// Frames into the clip.
     position: f64,
@@ -154,11 +169,12 @@ pub(crate) struct Mixer {
     bank: Arc<Bank>,
     voices: Vec<Voice>,
     listener: Listener,
+    /// The surface under this machine's skater's board.
     surface: Surface,
     /// The skate sounds' own volume (audio.effects_volume times skate_volume).
     volume: f32,
-    /// When the loops were last told what to do.
-    updated: Option<Instant>,
+    /// When each source's loops were last told what to do.
+    updated: Vec<Option<Instant>>,
     serial: u64,
     random: u32,
 }
@@ -171,7 +187,7 @@ impl Mixer {
             listener: Listener::default(),
             surface: Surface::Concrete,
             volume: 1.0,
-            updated: None,
+            updated: vec![None; SOURCES],
             serial: 0,
             random: 0x2545_f491,
         }
@@ -210,14 +226,24 @@ impl Mixer {
         (angle.cos() * near, angle.sin() * near)
     }
 
-    /// The loops as the tick asks them to play, at `now`.
+    /// This machine's skater's loops as the tick asks them to play, at `now`.
     pub(crate) fn set_loops(&mut self, loops: &Loops, now: Instant) {
-        self.updated = Some(now);
+        self.set_loops_of(LOCAL, loops, self.surface, now);
+    }
+
+    /// A source's loops as its tick asks them to play, on `surface`, at
+    /// `now`.
+    pub(crate) fn set_loops_of(&mut self, source: u8, loops: &Loops, surface: Surface, now: Instant) {
+        let Some(updated) = self.updated.get_mut(usize::from(source)) else {
+            return;
+        };
+        *updated = Some(now);
         let (left, right) = self.place(loops.position);
         for sound in LOOPS {
             let (gain, pitch) = loop_level(sound, loops);
-            let clips: Vec<Arc<Clip>> = self.bank.lookup(sound, self.surface).to_vec();
-            let current = self.voices.iter().position(|v| v.sound == sound && v.looped && !v.fading);
+            let clips: Vec<Arc<Clip>> = self.bank.lookup(sound, surface).to_vec();
+            let current =
+                self.voices.iter().position(|v| v.source == source && v.sound == sound && v.looped && !v.fading);
             let keep = current.filter(|&i| clips.iter().any(|c| Arc::ptr_eq(c, &self.voices[i].clip)));
             if let Some(i) = current.filter(|_| keep.is_none()) {
                 // another surface's sample, or none any more: faded out
@@ -232,7 +258,7 @@ impl Mixer {
                     v.target_left = left;
                     v.target_right = right;
                 }
-                None if gain > 0.0 => {
+                None if gain > 0.0 && (source == LOCAL || gain * left.max(right) >= INAUDIBLE) => {
                     let Some(clip) = self.pick(&clips) else {
                         continue;
                     };
@@ -241,6 +267,7 @@ impl Mixer {
                     self.start(Voice {
                         clip,
                         sound,
+                        source,
                         looped: true,
                         position: start,
                         gain: 0.0,
@@ -260,10 +287,17 @@ impl Mixer {
         }
     }
 
-    /// Plays a one-shot; returns the sample's name, or None for silence.
+    /// Plays this machine's skater's one-shot; returns the sample's name, or
+    /// None for silence.
     pub(crate) fn play(&mut self, event: &Event) -> Option<String> {
+        self.play_of(LOCAL, event, self.surface)
+    }
+
+    /// Plays a source's one-shot, on `surface`; returns the sample's name, or
+    /// None for silence.
+    pub(crate) fn play_of(&mut self, source: u8, event: &Event, surface: Surface) -> Option<String> {
         let (gain, pitch) = one_shot_level(event);
-        let clips: Vec<Arc<Clip>> = self.bank.lookup(event.sound, self.surface).to_vec();
+        let clips: Vec<Arc<Clip>> = self.bank.lookup(event.sound, surface).to_vec();
         let clip = self.pick(&clips)?;
         let name = clip.name.clone();
         // a few percent higher or lower each time
@@ -272,6 +306,7 @@ impl Mixer {
         self.start(Voice {
             clip,
             sound: event.sound,
+            source,
             looped: false,
             position: 0.0,
             gain,
@@ -310,13 +345,29 @@ impl Mixer {
         self.voices.push(voice);
     }
 
-    /// Everything fades out (off the board).
+    /// This machine's skater's sounds fade out (off the board).
     pub(crate) fn stop(&mut self) {
+        self.stop_of(LOCAL);
+    }
+
+    /// A source's sounds fade out.
+    pub(crate) fn stop_of(&mut self, source: u8) {
+        for v in self.voices.iter_mut().filter(|v| v.source == source) {
+            v.fading = true;
+            v.target_gain = 0.0;
+        }
+        if let Some(updated) = self.updated.get_mut(usize::from(source)) {
+            *updated = None;
+        }
+    }
+
+    /// Everyone's sounds fade out.
+    fn stop_all(&mut self) {
         for v in &mut self.voices {
             v.fading = true;
             v.target_gain = 0.0;
         }
-        self.updated = None;
+        self.updated.fill(None);
     }
 
     /// Adds the voices to `output` (interleaved stereo, `rate` frames a
@@ -325,8 +376,12 @@ impl Mixer {
         if self.voices.is_empty() || rate == 0 {
             return;
         }
-        if self.updated.is_none_or(|at| now.duration_since(at) > SILENCE_AFTER) {
-            for v in self.voices.iter_mut().filter(|v| v.looped) {
+        let updated = &self.updated;
+        let silent = |source: u8| {
+            updated.get(usize::from(source)).copied().flatten().is_none_or(|at| now.duration_since(at) > SILENCE_AFTER)
+        };
+        for v in self.voices.iter_mut().filter(|v| v.looped) {
+            if silent(v.source) {
                 v.target_gain = 0.0;
             }
         }
@@ -366,9 +421,9 @@ impl Mixer {
 /// The mixer the audio thread plays; None until the sound set is loaded.
 static MIXER: Mutex<Option<Mixer>> = Mutex::new(None);
 /// Each one-shot told of in the log (`skate_sound_log`).
-static LOG: AtomicBool = AtomicBool::new(true);
+pub(crate) static LOG: AtomicBool = AtomicBool::new(true);
 
-fn with_mixer<T>(f: impl FnOnce(&mut Mixer) -> T) -> Option<T> {
+pub(crate) fn with_mixer<T>(f: impl FnOnce(&mut Mixer) -> T) -> Option<T> {
     let mut guard = MIXER.lock().unwrap_or_else(|e| e.into_inner());
     guard.as_mut().map(f)
 }
@@ -376,6 +431,8 @@ fn with_mixer<T>(f: impl FnOnce(&mut Mixer) -> T) -> Option<T> {
 /// (the worker, after each engine tick) the tick's events played, each told
 /// of in the log, and the loops set.
 pub(crate) fn engine_tick(events: &[Event], loops: &Loops) {
+    // (and kept for the other machines to hear: sound_remote.rs)
+    crate::sound_remote::note_local(events, loops);
     let log = LOG.load(Ordering::Relaxed);
     let played: Vec<(Event, Option<String>)> = with_mixer(|m| {
         m.set_loops(loops, Instant::now());
@@ -441,7 +498,7 @@ pub unsafe extern "C" fn halo_skate_sound_load(assets: *const c_char) -> i32 {
     let mut guard = MIXER.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_mut() {
         Some(mixer) => {
-            mixer.stop();
+            mixer.stop_all();
             mixer.voices.clear();
             mixer.bank = bank;
         }
@@ -487,7 +544,8 @@ pub unsafe extern "C" fn halo_skate_sound_listener(position: *const f32, forward
     });
 }
 
-/// Everything fades out: the skater is off the board.
+/// This machine's skater's sounds fade out: the skater is off the board.
+/// (Other machines' skaters' go on: `sound_remote.rs`.)
 #[unsafe(no_mangle)]
 pub extern "C" fn halo_skate_sound_stop() {
     with_mixer(Mixer::stop);
@@ -635,6 +693,56 @@ mod tests {
         let (near, _) = m.place(Vec3::new(0.2, 0.0, 0.0));
         let (far, _) = m.place(Vec3::new(4.0, 0.0, 0.0));
         assert!(far < near * 0.2);
+    }
+
+    /// Another machine's skater (a source of their own) rolls beside this
+    /// machine's: each has its own loop, placed at their own board; this
+    /// machine's skater stepping off fades only theirs, and the other's fades
+    /// when its word stops coming.
+    #[test]
+    fn each_skater_has_their_own_loops() {
+        let mut m = Mixer::new(bank());
+        m.listener = Listener { position: Vec3::ZERO, right: Vec3::new(0.0, -1.0, 0.0), set: true };
+        let now = Instant::now();
+        m.set_loops(&rolling(6.0), now);
+        let remote = Loops { position: Vec3::new(0.0, -0.5, 0.0), ..rolling(6.0) };
+        m.set_loops_of(3, &remote, Surface::Concrete, now);
+        assert_eq!(m.voices_of(Sound::Roll), 2);
+        let other = m.voices.iter().find(|v| v.source == 3).unwrap();
+        assert!(other.target_right > other.target_left * 2.0, "the other skater, to the right, panned there");
+        m.stop();
+        let mut out = vec![0.0; 9600];
+        m.mix(&mut out, 48000, 1.0, now);
+        assert_eq!(m.voices.iter().filter(|v| v.source == LOCAL).count(), 0, "this machine's skater faded out");
+        assert_eq!(m.voices_of(Sound::Roll), 1, "the other's rolls on");
+        assert!(peak(&out[8000..]) > 0.01);
+        // (the other's word stops: their loop fades out on its own)
+        let mut out = vec![0.0; 48000];
+        m.mix(&mut out, 48000, 1.0, now + Duration::from_secs(1));
+        assert!(peak(&out[40000..]) < 1e-3);
+        assert_eq!(m.voices.len(), 0);
+    }
+
+    /// Another machine's skater far away starts no loop (it would be
+    /// inaudible and take a voice); near, it does. Their one-shots play as
+    /// this machine's skater's do.
+    #[test]
+    fn a_far_skater_takes_no_voice() {
+        let mut m = Mixer::new(bank());
+        m.listener = Listener { position: Vec3::ZERO, right: Vec3::new(0.0, -1.0, 0.0), set: true };
+        let now = Instant::now();
+        let far = Loops { position: Vec3::new(500.0, 0.0, 0.0), ..rolling(6.0) };
+        m.set_loops_of(5, &far, Surface::Concrete, now);
+        assert_eq!(m.voices.len(), 0);
+        m.set_loops_of(5, &Loops { position: Vec3::new(3.0, 0.0, 0.0), ..far }, Surface::Concrete, now);
+        assert_eq!(m.voices_of(Sound::Roll), 1);
+        let land = Event { sound: Sound::Land, strength: 1.0, speed: 3.0, position: Vec3::new(3.0, 0.0, 0.0) };
+        assert!(m.play_of(5, &land, Surface::Concrete).is_some());
+        assert_eq!(m.voices.iter().filter(|v| v.source == 5).count(), 2);
+        m.stop_of(5);
+        let mut out = vec![0.0; 9600];
+        m.mix(&mut out, 48000, 1.0, now);
+        assert_eq!(m.voices_of(Sound::Roll), 0);
     }
 
     #[test]

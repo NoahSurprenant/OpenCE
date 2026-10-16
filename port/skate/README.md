@@ -144,7 +144,9 @@ air the last one holds.
 
 ### How it plays
 
-`halo-skate/src/mixer.rs` plays up to 24 voices of the samples, mixed into
+`halo-skate/src/mixer.rs` plays up to 32 voices of the samples (this
+machine's skater's, and in a network game the other skaters': "Everyone's
+sounds" below), mixed into
 the game's output on the port's audio thread (`dsound_sdl.c` calls
 `halo_skate_sound_mix` after the game's voices and the voice chat, before
 its limiter). Volume, pan and pitch changes glide over 20 ms (pitch over
@@ -1046,6 +1048,50 @@ host says, and its host holds them to a runner's bounds, as before. A
 machine that joins a game in progress hears the states as soon as it has
 loaded. Co-op plays the same way. There is no host migration: when the host
 leaves, the game ends for everyone.
+
+### Everyone's sounds
+
+Every machine hears every skater's sounds (wheels rolling, pops, landings,
+grinds and slides, board impacts, bails, stepping off and on), not only its
+own skater's. Only a skater's own machine runs the engine that makes them
+(`sound.rs`), so it sends them, beside the state, every tick its skater skates
+(`skate_network.c`): a client to the host
+(`_distributed_message_skate_sound_up`, 94), and the host to each other
+machine its own skater's and the other clients' skaters', as often as it
+sends their states (`_distributed_message_skate_sound_down`, 95), both
+unreliably. Each entry is 24 bytes:
+
+| bytes | what |
+| --- | --- |
+| 1 | the player (their absolute index) |
+| 1 | the format, 1: an entry of another format is skipped |
+| 1 | the loops: wheels on the ground (3 bits), the grind (none, trucks, deck: 2 bits), a powerslide, the surface (2 bits) |
+| 1 | the board's speed, quarters of a m/s (to 63.75) |
+| 1 | the newest one-shot's sequence number (8 bits, wrapping) |
+| 1 | how many one-shots follow (at most 4) |
+| 2 | (none) |
+| 4 each | a one-shot of the last half second, oldest first: its sound (`HALO_SKATE_SOUND_...` in `include/halo_skate_sound.h`), how hard (in 255ths), its speed (quarters of a m/s), and how many ticks before the entry it came |
+
+The loops play on another machine from the latest entry (their state is the
+same whichever datagram carries it), and fade out half a second after the
+entries stop. Each one-shot goes in every entry for half a second, so a lost
+datagram, or a far skater whose entries the host sends only every few ticks,
+loses none; the sequence numbers play each once, and one that has been on its
+way more than a second is dropped rather than played late. Another machine
+plays them as that player's own voices in the mixer (`sound_remote.rs`), at
+their board where it draws it, heard from its own camera (whether it skates
+or not), panned and quieter with distance as its own skater's are; a far
+skater's loops take no voice. A machine never hears its own skater as
+another's: the host sends no machine its own players, and a client takes
+none of them. Each one-shot heard so is told of in the log as the skater's
+own machine tells of it, with the player: `halo-skate: sound (remote player
+1): land (0.62, 3.1 m/s) built-in land.wav`.
+
+A dedicated server, which has no Skate 3 mode, plays none of them: it passes
+them on as it passes the states. They are messages of their own, so a build
+without them (upstream's, an older fork's) drops them as kinds it does not
+know; the states (90, 91) and the host's verdicts (92, 93) are as they were,
+and the network version is unchanged.
 
 ### Testing multiplayer
 

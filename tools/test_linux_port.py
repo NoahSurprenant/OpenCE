@@ -587,6 +587,36 @@ def test_long_nose_chief_geometry(tmp_path):
     assert "PASS" in result.stdout
 
 
+SKATE_SOUND_LOCAL = re.compile(r"halo-skate: sound: (\w+) \(([\d.]+), ([\d.]+) m/s\) (.*)")
+SKATE_SOUND_REMOTE = re.compile(r"halo-skate: sound \(remote player (\d+)\): (\w+) \(([\d.]+), ([\d.]+) m/s\) (.*)")
+
+
+def _assert_remote_skate_sounds(logs, hears):
+    """each machine in hears (name: the machine whose skater it hears) played
+    that machine's skater's one-shots as its own skater's machine told of
+    them (Skate 3 mode's sounds in a network game: skate_network.c,
+    sound_remote.rs): told of in its log as another player's, that machine's
+    player and never its own, each with a sample, nearly all of them (a tenth
+    of the datagrams lost loses none: each one-shot goes for half a second; a
+    few are missed while the skater is dead here, or as the game ends), and
+    none twice"""
+    own = {name: set(re.findall(r"skate network: player (\d+) skates here", log)) for name, log in logs.items()}
+    for name, other in hears.items():
+        made = [m[0] for m in SKATE_SOUND_LOCAL.findall(logs[other])]
+        heard = SKATE_SOUND_REMOTE.findall(logs[name])
+        players = {h[0] for h in heard}
+        print(f"the {name} machine heard {len(heard)} one-shots of player(s) {sorted(players)}, of the {other} "
+              f"machine's {len(made)} (its players {sorted(own[other])}): "
+              f"{sorted(set(h[1] for h in heard))}, e.g. {heard[:3]}")
+        assert heard, f"the {name} machine heard none of the {other} machine's skater's sounds"
+        assert players <= own[other], f"the {name} machine heard players {players}, not the {other}'s {own[other]}"
+        assert not players & own[name], f"the {name} machine heard its own skater as another's: {players}"
+        assert all(h[4] and not h[4].startswith("silent") for h in heard), f"a one-shot had no sample: {heard}"
+        assert {h[1] for h in heard} <= set(made), f"sounds heard that were never made: {heard}, {set(made)}"
+        assert len(heard) >= 0.75 * len(made), f"the {name} machine heard {len(heard)} of {len(made)} one-shots"
+        assert len(heard) <= len(made), f"the {name} machine heard {len(heard)} one-shots of {len(made)} made"
+
+
 def test_skate_multiplayer(tmp_path):
     """Skate 3 mode in a network game, two real games on this machine: a host
     and a client on Blood Gulch, the client getting on a board and riding a
@@ -668,6 +698,11 @@ def test_skate_multiplayer(tmp_path):
     assert len(posed) >= 0.9 * len(remote), f"posed with the board {len(posed)} of {len(remote)} seconds"
     taken, refused = int(remote[-1][3]), int(remote[-1][4])
     assert refused <= max(3, taken // 50), f"the host refused {refused} of the skater's places, took {taken}"
+    # each machine hears the other's skater (skate_network.c's sounds,
+    # messages 94 and 95; halo-skate's sound_remote.rs): the host the
+    # client's from the start, the client the host's once it skates (the
+    # duel), each one-shot of theirs once, never its own skater as another's
+    _assert_remote_skate_sounds({"host": host, "join": join}, {"host": "join", "join": "host"})
     # the watcher steps into the skater's way every five seconds
     # (debug.network_test_skate_block): on the client it is another machine's
     # biped, an obstacle (skate.c), which the skater must hit - bump or bail -
@@ -1115,6 +1150,9 @@ def test_dedicated_server_skaters(tmp_path):
         posed = [r for r in lines if r[1] == "posed" and r[2] == "the board drawn"]
         assert len(lines) >= least, f"the {name} client saw the other skater {len(lines)} s:\n{logs[name][-4000:]}"
         assert len(posed) >= 0.9 * len(lines), f"the {name} client posed them with the board {len(posed)} of {len(lines)} s"
+    # and hears the other skate: the server, which plays none, passes each
+    # skater's sounds on (skate_network.c, messages 94 and 95)
+    _assert_remote_skate_sounds({"first": first, "second": second}, {"first": "second", "second": "first"})
     # the server steps the second client's player into the first's way: the
     # first's skater hits them, tells the server, and the server decides
     blocks = re.findall(r"the watcher steps into the skater's way at", host)
