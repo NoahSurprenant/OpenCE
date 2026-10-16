@@ -1814,7 +1814,11 @@ boolean network_game_client_remove_player(
 				}
 			}
 
-			if (network_player_index == MAXIMUM_NUMBER_OF_PLAYERS)
+			/* port: only when the player who quit was this machine's: a machine
+			with no player of its own (a dedicated server's, network_test.c)
+			stays in the game when another machine's player quits */
+			if (network_player_index == MAXIMUM_NUMBER_OF_PLAYERS &&
+				player->machine_index == client->machine_index)
 			{
 				network_game_client_all_local_players_have_quit();
 				network_event("no local players remain in the game, exiting the game now");
