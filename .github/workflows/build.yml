@@ -514,13 +514,17 @@ jobs:
 
       # a skip fails the job too: on this runner it would mean the data or
       # the game did not reach the test. The test stops both games itself;
-      # the last step makes sure.
+      # the last step makes sure. Each game runs with tools/stall_backtrace.c
+      # preloaded (HALO_TEST_STALL_BACKTRACE): one the test has to stop (it
+      # hung) prints each thread's backtrace in the test's output first
       - name: Test
         env:
           HALO_TEST_GAME: ${{ runner.temp }}/halo-skate
           HALO_TEST_SERVER: ${{ runner.temp }}/halo-server
+          HALO_TEST_STALL_BACKTRACE: ${{ runner.temp }}/stall_backtrace.so
         run: |
           set -o pipefail
+          clang -m32 -O1 -g -shared -fPIC -o "$HALO_TEST_STALL_BACKTRACE" tools/stall_backtrace.c
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
             tools/test_linux_port.py -k "test_skate_multiplayer or test_skate_hitbox or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log"
           if ! grep -q '6 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
@@ -545,7 +549,8 @@ jobs:
         if: always()
         run: |
           pkill -KILL -f "$RUNNER_TEMP/halo-" || true
-          rm -rf "$RUNNER_TEMP/skate-mp" "$RUNNER_TEMP/skate-mp.log" "$RUNNER_TEMP/halo-skate" "$RUNNER_TEMP/halo-server"
+          rm -rf "$RUNNER_TEMP/skate-mp" "$RUNNER_TEMP/skate-mp.log" "$RUNNER_TEMP/halo-skate" "$RUNNER_TEMP/halo-server" \
+            "$RUNNER_TEMP/stall_backtrace.so"
 
   web-dedicated:
     # A browser joining the dedicated server by its invite

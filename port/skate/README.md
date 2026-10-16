@@ -186,7 +186,8 @@ takes of one sound, one picked at random each time. So `roll.wav`,
 Each sound and surface takes the surface's own samples (`grind_metal`), else
 the sound's (`grind`), else those of the sound it falls back on: `slide` on
 `grind`, `slide_start` and `slide_end` on `grind_start` and `grind_end`,
-`grind_start` on `land`, `step_on` and `step_off` on `board_impact`. A
+`grind_start` on `land`, `grind_end`, `step_on` and `step_off` on
+`board_impact` (so `slide_end` too, by `grind_end`). A
 sound with none is silent.
 
 The game looks for a set at startup, each sound in the first of these that
@@ -225,8 +226,9 @@ to it (mono, 44.1 kHz, trimmed, normalised; the loops levelled and made to wrap)
 | `roll_rough.wav` (loop) | synthesized: a low rumble with crackle, for dirt, sand, snow, grass, water | this project's (GPL-3.0) |
 
 The set has no `grind_end`, `slide_end`, `step_off` or `step_on` of its own:
-the last two fall back on `board_impact`, and a grind's end is silent (a
-pop off it has its own sound). Nobody has listened to these in a game yet:
+they fall back on `board_impact`, a grind's end (the trucks coming off the
+rail) more quietly than the board's own hits (a pop off it, and the wheels
+coming down after it, have their own sounds). Nobody has listened to these in a game yet:
 they were picked and cut by their loudness and spectra.
 
 
@@ -315,8 +317,8 @@ points, envelope, spectrum and tonality.
 
 (the number of variants in brackets). The rest stay as they are: `slide`
 keeps the built-in sample (no loop of `GRINDS.abk` could be told from a
-grind), `grind_start` and `slide_start` fall back on `land`, `grind_end` and
-`slide_end` stay silent, `step_on` falls back on `board_impact`, and the
+grind), `grind_start` and `slide_start` fall back on `land`, `grind_end`,
+`slide_end` and `step_on` on `board_impact`, and the
 other surfaces of `grind` on `grind`. Nobody has listened to the mapped ones
 in a game yet.
 
@@ -1118,7 +1120,9 @@ units away`), and the engine each hit with what followed (above,
 "Obstacles").
 `debug.network_test_skate_duel` (`HALO_NETWORK_TEST_SKATE_DUEL`) puts this
 machine's player on a board that many seconds into the game, standing on it
-(Y stepping back on after a fall); with the block on a host, the five-second
+(Y stepping back on after a fall), after three ollies where it stands once
+first on (sounds of its own for the other machine to hear: a skater only
+stood in the way may make none); with the block on a host, the five-second
 step into the skater's way is then on the board (`skate_put`: on the board
 again there, facing them), skater into skater. On a dedicated server, which has no
 player of its own, the block steps another machine's player on foot (the last
@@ -1240,6 +1244,22 @@ to be the one that hangs):
 HALO_TEST_GAME=$PWD/build/linux/halo HALO_SKATE_TEST_ASSETS=... HALO_SKATE_TEST_HALO_MAPS=... \
 SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy tools/skate_mp_loop.sh 0 10 /tmp/skate-mp
 ```
+
+The tests do the same themselves with `HALO_TEST_STALL_BACKTRACE` naming
+`tools/stall_backtrace.c` built (`-m32`), as the CI job sets it: a game they
+have to stop (it did not exit after its seconds, or the test failed with it
+running) prints each thread's backtrace, through addr2line, in the test's
+output, and the test says which game it was and where its log stopped. A
+game halted by a fatal error, on its error screen that a game without a
+window shows nobody, also says so in its log (`a fatal error (...); its
+screen is shown`). So a host once seemed to hang right after the watcher
+stepped in: the skater rode in under it, the watcher looked nearly straight
+down at them, and `player_control.c` halted on a facing steeper than 85.5
+degrees (the watcher looks 85 at most now). The whole job's set runs twice
+side by side on one machine with `HALO_TEST_SKATE_NET`,
+`HALO_TEST_DEDICATED_NET` (the dedicated server tests' network, `127.0.4`
+for `127.0.4.212` and on) and `HALO_TEST_TUNNEL_PORT` (another port for
+`test_dedicated_server_without_maps`) set for the second.
 
 `tools/harness/tests/test_skate_state.py` checks the state itself, without
 any data, on every build: poses of a random skeleton sent and rebuilt within

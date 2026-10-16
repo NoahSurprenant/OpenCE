@@ -1274,14 +1274,21 @@ static boolean skate_test_should_get_on(long *tried, long tick)
 
 /* debug.network_test_skate_duel:that many seconds into a game this
 machine's player gets on a board and stands on it, Y stepping back on after
-a fall; with debug.network_test_skate_block on a host it is put on the board
-in another machine's skater's way every five seconds, facing them
+a fall; once first on, it ollies where it stands SKATE_TEST_DUEL_OLLIES
+times, one-shots of its own for the other machines to hear (skate_network.c's
+sounds: a skater only stood in the way may make none, unless it bails). With
+debug.network_test_skate_block on a host it is put on the board in another
+machine's skater's way every five seconds, facing them
 (skate_update_before_objects), for them to ride into, skater into skater.
 TRUE while it has the pad */
+#define SKATE_TEST_DUEL_OLLIES 3
+#define SKATE_TEST_DUEL_OLLIE_TICKS 40
+
 static boolean skate_test_duel_pad(struct halo_skate_pad *pad, boolean *toggle)
 {
 	static real start = -1.f;
 	static long tried = NONE;
+	static long on_tick = NONE;
 	long tick;
 
 	if (start < 0.f)
@@ -1297,9 +1304,28 @@ static boolean skate_test_duel_pad(struct halo_skate_pad *pad, boolean *toggle)
 	}
 	if (tick >= 0 && skate_globals.skating)
 	{
+		long since;
+
 		memset(pad, 0, sizeof(*pad));
-		if (skate_globals.frame.off_board && tick % 30 < 4)
-			pad->buttons = 0x8000;
+		if (skate_globals.frame.off_board)
+		{
+			if (tick % 30 < 4)
+				pad->buttons = 0x8000;
+			return TRUE;
+		}
+		/* (the right stick pulled down and flicked up, as the pad's ollie) */
+		if (on_tick == NONE || on_tick > tick)
+			on_tick = tick;
+		since = tick - on_tick;
+		if (since < SKATE_TEST_DUEL_OLLIES * SKATE_TEST_DUEL_OLLIE_TICKS)
+		{
+			long cycle = since % SKATE_TEST_DUEL_OLLIE_TICKS;
+
+			if (cycle >= 10 && cycle < 18)
+				pad->right[1] = -32767;
+			else if (cycle >= 18 && cycle < 20)
+				pad->right[1] = 32767;
+		}
 	}
 	return TRUE;
 }

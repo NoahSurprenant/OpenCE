@@ -591,6 +591,76 @@ SKATE_SOUND_LOCAL = re.compile(r"halo-skate: sound: (\w+) \(([\d.]+), ([\d.]+) m
 SKATE_SOUND_REMOTE = re.compile(r"halo-skate: sound \(remote player (\d+)\): (\w+) \(([\d.]+), ([\d.]+) m/s\) (.*)")
 
 
+def _test_address(last):
+    """a loopback address of the dedicated server tests, 127.0.0.<last>, or
+    of HALO_TEST_DEDICATED_NET's network ("127.0.5" for 127.0.5.<last>), so
+    that a second run of them can go beside the first on one machine"""
+    return f"{os.environ.get('HALO_TEST_DEDICATED_NET', '127.0.0')}.{last}"
+
+
+def _game_env(env):
+    """a game's environment, with tools/stall_backtrace.c preloaded when
+    HALO_TEST_STALL_BACKTRACE names it built (-m32, as the game is): a game
+    that hangs then tells where (_stall_backtraces)"""
+    preload = os.environ.get("HALO_TEST_STALL_BACKTRACE")
+    return dict(env, LD_PRELOAD=preload) if preload and Path(preload).is_file() else env
+
+
+def _stall_backtraces(name, process, executable, log_path):
+    """every thread of a game that is still running where it should not be
+    (it hung, or the test fails with it) writes its backtrace to its log
+    (tools/stall_backtrace.c, preloaded by _game_env; nothing without it),
+    printed for the test's output, through addr2line where it has one"""
+    if "LD_PRELOAD" not in _game_env({}) or process.poll() is not None or os.uname().machine != "x86_64":
+        return
+    import ctypes
+    import signal
+    syscall = ctypes.CDLL(None).syscall
+    try:
+        threads = sorted(int(tid) for tid in os.listdir(f"/proc/{process.pid}/task"))
+    except OSError:
+        return
+    states = {}
+    for tid in threads:
+        try:
+            states[tid] = Path(f"/proc/{process.pid}/task/{tid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except OSError:
+            pass
+        # (tgkill, system call 234 on x86-64)
+        syscall(234, process.pid, tid, signal.SIGUSR2)
+        time.sleep(0.2)
+    time.sleep(1)
+    lines = [line.split(": ", 1)[1] for line in Path(log_path).read_text(errors="replace").splitlines()
+             if line.startswith("stall-backtrace: ")]
+    addresses = [line for line in lines if line.startswith("0x")]
+    names = {}
+    if addresses and shutil.which("addr2line"):
+        found = subprocess.run(["addr2line", "-f", "-C", "-p", "-e", executable, *addresses], capture_output=True,
+                               text=True).stdout.splitlines()
+        names = dict(zip(addresses, found))
+    print(f"== the {name} game (pid {process.pid}), still running: its threads' states {states}, backtraces:")
+    for line in lines:
+        print(f"   {line} {names.get(line, '')}" if line.startswith("0x") else f"  {line}")
+
+
+def _assert_games_ended(killed, logs, seconds, folder):
+    """that no game of a test had to be stopped at its deadline: each exits
+    on its own after its seconds (debug.exit_after). One that did not hung
+    (a fatal error leaves a game on its error screen, which a game without a
+    window shows nobody: its log says so) or was too slow to keep up: said
+    with the last tick its log has, and the end of its debug.txt (folder /
+    the game's name / data or saves)"""
+    for name in killed:
+        ticks = re.findall(r"network test: tick (\d+)", logs[name])
+        last = f"its log stops at tick {ticks[-1]} ({int(ticks[-1]) // 30} s into the game)" if ticks else \
+            "its log has no tick of a game"
+        debug = [path for path in (folder / name / "data" / "debug.txt", folder / name / "saves" / "debug.txt")
+                 if path.is_file()]
+        raise AssertionError(f"the {name} game did not exit after its {seconds} s and was stopped (it hung, or "
+                             f"could not keep up); {last}:\n{logs[name][-4000:]}\nits debug.txt:\n"
+                             f"{debug[0].read_text(errors='replace')[-2000:] if debug else ''}")
+
+
 def _assert_remote_skate_sounds(logs, hears):
     """each machine in hears (name: the machine whose skater it hears) played
     that machine's skater's one-shots as its own skater's machine told of
@@ -611,7 +681,11 @@ def _assert_remote_skate_sounds(logs, hears):
         print(f"the {name} machine heard {len(heard)} one-shots of player(s) {sorted(players)}, of the {other} "
               f"machine's {len(made)} (its players {sorted(own[other])}): "
               f"{sorted(set(h[1] for h in heard))}, e.g. {heard[:3]}")
-        assert heard, f"the {name} machine heard none of the {other} machine's skater's sounds"
+        # (first that there was something to hear: the other machine's player
+        # skated and their skater made one-shots)
+        assert own[other], f"the {other} machine's player never skated:\n{logs[other][-4000:]}"
+        assert made, f"the {other} machine's skater made no one-shot to hear:\n{logs[other][-4000:]}"
+        assert heard, f"the {name} machine heard none of the {other} machine's skater's {len(made)} one-shots"
         assert players <= own[other], f"the {name} machine heard players {players}, not the {other}'s {own[other]}"
         assert not players & own[name], f"the {name} machine heard its own skater as another's: {players}"
         assert all(h[4] and (not h[4].startswith("silent") or h[1] in silent_made) for h in heard), \
@@ -663,6 +737,7 @@ def test_skate_multiplayer(tmp_path):
                          "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15",
                          "HALO_NETWORK_TEST_SKATE_SCENERY": "30"}}
     games = {}
+    killed = []
     # (each exits after its seconds, debug.exit_after, and is stopped at a
     # deadline too, whatever happens, so that no game outlives the test, on a
     # CI runner least of all)
@@ -675,7 +750,8 @@ def test_skate_multiplayer(tmp_path):
             env = dict(os.environ, **common, **settings, HALO_DATA_ROOT=str(folder / "data"),
                        HALO_SAVE_ROOT=str(folder / "saves"))
             with open(folder / "run.log", "w") as log:
-                games[name] = subprocess.Popen([game], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+                games[name] = subprocess.Popen([game], cwd=folder, env=_game_env(env), stdout=log,
+                                               stderr=subprocess.STDOUT)
             if name == "host":
                 time.sleep(4)
         deadline = time.monotonic() + seconds + 30
@@ -685,12 +761,17 @@ def test_skate_multiplayer(tmp_path):
             except subprocess.TimeoutExpired:
                 pass
     finally:
-        for process in games.values():
+        for name, process in games.items():
             if process.poll() is None:
+                _stall_backtraces(name, process, game, tmp_path / name / "run.log")
                 process.kill()
+                killed.append(name)
             process.wait()
     host = (tmp_path / "host" / "run.log").read_text(errors="replace")
     join = (tmp_path / "join" / "run.log").read_text(errors="replace")
+    # (a game that did not end on its own after its seconds hung, or nearly:
+    # said first, as what the rest of the test misses follows from it)
+    _assert_games_ended(killed, {"host": host, "join": join}, seconds, tmp_path)
     remote = re.findall(r"skate network: player \d+ skates on another machine at .*?: (posed|not posed,) (\d+) nodes, "
                         r"(the board drawn|no board), .*?host took (\d+) of its places, refused (\d+)", host)
     local = [float(m) for m in re.findall(r"skates here at .*? rebuilt within ([\d.]+) world units", join)]
@@ -914,6 +995,7 @@ def test_skate_hitbox(tmp_path):
                 "join": {"HALO_NET_ADDRESS": join_address, "HALO_NET_BROADCAST": host_address,
                          "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15"}}
     games = {}
+    killed = []
     try:
         for name, settings in machines.items():
             folder = tmp_path / name
@@ -923,7 +1005,8 @@ def test_skate_hitbox(tmp_path):
             env = dict(os.environ, **common, **settings, HALO_DATA_ROOT=str(folder / "data"),
                        HALO_SAVE_ROOT=str(folder / "saves"))
             with open(folder / "run.log", "w") as log:
-                games[name] = subprocess.Popen([game], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+                games[name] = subprocess.Popen([game], cwd=folder, env=_game_env(env), stdout=log,
+                                               stderr=subprocess.STDOUT)
             if name == "host":
                 time.sleep(4)
         deadline = time.monotonic() + seconds + 30
@@ -933,10 +1016,14 @@ def test_skate_hitbox(tmp_path):
             except subprocess.TimeoutExpired:
                 pass
     finally:
-        for process in games.values():
+        for name, process in games.items():
             if process.poll() is None:
+                _stall_backtraces(name, process, game, tmp_path / name / "run.log")
                 process.kill()
+                killed.append(name)
             process.wait()
+    _assert_games_ended(killed, {name: (tmp_path / name / "run.log").read_text(errors="replace") for name in machines},
+                        seconds, tmp_path)
     checks = []
     for name in machines:
         log = (tmp_path / name / "run.log").read_text(errors="replace")
@@ -1003,7 +1090,7 @@ def test_dedicated_server(tmp_path):
     maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
     if not (game and maps and Path(game).is_file() and Path(maps, "bloodgulch.map").is_file()):
         pytest.skip("needs HALO_TEST_GAME and HALO_SKATE_TEST_HALO_MAPS")
-    host_address, join_address = "127.0.0.212", "127.0.0.213"
+    host_address, join_address = _test_address(212), _test_address(213)
     machines = {"host": {"HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "5"},
                 "join": {"HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
                          "HALO_TEST_INPUT": "bot:7"}}
@@ -1021,7 +1108,8 @@ def test_dedicated_server(tmp_path):
                        HALO_NET_BROADCAST=join_address if name == "host" else host_address,
                        HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
             with open(folder / "run.log", "w") as log:
-                games[name] = subprocess.Popen([game], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+                games[name] = subprocess.Popen([game], cwd=folder, env=_game_env(env), stdout=log,
+                                               stderr=subprocess.STDOUT)
         host_log, join_log = tmp_path / "host" / "run.log", tmp_path / "join" / "run.log"
         # the client's player in the game on both machines
         deadline = time.monotonic() + 90
@@ -1035,7 +1123,10 @@ def test_dedicated_server(tmp_path):
         host = host_log.read_text(errors="replace")
         join = join_log.read_text(errors="replace")
         assert "server: the game starts: slayer on bloodgulch" in host, host[-4000:]
-        assert "server: Player joined" in host, host[-4000:]
+        debug = tmp_path / "join" / "data" / "debug.txt"
+        assert "server: Player joined" in host, f"no player joined the server:\n{host[-4000:]}\n" \
+            f"the client's log:\n{join[-4000:]}\nits debug.txt:\n" \
+            f"{debug.read_text(errors='replace')[-3000:] if debug.is_file() else ''}"
         assert len(position.findall(join)) >= 5, f"the client's player never played:\n{join[-4000:]}"
         assert "SDL_Init failed" not in host, host[-4000:]
         # sleeping between frames: a fraction of a core (a busy runner gets a margin)
@@ -1062,8 +1153,13 @@ def test_dedicated_server(tmp_path):
             time.sleep(1)
         assert told, (tmp_path / "join" / "data" / "debug.txt").read_text(errors="replace")[-4000:]
     finally:
-        for process in games.values():
+        # (a game still running when the test fails tells where it is: the
+        # client left running at the end of a test that passed is stopped)
+        failing = sys.exc_info()[0] is not None
+        for name, process in games.items():
             if process.poll() is None:
+                if failing:
+                    _stall_backtraces(name, process, game, tmp_path / name / "run.log")
                 process.kill()
             process.wait()
 
@@ -1091,7 +1187,7 @@ def test_dedicated_server_skaters(tmp_path):
             Path(maps, "bloodgulch.map").is_file()):
         pytest.skip("needs HALO_TEST_GAME, HALO_TEST_SERVER, HALO_SKATE_TEST_ASSETS and HALO_SKATE_TEST_HALO_MAPS")
     seconds = int(os.environ.get("HALO_TEST_SKATE_SECONDS", "110"))
-    addresses = {"server": "127.0.0.214", "first": "127.0.0.215", "second": "127.0.0.216"}
+    addresses = {"server": _test_address(214), "first": _test_address(215), "second": _test_address(216)}
     clients = {"HALO_NETWORK_TEST": "join", "HALO_FULLSCREEN": "0", "HALO_NO_AUDIO": "1", "HALO_NULL_RENDERER": "1",
                "HALO_HIDDEN_WINDOW": "1", "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75",
                "HALO_NETWORK_LOSS": "10", "HALO_NET_BROADCAST": addresses["server"]}
@@ -1101,6 +1197,7 @@ def test_dedicated_server_skaters(tmp_path):
                 "first": dict(clients, HALO_NETWORK_TEST_SKATE="15"),
                 "second": dict(clients, HALO_NETWORK_TEST_SKATE="55")}
     games = {}
+    killed = []
     try:
         for name, settings in machines.items():
             folder = tmp_path / name
@@ -1115,7 +1212,7 @@ def test_dedicated_server_skaters(tmp_path):
                        HALO_NET_ADDRESS=addresses[name], HALO_DATA_ROOT=str(folder / "data"),
                        HALO_SAVE_ROOT=str(folder / "saves"))
             with open(folder / "run.log", "w") as log:
-                games[name] = subprocess.Popen([server if name == "server" else game], cwd=folder, env=env,
+                games[name] = subprocess.Popen([server if name == "server" else game], cwd=folder, env=_game_env(env),
                                                stdout=log, stderr=subprocess.STDOUT)
             time.sleep(4 if name == "server" else 2)
         deadline = time.monotonic() + seconds + 30
@@ -1125,11 +1222,14 @@ def test_dedicated_server_skaters(tmp_path):
             except subprocess.TimeoutExpired:
                 pass
     finally:
-        for process in games.values():
+        for name, process in games.items():
             if process.poll() is None:
+                _stall_backtraces(name, process, server if name == "server" else game, tmp_path / name / "run.log")
                 process.kill()
+                killed.append(name)
             process.wait()
     logs = {name: (tmp_path / name / "run.log").read_text(errors="replace") for name in machines}
+    _assert_games_ended(killed, logs, seconds, tmp_path)
     host, first, second = logs["server"], logs["first"], logs["second"]
     assert "server: the game starts: slayer on bloodgulch" in host, host[-4000:]
     # (no skate engine on the server: it never loads the mode's data or steps a skater)
@@ -1203,7 +1303,7 @@ def test_dedicated_server_rotation(tmp_path):
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
     env.update(HALO_DEDICATED="1", HALO_NETWORK_TEST_START="5", HALO_NET_ONLINE="false",
-               HALO_UPDATE_ANSWER="never", HALO_NET_ADDRESS="127.0.0.217", HALO_NET_BROADCAST="127.0.0.218",
+               HALO_UPDATE_ANSWER="never", HALO_NET_ADDRESS=_test_address(217), HALO_NET_BROADCAST=_test_address(218),
                HALO_SERVER_MAPS="bloodgulch:slayer, bloodgulch:ctf, hangemhigh:king",
                HALO_SERVER_GAME_TYPES="slayer", HALO_SERVER_TIME_LIMIT="1", HALO_SERVER_SCORE_LIMIT="0",
                HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
@@ -1212,7 +1312,7 @@ def test_dedicated_server_rotation(tmp_path):
     (folder / "data").chmod(0o555)
     log_path, debug_path = folder / "run.log", folder / "saves" / "debug.txt"
     with open(log_path, "w") as log:
-        process = subprocess.Popen([server], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+        process = subprocess.Popen([server], cwd=folder, env=_game_env(env), stdout=log, stderr=subprocess.STDOUT)
     try:
         # (two games of a minute, each with its scores and the next one's
         # start, and the third's start: about three minutes)
@@ -1248,6 +1348,8 @@ def test_dedicated_server_rotation(tmp_path):
         assert process.wait(timeout=15) == 0, log_path.read_text(errors="replace")[-4000:]
     finally:
         if process.poll() is None:
+            if sys.exc_info()[0] is not None:
+                _stall_backtraces("server", process, server, log_path)
             process.kill()
         process.wait()
         (folder / "data").chmod(0o755)
@@ -1281,8 +1383,9 @@ def test_dedicated_server_without_maps(tmp_path):
     }
     # (a port no other test uses, which the server binds as soon as its
     # network starts: internet play is on, without STUN, which a CI runner
-    # may not reach)
-    port = 27315
+    # may not reach; HALO_TEST_TUNNEL_PORT another, for a second run of the
+    # tests beside the first)
+    port = int(os.environ.get("HALO_TEST_TUNNEL_PORT", "27315"))
     for index, (name, (files, expected, maps)) in enumerate(cases.items()):
         root = tmp_path / f"data{index}"
         root.mkdir()
