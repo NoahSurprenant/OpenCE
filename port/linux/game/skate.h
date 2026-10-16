@@ -150,6 +150,38 @@ real skate_obstacle_bail_speed(void);
 struct real_matrix4x3;
 void skate_holster_weapon(long unit_index, struct real_matrix4x3 const *node_matrices, int node_count);
 
+/* ---------- a skater's hit shapes (skate_hitbox.c)
+A skater is hit where their body is drawn: their biped's nodes are the
+skate pose whenever Halo places them, not only once the objects updated. */
+
+/* skate.c: this machine's skater's pose as the engine has it now, into
+nodes (count of them), and the engine's state's name (state, if not NULL);
+FALSE when the unit is not this machine's skater or the pose is not had */
+boolean skate_local_pose(long unit_index, struct real_matrix4x3 *nodes, int count, char const **state);
+/* skate_network.c: another machine's skater's pose from their latest
+state, where their unit is now; FALSE when the unit is no such skater */
+boolean skate_network_pose(long unit_index, struct real_matrix4x3 *nodes, short count);
+/* object_compute_node_matrices: a skater's nodes made the skate pose, before
+their bounding sphere is placed from them; TRUE if they were. Their sphere
+is then grown SKATE_BOUNDING_MARGIN (world units): a pose reaches further from
+its root than Halo's animations, a hand or a foot past the model's radius by
+as much as 0.054 seen */
+boolean skate_pose_object_nodes(long object_index);
+#define SKATE_BOUNDING_MARGIN 0.1f
+/* object_postprocess_node_matrices: whether the object is a skater, whose
+nodes Halo's aim and IK leave as posed */
+boolean skate_object_posed(long object_index);
+/* game_tick, before and after objects_update: debug.skate_hitbox_test's
+check of each skater's hit shapes against their drawn body; and once they
+are posed for drawing, their nodes kept, for the next tick's check */
+enum
+{
+	_skate_hitbox_before_objects,
+	_skate_hitbox_after_objects,
+	_skate_hitbox_drawn
+};
+void skate_hitbox_test(short when);
+
 /* the camera's pitch behind a skater, radians */
 #define SKATE_CAMERA_PITCH (-0.2f)
 /* the seat state a skater reports to the director (director.c): one no seat

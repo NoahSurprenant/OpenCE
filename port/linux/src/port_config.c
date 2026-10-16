@@ -599,6 +599,16 @@ static const struct config_setting config_settings[] =
 		"state: the skater's place, speed and state, whether its pose is finite, and\n"
 		"how many times the board was drawn (the web build's skate test; a build with\n"
 		"Skate 3 mode); 0 never." },
+	{ "debug.skate_hitbox_test", _config_boolean, "false", "HALO_SKATE_HITBOX_TEST", _environment_set_is_true,
+		_platform_all,
+		"Every few ticks a line in the log for each Skate 3 skater: how far the hit\n"
+		"shapes collision tests are from the body drawn, and what test lines at and\n"
+		"just past the drawn body hit (port/skate/README.md); the network test's\n"
+		"scripted pad flips its board too." },
+	{ "debug.skate_hitbox_dump", _config_string, "\"\"", "HALO_SKATE_HITBOX_DUMP", _environment_value, _platform_all,
+		"With debug.skate_hitbox_test, a file (in the data folder) each state's first\n"
+		"check is written to, JSON lines: the nodes, the hit shapes' corners drawn\n"
+		"and as collision has them, the test lines; for pictures. Empty none." },
 	{ "debug.network_test_public", _config_boolean, "false", "HALO_NETWORK_TEST_PUBLIC", _environment_value,
 		_platform_all,
 		"The network test's host lists its game in the server browser, as Create\n"

@@ -1241,6 +1241,7 @@ again this often */
 #define SKATE_TEST_RETRY_TICKS (2 * TICKS_PER_SECOND)
 
 double config_real(const char *name);
+int config_boolean(const char *name);
 
 /* whether the network test's player, off the board where it should be on
 one, gets on now: alive, and SKATE_TEST_RETRY_TICKS since the last try (in
@@ -1419,7 +1420,13 @@ static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
 	if (cycle >= 90 && cycle < 98)
 		pad->right[1] = -32767;
 	else if (cycle >= 98 && cycle < 100)
+	{
 		pad->right[1] = 32767;
+		/* (debug.skate_hitbox_test: every other one flicked up and aside, a
+		flip trick, for the hit shapes to be seen mid-trick: skate_hitbox.c) */
+		if (config_boolean("debug.skate_hitbox_test") && (tick / SKATE_TEST_CYCLE_TICKS) % 2)
+			pad->right[0] = (tick / (2 * SKATE_TEST_CYCLE_TICKS)) % 2 ? 23170 : -23170;
+	}
 }
 
 /* ---------- obstacles
@@ -2417,6 +2424,15 @@ void skate_update_after_objects(void)
 	}
 }
 
+boolean skate_local_pose(long unit_index, real_matrix4x3 *nodes, int count, char const **state)
+{
+	if (unit_index == NONE || unit_index != skate_local_skater_unit() || count <= 0 || count > SKATE_MAXIMUM_NODES)
+		return FALSE;
+	if (state)
+		*state = skate_globals.frame.state;
+	return halo_skate_pose_nodes(&nodes[0].scale, count) == count;
+}
+
 boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration)
 {
 	struct biped_datum *biped;
@@ -2613,6 +2629,11 @@ void skate_render_board(void)
 }
 
 boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration)
+{
+	return FALSE;
+}
+
+boolean skate_local_pose(long unit_index, real_matrix4x3 *nodes, int count, char const **state)
 {
 	return FALSE;
 }

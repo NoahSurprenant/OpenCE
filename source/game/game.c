@@ -390,9 +390,14 @@ void game_tick(
 	if (!(network_game_distributed_client() && network_coop_active()))
 		profile_scope(game_tick_hs_section, hs_update();)
 	profile_scope(game_tick_recorded_animations_section, recorded_animations_update();)
+	/* port: (debug.skate_hitbox_test: a skater's hit shapes as projectiles
+	meet them in objects_update, against their drawn body: skate_hitbox.c) */
+	skate_hitbox_test(_skate_hitbox_before_objects);
 	profile_scope(game_tick_objects_section, objects_update();)
+	skate_hitbox_test(_skate_hitbox_after_objects);
 	/* port: and poses it as the skater, before the tick is kept for drawing */
 	skate_update_after_objects();
+	skate_hitbox_test(_skate_hitbox_drawn);
 	profile_scope(game_tick_players_after_section, players_update_after_game();)
 	profile_scope(game_tick_hud_section, hud_update();)
 	profile_scope(game_tick_player_effect_section, player_effect_update();)
