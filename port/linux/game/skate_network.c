@@ -107,6 +107,9 @@ are further than SKATE_NETWORK_WATCH_DISTANCE (world units; the host's own
 player only, which is the host's to place) */
 #define SKATE_NETWORK_WATCH_DISTANCE 8.0f
 #define SKATE_NETWORK_WATCH_NEAR 3.0f
+/* the most it looks down or up (radians, 85 degrees: player_control.c's
+valid facing is 85.5 at most) */
+#define SKATE_NETWORK_WATCH_STEEPEST (85.f * _pi / 180.f)
 /* debug.network_test_skate_block: every this many ticks (5 seconds) the
 watcher steps into the way of a skater going faster than
 SKATE_NETWORK_BLOCK_SPEED (world units a second, 1.5 m/s), this far ahead of
@@ -2019,7 +2022,16 @@ where the watcher was, a little above the ground to fall onto it) */
 		if (skate_network_block_spot(unit_index, FALSE, &position, NULL))
 			object_set_position(unit_index, &position, &object->object.forward, &object->object.up);
 	}
-	return found && *yaw >= 0.f && *yaw < 2.f * _pi;
+	/* (no steeper than a player may look: a skater nearly under the watcher
+	or over it, as one riding in under a watcher stood in their way, is near
+	90 degrees down or up, which player_control.c halts the game on, its
+	facing not valid: the host stopped there, its error screen drawn to
+	nobody) */
+	if (found && *pitch > SKATE_NETWORK_WATCH_STEEPEST)
+		*pitch = SKATE_NETWORK_WATCH_STEEPEST;
+	if (found && *pitch < -SKATE_NETWORK_WATCH_STEEPEST)
+		*pitch = -SKATE_NETWORK_WATCH_STEEPEST;
+	return found && *yaw >= 0.f && *yaw < 2.f * _pi && *pitch == *pitch;
 }
 
 boolean skate_network_block_spot(long unit_index, boolean on_board, real_point3d *spot, real *yaw)
