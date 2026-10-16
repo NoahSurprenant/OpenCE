@@ -553,6 +553,98 @@ jobs:
           rm -rf "$RUNNER_TEMP/skate-mp" "$RUNNER_TEMP/skate-mp.log" "$RUNNER_TEMP/halo-skate" "$RUNNER_TEMP/halo-server" \
             "$RUNNER_TEMP/stall_backtrace.so"
 
+  bots:
+    # The host's bots (port/linux/game/bots.c; port/linux/README.md, "Bots")
+    # in real games on one machine: tools/test_bots.py's dedicated server
+    # with bots and a client that sees them play (and the console's bot and
+    # kick commands in the game), a client built from before bots on a server
+    # with bots (the wire is unchanged: test_bots_with_an_older_client), and a
+    # listen host with bots. They need the Halo maps, so on the owner's
+    # runner, opence-k8s, only for this repository's own code, as
+    # skate-assets. Not needed by release or notify.
+    #
+    # The game is built as skate-multiplayer builds it (without --skate:
+    # bots need none), and the older client from ed14f98c (fork/main before
+    # bots), each through the compile cache.
+    if: >-
+      github.repository == 'NoahSurprenant/OpenCE' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: opence-k8s
+    timeout-minutes: 30
+    env:
+      HALO_SKATE_TEST_HALO_MAPS: /skate-assets/halo/maps
+      SDL_VIDEO_DRIVER: dummy
+      SDL_AUDIO_DRIVER: dummy
+      # fork/main before bots: the older client of test_bots_with_an_older_client
+      OLD_CLIENT_COMMIT: ed14f98cdaa6e2b32907899bb45df684ff1461e8
+    steps:
+      - name: Halo maps
+        run: |
+          if [ ! -f "$HALO_SKATE_TEST_HALO_MAPS/bloodgulch.map" ]; then
+            echo "::error::no Halo maps at $HALO_SKATE_TEST_HALO_MAPS (the runner's /skate-assets mount is missing or empty)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-bots-${{ github.sha }}
+          restore-keys: ccache-bots-
+
+      - name: Build
+        run: |
+          python3 configure.py --lto=off --pgo=off --compiler-launcher ccache
+          ninja linux
+          cp build/linux/halo "$RUNNER_TEMP/halo-bots"
+
+      # (its own checkout, beside this one; the compile cache's base is this
+      # one's, so its objects are cached under their own paths)
+      - name: Build the older client
+        run: |
+          git fetch --depth=1 origin "$OLD_CLIENT_COMMIT"
+          git worktree add --detach "$RUNNER_TEMP/old-client" "$OLD_CLIENT_COMMIT"
+          cd "$RUNNER_TEMP/old-client"
+          python3 configure.py --lto=off --pgo=off --compiler-launcher ccache
+          ninja linux
+          cp build/linux/halo "$RUNNER_TEMP/halo-old-client"
+
+      - name: Test
+        env:
+          HALO_TEST_GAME: ${{ runner.temp }}/halo-bots
+          HALO_TEST_OLD_CLIENT: ${{ runner.temp }}/halo-old-client
+          HALO_TEST_STALL_BACKTRACE: ${{ runner.temp }}/stall_backtrace.so
+        run: |
+          set -o pipefail
+          clang -m32 -O1 -g -shared -fPIC -o "$HALO_TEST_STALL_BACKTRACE" tools/stall_backtrace.c
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots" tools/test_bots.py 2>&1 \
+            | tee "$RUNNER_TEMP/bots.log"
+          if ! grep -q '3 passed' "$RUNNER_TEMP/bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/bots.log"; then
+            echo "::error::the three tests of tools/test_bots.py did not all run and pass"
+            exit 1
+          fi
+
+      - name: Compile cache
+        run: ccache --show-stats
+
+      - name: Game logs
+        if: failure()
+        run: |
+          for f in "$RUNNER_TEMP"/bots/*/*/run.log; do
+            [ -f "$f" ] && { echo "== $f"; tail -n 60 "$f"; }
+          done
+          true
+
+      - name: Stop the games
+        if: always()
+        run: |
+          pkill -KILL -f "$RUNNER_TEMP/halo-" || true
+          git worktree remove --force "$RUNNER_TEMP/old-client" || true
+          rm -rf "$RUNNER_TEMP/bots" "$RUNNER_TEMP/bots.log" "$RUNNER_TEMP/halo-bots" "$RUNNER_TEMP/halo-old-client" \
+            "$RUNNER_TEMP/stall_backtrace.so"
+
   web-dedicated:
     # A browser joining the dedicated server by its invite
     # (port/web/tests/dedicated.mjs; port/linux/README.md, "Dedicated

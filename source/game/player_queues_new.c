@@ -116,6 +116,8 @@ symbols in this file:
 #include "networking/network_game_globals.h"
 #include "units/units.h"
 
+#include "bots.h" /* port: port/linux/game/bots.c */
+
 /* ---------- constants */
 
 enum
@@ -411,6 +413,8 @@ void update_server_next_update(
 	if (game_connection() == _game_connection_network_server)
 	{
 		update_server_take_local_actions();
+		/* port: and the bots theirs (port/linux/game/bots.c) */
+		bots_take_actions();
 	}
 	update = update_server_get_update(update_number);
 	match_assert(
@@ -1137,6 +1141,30 @@ void update_server_handle_distributed_input(
 	}
 	update_server_distributed_inputs[absolute_index].received_time =
 		game_time_initialized() ? game_time_get() : 0;
+	queue->current_action = *action;
+}
+
+/* port: a bot's action for this tick (port/linux/game/bots.c, from
+update_server_next_update), taken as the host's own players' are. Its slot
+may have been a client machine's player's, whose input's record would
+hold the bot still once its last input grew old (the silence above): a bot
+has none */
+void update_server_take_bot_action(
+	long player_index,
+	struct player_action const *action)
+{
+	struct update_server_queue_datum *queue;
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index);
+
+	if (!update_server_globals.initialized || absolute_index < 0 || absolute_index >= MAXIMUM_NUMBER_OF_PLAYERS ||
+		!distributed_action_valid(action))
+	{
+		return;
+	}
+	queue = (struct update_server_queue_datum *)datum_try_and_get(update_server_globals.queues, player_index);
+	if (!queue)
+		return;
+	update_server_distributed_inputs[absolute_index].valid = FALSE;
 	queue->current_action = *action;
 }
 

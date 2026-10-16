@@ -56,7 +56,7 @@ tests:
 
   - it: maps the settings to the HALO_ variables
     set:
-      server: { maps: ["bloodgulch:slayer", "bloodgulch:ctf", "hangemhigh:king"], gameTypes: [slayer], timeLimit: 10, scoreLimit: 25 }
+      server: { maps: ["bloodgulch:slayer", "bloodgulch:ctf", "hangemhigh:king"], gameTypes: [slayer], timeLimit: 10, scoreLimit: 25, bots: 4 }
       network: { publicAddress: "halo.example.com:27015", serverName: Test, hostPublic: true }
     asserts:
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_DEDICATED, value: "1" } }
@@ -66,6 +66,7 @@ tests:
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_GAME_TYPES, value: slayer } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TIME_LIMIT, value: "10" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_SCORE_LIMIT, value: "25" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOTS, value: "4" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_TUNNEL_PORT, value: "27015" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_PUBLIC_ADDRESS, value: "halo.example.com:27015" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_SERVER_NAME, value: Test } }

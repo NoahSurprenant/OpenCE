@@ -73,6 +73,9 @@ server:
   timeLimit: 15
   # server.score_limit: the score to win; 0: the game type's.
   scoreLimit: 0
+  # server.bots: the bots in each game, 0 to 16: players the server plays itself, named "[BOT] ..."
+  # (port/linux/README.md, "Bots").
+  bots: 0
 
 network:
   # network.tunnel_port: the UDP port of internet play, which the Service exposes.

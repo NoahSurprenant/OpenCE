@@ -415,6 +415,8 @@ the setting for one start of the game. It has priority over the file.
 | `server.game_types` | `"slayer"` | `HALO_SERVER_GAME_TYPES` | The game types (with commas between them) of each map of `server.maps` that has no game type of its own, in turn: `slayer`, `team_slayer`, `ctf`, `king`, `oddball`, `race` and the other built-in game types. |
 | `server.time_limit` | `15` | `HALO_SERVER_TIME_LIMIT` | The longest time of a game of a dedicated server, in minutes. `0`: the limit of the game type (the built-in game types have none). |
 | `server.score_limit` | `0` | `HALO_SERVER_SCORE_LIMIT` | The score to win a game of a dedicated server. `0`: the score of the game type. |
+| `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 16. Refer to "Bots". |
+| `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds (without a window, as on SIGTERM). `0`: never. |
 | `debug.screenshot_directory`, `debug.screenshot_every` | `""`, `0` | `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | The game writes each Nth frame to this folder as a BMP file. |
@@ -1107,6 +1109,51 @@ contains game data: the maps are mounted read-only at `/data`.
 `debug.network_test`, `debug.network_test_time` and
 `debug.network_test_score` still operate. If `debug.network_test` is not
 empty, the server hosts its list instead of `server.maps`.
+
+## Bots
+
+A host can have bots: players that the host plays itself. Set `server.bots`
+(`HALO_SERVER_BOTS`) to the number of bots, from 0 to 16. The bots join the
+lobby of each game that the host makes (a dedicated server's, or a game
+that the menus host), and stay from game to game as the other players do.
+Co-op games have no bots.
+
+- A bot's name starts with `[BOT] `, for example `[BOT] Alpha`. Nothing
+  else tells the other machines that a player is a bot.
+- To every machine, a bot is a player of another machine: it is on the
+  scoreboard, in the kill messages and on the teams, and it moves as other
+  players move. A bot needs no change to what the machines send each other,
+  so builds without bots (and upstream OpenCE builds of the same network
+  version) play with them. Refer to `NETCODE.md`, "Bots".
+- Only the host runs the bots. They give their input each tick of the host,
+  as the host's own players do.
+- The bots are on machine slots of their own, from the last slot (127)
+  down, four bots to a slot. No connection uses these slots.
+- For now a bot walks about: it turns now and then, and it turns away and
+  jumps when it is stuck.
+
+The host's console has a `bot` command:
+
+| Command | Effect |
+| --- | --- |
+| `bot add [count]` | Adds bots to the lobby or to the game that is in progress (1 if no count). |
+| `bot remove <name>` | Removes a bot. The name can be the full name, the name without `[BOT] `, or the start of either. |
+| `bot remove all` | Removes all the bots. |
+| `bot list` | Lists the bots and their teams. |
+
+`kick <name>` and `ban <name>` remove a bot (a bot has no address to keep
+out), and so do Kick and Ban on the scoreboard. A vote to kick a bot is
+refused, and bots do not vote. On a dedicated server, the telnet console
+(`debug.telnet_console`) gives the console.
+
+`debug.bot_seed` sets the start of the bots' random numbers, so that the
+bots of a test do the same each run.
+
+`tools/test_bots.py` tests the bots in real games on one machine: a
+dedicated server with bots and a client, which sees them play, and the
+console's `bot`, `kick` commands in the game; a client built from before
+bots (`HALO_TEST_OLD_CLIENT`) on a server with bots; and a listen host with
+bots and a client. CI runs them in the `bots` job on `opence-k8s`.
 
 ## Map checks
 

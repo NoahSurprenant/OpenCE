@@ -525,7 +525,15 @@ static const struct config_setting config_settings[] =
 		"own limit (a built-in one's is none)." },
 	{ "server.score_limit", _config_integer, "0", "HALO_SERVER_SCORE_LIMIT", _environment_value, _platform_desktop,
 		"The score a dedicated server's games play to; 0 the game type's own." },
+	{ "server.bots", _config_integer, "0", "HALO_SERVER_BOTS", _environment_value, _platform_all,
+		"How many bots a game this machine hosts has (a dedicated server's, or\n"
+		"one the menus host): players the host plays itself, named \"[BOT] ...\",\n"
+		"which every machine sees as other players (port/linux/README.md's\n"
+		"\"Bots\"); 0 to 16. Not in co-op." },
 
+	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
+		"The bots' random numbers start from this, so that a test's bots do the\n"
+		"same each run." },
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>[:<variant>,<variant>...]\" hosts a game on that map with those\n"

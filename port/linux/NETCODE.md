@@ -321,6 +321,47 @@ the loops' state and the one-shots of the last half second, numbered, so
 that every machine hears every skater; dropped as unknown kinds by builds
 without them, with no change of version either.
 
+## Bots
+
+A host's bots (`port/linux/game/bots.c`; `README.md`, "Bots") are players
+that the host plays itself, with nothing new on the wire and no change of
+version:
+
+- A bot is an ordinary `network_player` of a bot machine: a machine slot
+  that no connection holds, taken from the last slot (127) down, with up to
+  four bots on it (controllers 0 to 3, as `players.c`'s `machine_add_player`
+  allows). The game's machine list names the slot "Bots". The host adds a
+  bot as it adds any player: in the lobby to the settings, in a game in
+  progress with `_message_server_add_player_ingame`; it removes one with the
+  settings or `_message_server_remove_player_ingame`. Every other machine
+  has the bot as another machine's player: not local, so no view or
+  controller, its unit's state from the host, its input relayed for its
+  animation, its scores and kills as anyone's.
+- The bot's input goes into the host's update for each tick
+  (`update_server_next_update` calls `bots_take_actions`, which gives
+  `update_server_take_bot_action` a `player_action` for each bot), as the
+  host's own players' input does, and the host relays it to the other
+  machines as everyone's. A bot's slot may have been a departed client's
+  player's: its record of that client's input is cleared, so that the
+  silence rule (a client's player stands still once its input stops) does
+  not hold the bot still.
+- The host's handling of its client machines passes the bot machines by:
+  a new connection never takes a bot machine's slot (which would wipe its
+  players), and the bot machines have no client machine to drop. The bots'
+  player machine is NONE for the distributed netcode
+  (`distributed_player_machine`), as the host's own players' is: the host
+  deals their damage at once and sends them nothing.
+- A bot's aim stays within what a person's can be: yaw in [0, 2 pi) and
+  pitch within 85 degrees (the game asserts 85.5 for a local player, and a
+  client predicts with the host's relayed input).
+- Kick and ban remove a bot; a vote to kick one is refused, and bots do not
+  count as voters (`network_votekick.c`).
+
+So a build without bots, or an upstream build of the same version, joins a
+host with bots and plays with them: it sees players named `[BOT] ...`.
+`tools/test_bots.py`'s `test_bots_with_an_older_client` checks this with a
+build from before bots.
+
 ## Joining a game in progress
 
 A game stays open when it starts (on the Xbox it closed, since every

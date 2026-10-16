@@ -56,6 +56,7 @@ know: its players cannot vote, and count as players who did not.
 #include "networking/network_game_globals.h"
 #include "network_distributed.h"
 #include "network_votekick.h"
+#include "bots.h"
 
 #include <stdio.h>
 
@@ -432,8 +433,12 @@ static short votekick_machines(
 		long machine_index = distributed_player_machine((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index));
 		short index;
 
-		if (player->quit_out_of_game || (machine_index != NONE && !votekick_machine_valid(machine_index)))
+		/* (nor the host's bots, which never vote: bots.c) */
+		if (player->quit_out_of_game || (machine_index != NONE && !votekick_machine_valid(machine_index)) ||
+			bots_player_is_bot(player))
+		{
 			continue;
+		}
 		for (index = 0; index < count && machine_indices[index] != machine_index; index++)
 			;
 		if (index == count && count < maximum)
@@ -634,6 +639,11 @@ static void votekick_host_request(
 	if (!player || player->quit_out_of_game)
 	{
 		votekick_refuse(machine_index, "votekick: no such player");
+		return;
+	}
+	if (player && bots_player_is_bot(player))
+	{
+		votekick_refuse(machine_index, "votekick: bots cannot be voted out (the host removes them)");
 		return;
 	}
 	if (target_machine == NONE)
@@ -1024,6 +1034,13 @@ boolean network_votekick_host_kick(
 
 	if (!votekick_host() || !distributed_player(player_index))
 		return FALSE;
+	/* (a bot is removed: bots.c) */
+	if (bots_player_is_bot(distributed_player(player_index)))
+	{
+		struct player_datum *bot = distributed_player(player_index);
+
+		return bots_remove(bot->network_player_data.machine_index, bot->network_player_data.controller_index);
+	}
 	machine_index = distributed_player_machine(player_index);
 	if (machine_index == NONE)
 	{
