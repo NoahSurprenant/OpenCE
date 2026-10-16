@@ -596,13 +596,16 @@ def _assert_remote_skate_sounds(logs, hears):
     that machine's skater's one-shots as its own skater's machine told of
     them (Skate 3 mode's sounds in a network game: skate_network.c,
     sound_remote.rs): told of in its log as another player's, that machine's
-    player and never its own, each with a sample, nearly all of them (a tenth
+    player and never its own, each with a sample (but those the data has none
+    for, silent on the skater's own machine too, as grind_end), nearly all of them (a tenth
     of the datagrams lost loses none: each one-shot goes for half a second; a
     few are missed while the skater is dead here, or as the game ends), and
     none twice"""
     own = {name: set(re.findall(r"skate network: player (\d+) skates here", log)) for name, log in logs.items()}
     for name, other in hears.items():
-        made = [m[0] for m in SKATE_SOUND_LOCAL.findall(logs[other])]
+        made_lines = SKATE_SOUND_LOCAL.findall(logs[other])
+        made = [m[0] for m in made_lines]
+        silent_made = {m[0] for m in made_lines if m[3].startswith("silent")}
         heard = SKATE_SOUND_REMOTE.findall(logs[name])
         players = {h[0] for h in heard}
         print(f"the {name} machine heard {len(heard)} one-shots of player(s) {sorted(players)}, of the {other} "
@@ -611,7 +614,8 @@ def _assert_remote_skate_sounds(logs, hears):
         assert heard, f"the {name} machine heard none of the {other} machine's skater's sounds"
         assert players <= own[other], f"the {name} machine heard players {players}, not the {other}'s {own[other]}"
         assert not players & own[name], f"the {name} machine heard its own skater as another's: {players}"
-        assert all(h[4] and not h[4].startswith("silent") for h in heard), f"a one-shot had no sample: {heard}"
+        assert all(h[4] and (not h[4].startswith("silent") or h[1] in silent_made) for h in heard), \
+            f"a one-shot had no sample here but one on its skater's machine: {heard}, silent there: {silent_made}"
         assert {h[1] for h in heard} <= set(made), f"sounds heard that were never made: {heard}, {set(made)}"
         assert len(heard) >= 0.75 * len(made), f"the {name} machine heard {len(heard)} of {len(made)} one-shots"
         assert len(heard) <= len(made), f"the {name} machine heard {len(heard)} one-shots of {len(made)} made"
