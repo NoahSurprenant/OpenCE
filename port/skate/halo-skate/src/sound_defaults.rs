@@ -26,7 +26,7 @@ mod tests {
     use crate::sound_set::{Bank, Sound, Surface, decode_wav, parse_name};
 
     /// Every built-in file has a name the set uses and decodes, and every
-    /// sound but a few has samples (directly or by its fallback).
+    /// sound has samples (directly or by its fallback).
     #[test]
     fn the_built_in_set_loads() {
         for (name, bytes) in DEFAULTS {
@@ -40,7 +40,7 @@ mod tests {
         assert!(lines.is_empty(), "{lines:?}");
         let silent: Vec<Sound> =
             Sound::ALL.into_iter().filter(|&s| bank.lookup(s, Surface::Concrete).is_empty()).collect();
-        assert_eq!(silent, [Sound::GrindEnd, Sound::SlideEnd]);
+        assert!(silent.is_empty(), "silent: {silent:?}");
         assert!(bank.lookup(Sound::Roll, Surface::Rough)[0].name.contains("roll_rough"));
     }
 }

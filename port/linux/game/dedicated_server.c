@@ -236,23 +236,27 @@ void dedicated_server_update(
 after a fatal error, and main_loop_of_death, the damaged disc screen a
 player is left on when a map cannot be read: display_error_damaged_media): the error's last lines on the
 log, and out with status 1 - rather than drawing that screen for nobody,
-forever, deaf to SIGTERM, as it did. A desktop game keeps its screen (this
-returns at once). errors is the game's recent messages (error_get), lines
-ending in "\r\n". */
+forever, deaf to SIGTERM, as it did. A desktop game keeps its screen, and
+the same lines go to its log once (this returns): one without a window
+(debug.null_renderer, a test) shows that screen to nobody. errors is the
+game's recent messages (error_get), lines ending in "\r\n". */
 void dedicated_server_fatal(
 	char const *errors)
 {
 	static boolean exiting;
+	static boolean told;
+	boolean dedicated = config_boolean("server.dedicated") != 0;
 	char const *start;
 	char const *end;
 	short lines = 0;
 
-	if (!config_boolean("server.dedicated"))
+	if (!dedicated && told)
 		return;
+	told = TRUE;
 	/* (an error on the way out: out at once) */
-	if (exiting)
+	if (dedicated && exiting)
 		platform_exit_deadline(DEDICATED_SERVER_EXIT_FATAL, 0);
-	exiting = TRUE;
+	exiting = dedicated;
 	if (!errors)
 		errors = "";
 	/* (the last three lines) */
@@ -285,6 +289,11 @@ void dedicated_server_fatal(
 			}
 		}
 		text[index] = 0;
+		if (!dedicated)
+		{
+			platform_log("a fatal error (%s); its screen is shown (debug.txt has the rest)", index ? text : "no message");
+			return;
+		}
 		platform_log("server: a fatal error (%s); exiting (debug.txt, in the save root or paths.logs, has the rest)",
 			index ? text : "no message");
 	}

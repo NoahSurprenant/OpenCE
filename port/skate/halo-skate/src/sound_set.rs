@@ -119,6 +119,9 @@ impl Sound {
             Self::SlideStart => Some(Self::GrindStart),
             Self::SlideEnd => Some(Self::GrindEnd),
             Self::GrindStart => Some(Self::Land),
+            // the trucks coming off the rail: a clack, as the board's hits
+            // (the wheels coming down after it play their own `Land`)
+            Self::GrindEnd => Some(Self::BoardImpact),
             Self::StepOn => Some(Self::BoardImpact),
             Self::StepOff => Some(Self::BoardImpact),
             _ => None,
@@ -412,6 +415,7 @@ pub(crate) mod tests {
             ("grind.wav", &tone),
             ("land.wav", &tone),
             ("land-2.wav", &tone),
+            ("board_impact.wav", &tone),
         ];
         let bank = Bank::load(&[], &defaults, &mut |_| {});
         assert_eq!(bank.lookup(Sound::Roll, Surface::Metal)[0].name, "built-in roll_metal.wav");
@@ -419,6 +423,14 @@ pub(crate) mod tests {
         // slide falls back on grind, grind_start on land (both variants)
         assert_eq!(bank.lookup(Sound::Slide, Surface::Concrete)[0].name, "built-in grind.wav");
         assert_eq!(bank.lookup(Sound::GrindStart, Surface::Concrete).len(), 2);
+        // grind_end on board_impact, and slide_end on grind_end, so on
+        // board_impact too, as step_on and step_off
+        for sound in [Sound::GrindEnd, Sound::SlideEnd, Sound::StepOn, Sound::StepOff] {
+            assert_eq!(bank.lookup(sound, Surface::Metal)[0].name, "built-in board_impact.wav", "{sound:?}");
+        }
+        // (a sound's own samples, or its first fallback's, go before the next's)
+        let own = Bank::load(&[], &[("grind_end.wav", &tone[..]), ("board_impact.wav", &tone[..])], &mut |_| {});
+        assert_eq!(own.lookup(Sound::SlideEnd, Surface::Wood)[0].name, "built-in grind_end.wav");
         // and nothing at all is silence
         assert!(bank.lookup(Sound::Bail, Surface::Concrete).is_empty());
         assert!(bank.lookup(Sound::Powerslide, Surface::Rough).is_empty());
