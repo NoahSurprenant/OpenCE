@@ -1,0 +1,12 @@
+{{- if .Values.realIp.trustedProxies }}
+# nginx's realip settings (realIp), included at the http level from /etc/nginx/opence/conf.d.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opence-web.fullname" . }}-nginx
+  labels:
+    {{- include "opence-web.labels" . | nindent 4 }}
+data:
+  real-ip.conf: |
+    {{- include "opence-web.realIpConf" . | nindent 4 }}
+{{- end }}

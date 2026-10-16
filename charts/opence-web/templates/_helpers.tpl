@@ -71,3 +71,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   readOnly: true
 {{- end }}
 {{- end }}
+
+{{/* nginx's realip settings (realIp): what the ConfigMap holds, and the pod's checksum of it. */}}
+{{- define "opence-web.realIpConf" -}}
+{{- range .Values.realIp.trustedProxies -}}
+set_real_ip_from {{ . }};
+{{ end -}}
+real_ip_header {{ .Values.realIp.header }};
+real_ip_recursive {{ ternary "on" "off" .Values.realIp.recursive }};
+{{- end }}

@@ -92,6 +92,18 @@
         "loadBalancerSourceRanges": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "realIp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trustedProxies": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^([0-9]{1,3}(\\.[0-9]{1,3}){3}|[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*)(/[0-9]{1,3})?$" }
+        },
+        "header": { "type": "string", "pattern": "^[A-Za-z0-9-]+$" },
+        "recursive": { "type": "boolean" }
+      }
+    },
     "ingress": {
       "type": "object",
       "additionalProperties": false,

@@ -1,0 +1,41 @@
+suite: configmap
+templates:
+  - templates/configmap.yaml
+tests:
+  - it: renders nothing by default (realIp off)
+    asserts:
+      - hasDocuments: { count: 0 }
+
+  - it: writes nginx's realip settings for the trusted proxies
+    set:
+      realIp.trustedProxies: [10.42.0.0/16, "fd00::/8"]
+    asserts:
+      - hasDocuments: { count: 1 }
+      - equal: { path: metadata.name, value: RELEASE-NAME-opence-web-nginx }
+      - equal:
+          path: data["real-ip.conf"]
+          value: |
+            set_real_ip_from 10.42.0.0/16;
+            set_real_ip_from fd00::/8;
+            real_ip_header X-Forwarded-For;
+            real_ip_recursive on;
+
+  - it: takes another header, not recursive
+    set:
+      realIp: { trustedProxies: [192.0.2.10], header: X-Real-IP, recursive: false }
+    asserts:
+      - matchRegex:
+          path: data["real-ip.conf"]
+          pattern: "real_ip_header X-Real-IP;\\nreal_ip_recursive off;"
+
+  - it: refuses an address that is not one
+    set:
+      realIp.trustedProxies: ["10.0.0.0/8; return 200"]
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a header name with anything but letters, digits and dashes
+    set:
+      realIp: { trustedProxies: [10.0.0.0/8], header: "X-Real-IP deny" }
+    asserts:
+      - failedTemplate: {}

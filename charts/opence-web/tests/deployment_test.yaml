@@ -157,3 +157,21 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].image
           value: ghcr.io/noahsurprenant/opence-web:latest@sha256:2222222222222222222222222222222222222222222222222222222222222222
+
+  - it: mounts no nginx settings by default
+    asserts:
+      - notExists: { path: 'spec.template.metadata.annotations' }
+
+  - it: mounts the realip settings read-only, with a checksum that rolls the pod when they change
+    set:
+      realIp.trustedProxies: [10.42.0.0/16]
+      podAnnotations: { example.com/a: b }
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: { name: nginx-conf, mountPath: /etc/nginx/opence/conf.d, readOnly: true }
+      - contains:
+          path: spec.template.spec.volumes
+          content: { name: nginx-conf, configMap: { name: RELEASE-NAME-opence-web-nginx } }
+      - equal: { path: 'spec.template.metadata.annotations["example.com/a"]', value: b }
+      - matchRegex: { path: 'spec.template.metadata.annotations["checksum/real-ip"]', pattern: "^[0-9a-f]{64}$" }
