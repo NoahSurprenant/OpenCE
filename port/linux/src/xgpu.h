@@ -27,6 +27,9 @@ struct xgpu_capabilities
 	BOOL atomic_counters;
 	/* "300 es" or "310 es" */
 	const char *shading_language;
+	/* the web's KHR_parallel_shader_compile: a program's link is not waited
+	for (d3d8_gl.c program_get) */
+	BOOL parallel_shader_compile;
 };
 
 extern struct xgpu_capabilities xgpu_capabilities;
