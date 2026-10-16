@@ -5222,7 +5222,15 @@ the mirror does not hold. An index array drawn twice the same is kept
 instead, rebased, in a buffer of its own: a draw of it compares its indices
 with a copy and draws from the buffer. Arrays that change (the structure's
 visible triangles, made each frame) are never the same twice, and are
-uploaded as before. When the buffer is full, everything kept is forgotten. */
+uploaded as before. When the buffer is full, everything kept is forgotten.
+
+The arrays kept in a frame are drawn as before that frame and written at its
+end, all at once, into a buffer of their own that is never written again:
+ANGLE on Direct3D 11 writes a glBufferSubData into a buffer's staging copy,
+which the GPU then copies for the next draw, and a further write waits for
+the GPU to have done that copy. Written as they came, into one buffer the
+frame's draws read, the dozens kept when something new comes on screen
+waited for the GPU each in turn, a hitch of 25 to 60 ms. */
 #define INDEX_CACHE_BUFFER_SIZE (8 * 1024 * 1024)
 #define INDEX_CACHE_SLOTS 8192
 #define INDEX_CACHE_PROBES 4
@@ -5235,29 +5243,136 @@ struct index_cache_entry
 	WORD *copy;
 	unsigned long capacity;
 	WORD minimum, maximum;
-	/* in the buffer (when kept is the epoch), or not yet: seen once */
+	/* in a buffer (when kept is the epoch), or not yet: seen once; with no
+	buffer yet, in this frame's batch */
+	GLuint buffer;
 	unsigned long offset;
 	unsigned long kept;
 };
 
 static struct
 {
-	GLuint buffer;
+	/* the batches' buffers, and the bytes in them and the batch */
+	GLuint *buffers;
+	unsigned long buffer_count;
+	unsigned long buffer_capacity;
 	unsigned long used;
-	/* entries kept in an earlier epoch are not in the buffer */
+	/* entries kept in an earlier epoch are in no buffer */
 	unsigned long epoch;
+	/* the arrays kept this frame, rebased, and their entries */
+	WORD *batch;
+	unsigned long batch_length;
+	unsigned long batch_capacity;
+	struct index_cache_entry **batch_entries;
+	unsigned long batch_count;
+	unsigned long batch_entries_capacity;
 	struct index_cache_entry entries[INDEX_CACHE_SLOTS];
-} index_cache = { 0, 0, 1 };
+} index_cache = { NULL, 0, 0, 0, 1 };
 
-/* the buffer offset of the rebased indices kept for the array, with their
-extent; FALSE if it is not kept (yet) */
+/* everything kept is forgotten, and its buffers deleted (a draw queued
+with one still has it) */
+static void index_cache_forget(void)
+{
+	unsigned long index;
+
+	for (index = 0; index < index_cache.buffer_count; index++)
+	{
+		if (gl_state.element_array_buffer == index_cache.buffers[index])
+			gl_state.element_array_buffer = (GLuint)-1;
+	}
+	if (index_cache.buffer_count)
+		glDeleteBuffers((GLsizei)index_cache.buffer_count, index_cache.buffers);
+	index_cache.buffer_count = 0;
+	index_cache.used = 0;
+	index_cache.batch_length = 0;
+	index_cache.batch_count = 0;
+	index_cache.epoch++;
+}
+
+/* the frame's batch, into a buffer of its own (at the frame's end) */
+static void index_cache_flush(void)
+{
+	GLuint buffer;
+	unsigned long index;
+
+	if (!index_cache.batch_count)
+		return;
+	if (index_cache.buffer_count == index_cache.buffer_capacity)
+	{
+		unsigned long capacity = index_cache.buffer_capacity ? index_cache.buffer_capacity * 2 : 64;
+		GLuint *grown = realloc(index_cache.buffers, capacity * sizeof(*grown));
+
+		if (!grown)
+		{
+			index_cache_forget();
+			return;
+		}
+		index_cache.buffers = grown;
+		index_cache.buffer_capacity = capacity;
+	}
+	glGenBuffers(1, &buffer);
+	state_element_array_buffer(buffer);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)(index_cache.batch_length * sizeof(WORD)), index_cache.batch,
+		GL_STATIC_DRAW);
+	index_cache.buffers[index_cache.buffer_count++] = buffer;
+	/* (an entry taken for another array since is no longer kept; one kept
+	again is in the batch twice, at its later offset) */
+	for (index = 0; index < index_cache.batch_count; index++)
+	{
+		struct index_cache_entry *entry = index_cache.batch_entries[index];
+
+		if (entry->kept == index_cache.epoch && !entry->buffer)
+			entry->buffer = buffer;
+	}
+	index_cache.batch_length = 0;
+	index_cache.batch_count = 0;
+}
+
+/* entry's array, rebased, into the frame's batch; FALSE without room */
+static BOOL index_cache_batch(struct index_cache_entry *entry, const WORD *indices, unsigned long count)
+{
+	/* (each array from a multiple of 8 indices: 16 bytes) */
+	unsigned long start = (index_cache.batch_length + 7) & ~7UL, index;
+
+	if (start + count > index_cache.batch_capacity)
+	{
+		unsigned long capacity = (start + count) * 2 > 65536 ? (start + count) * 2 : 65536;
+		WORD *grown = realloc(index_cache.batch, capacity * sizeof(WORD));
+
+		if (!grown)
+			return FALSE;
+		index_cache.batch = grown;
+		index_cache.batch_capacity = capacity;
+	}
+	if (index_cache.batch_count == index_cache.batch_entries_capacity)
+	{
+		unsigned long capacity = index_cache.batch_entries_capacity ? index_cache.batch_entries_capacity * 2 : 256;
+		struct index_cache_entry **grown = realloc(index_cache.batch_entries, capacity * sizeof(*grown));
+
+		if (!grown)
+			return FALSE;
+		index_cache.batch_entries = grown;
+		index_cache.batch_entries_capacity = capacity;
+	}
+	for (index = start; index < index_cache.batch_length; index++)
+		index_cache.batch[index] = 0;
+	for (index = 0; index < count; index++)
+		index_cache.batch[start + index] = (WORD)(indices[index] - entry->minimum);
+	index_cache.batch_length = start + count;
+	index_cache.batch_entries[index_cache.batch_count++] = entry;
+	entry->buffer = 0;
+	entry->offset = start * sizeof(WORD);
+	return TRUE;
+}
+
+/* the buffer and offset of the rebased indices kept for the array, with
+their extent; FALSE if it is not kept (yet), or only from the frame's end */
 static BOOL index_cache_get(const WORD *indices, unsigned long count, unsigned long *minimum, unsigned long *maximum,
-	unsigned long *offset)
+	GLuint *buffer, unsigned long *offset)
 {
 	unsigned long slot = (((unsigned long)indices >> 1) ^ (count * 2654435761UL)) % INDEX_CACHE_SLOTS;
-	unsigned long probe, size = count * sizeof(WORD), index;
+	unsigned long probe, size = count * sizeof(WORD);
 	struct index_cache_entry *entry = NULL, *oldest = NULL;
-	WORD *rebased;
 
 	for (probe = 0; probe < INDEX_CACHE_PROBES; probe++)
 	{
@@ -5275,38 +5390,24 @@ static BOOL index_cache_get(const WORD *indices, unsigned long count, unsigned l
 	{
 		if (entry->kept == index_cache.epoch)
 		{
+			/* (in the frame's batch: drawn as before until its end) */
+			if (!entry->buffer)
+				return FALSE;
 			*minimum = entry->minimum;
 			*maximum = entry->maximum;
+			*buffer = entry->buffer;
 			*offset = entry->offset;
 			return TRUE;
 		}
-		/* the second time the same: kept from now on */
+		/* the second time the same: kept from the frame's end on */
 		if (index_cache.used + ((size + 15) & ~15UL) > INDEX_CACHE_BUFFER_SIZE)
+			index_cache_forget();
+		if (index_cache_batch(entry, indices, count))
 		{
-			index_cache.epoch++;
-			index_cache.used = 0;
+			entry->kept = index_cache.epoch;
+			index_cache.used += (size + 15) & ~15UL;
 		}
-		if (!index_cache.buffer)
-		{
-			glGenBuffers(1, &index_cache.buffer);
-			state_element_array_buffer(index_cache.buffer);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_CACHE_BUFFER_SIZE, NULL, GL_STATIC_DRAW);
-		}
-		rebased = malloc(size + 2);
-		if (!rebased)
-			return FALSE;
-		for (index = 0; index < count; index++)
-			rebased[index] = (WORD)(indices[index] - entry->minimum);
-		state_element_array_buffer(index_cache.buffer);
-		host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)index_cache.used, (unsigned int)size, rebased);
-		free(rebased);
-		entry->offset = index_cache.used;
-		entry->kept = index_cache.epoch;
-		index_cache.used += (size + 15) & ~15UL;
-		*minimum = entry->minimum;
-		*maximum = entry->maximum;
-		*offset = entry->offset;
-		return TRUE;
+		return FALSE;
 	}
 	/* seen for the first time, or changed: remembered */
 	if (!entry)
@@ -5327,6 +5428,7 @@ static BOOL index_cache_get(const WORD *indices, unsigned long count, unsigned l
 	entry->address = indices;
 	entry->count = count;
 	entry->kept = 0;
+	entry->buffer = 0;
 	index_extent(indices, count, 0, FALSE, minimum, maximum);
 	entry->minimum = (WORD)*minimum;
 	entry->maximum = (WORD)*maximum;
@@ -5352,11 +5454,11 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 		mirror_range((unsigned long)index_data, vertex_count * sizeof(WORD), &index_buffer, &index_offset, &generation);
 #ifdef HALO_WEB
 	if (!mirrored && primitive_type != D3DPT_QUADLIST &&
-		index_cache_get(index_data, vertex_count, &minimum, &maximum, &index_offset))
+		index_cache_get(index_data, vertex_count, &minimum, &maximum, &index_buffer, &index_offset))
 	{
 		trace_draw("indexed", primitive_type, vertex_count, NULL);
 		setup_streams(device.base_vertex_index + minimum, maximum - minimum + 1);
-		state_element_array_buffer(index_cache.buffer);
+		state_element_array_buffer(index_buffer);
 		glDrawElements(primitive_mode(primitive_type), (GLsizei)vertex_count, GL_UNSIGNED_SHORT, (const void *)index_offset);
 		return;
 	}
@@ -6053,6 +6155,7 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		device.index_offset = 0;
 #ifdef HALO_WEB
 		web_chunks_begin_frame();
+		index_cache_flush();
 #endif
 #else
 		device.stream_offset = STREAM_BUFFER_SIZE; /* orphan next frame */
