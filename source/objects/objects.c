@@ -53,6 +53,7 @@ OBJECTS.C
 #include "sound/game_sound.h"
 #include "structures/structure_bsp_definitions.h"
 #include "units/units.h"
+#include "skate.h" /* port: port/linux/game/skate_hitbox.c */
 /* port: object_bounds_cache.c's */
 void object_bounds_cache_update(long object_index, real_point3d const *center, real radius);
 /* port: port/linux/game/first_person_legs.c's */
@@ -2938,12 +2939,22 @@ void object_compute_node_matrices(
 		object_nodes[0].position = object->object.position;
 	}
 
-	matrix4x3_transform_point(object_nodes, &object_definition->object.bounding_offset, &object->object.bounding_sphere_center);
-	object->object.bounding_sphere_radius = object_definition->object.bounding_radius;
-	
-	if (object->object.scale > 0.f)
+	/* port: a Skate 3 skater's nodes are the skate pose, here too, so that
+	projectiles and the bounding sphere meet the body drawn, not Halo's own
+	animation; their sphere a little larger, for the pose's reach
+	(port/linux/game/skate_hitbox.c) */
 	{
-		object->object.bounding_sphere_radius *= object->object.scale;
+		boolean skate_posed = skate_pose_object_nodes(object_index);
+
+		matrix4x3_transform_point(object_nodes, &object_definition->object.bounding_offset, &object->object.bounding_sphere_center);
+		object->object.bounding_sphere_radius = object_definition->object.bounding_radius;
+
+		if (object->object.scale > 0.f)
+		{
+			object->object.bounding_sphere_radius *= object->object.scale;
+		}
+		if (skate_posed)
+			object->object.bounding_sphere_radius += SKATE_BOUNDING_MARGIN;
 	}
 	/* port: (and in the packed copy collision reads: object_bounds_cache.c) */
 	object_bounds_cache_update(object_index, &object->object.bounding_sphere_center, object->object.bounding_sphere_radius);
@@ -2962,8 +2973,11 @@ static void object_postprocess_node_matrices(
 	struct object_datum *object = object_get(object_index);
 	struct object_definition *object_definition = object_definition_get(object->definition_index);
 
+	/* port: (nor do a skater's unit's aim and weapon IK move their posed
+	nodes: skate_hitbox.c) */
 	if (object_definition->object.model.index!=NONE &&
-		object_definition->object.animation_graph.index != NONE)
+		object_definition->object.animation_graph.index != NONE &&
+		!skate_object_posed(object_index))
 	{
 		real_matrix4x3 *matrices = (real_matrix4x3 *)object_header_block_get(
 				object_index,

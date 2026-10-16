@@ -837,6 +837,120 @@ def test_skate_multiplayer(tmp_path):
     assert exits, f"the skater did not follow the teleporter to its exit: {teleports}"
 
 
+SKATE_HITBOX_LINE = re.compile(
+    r"skate hitbox: (this|another) machine's skater, (before|after) objects, (\S+): shapes off by ([\d.]+) world units "
+    r"at most .*?the bounding sphere ([\d.]+) off, the last drawn ([\d.-]+) off; lines at the head (\d+) \(\d+ on it "
+    r"drawn\): (\d+) alike, (\d+) elsewhere, (\d+) missed; torso (\d+) \(\d+\): (\d+), (\d+), (\d+); arms (\d+) "
+    r"\(\d+\): (\d+), (\d+), (\d+); legs (\d+) \(\d+\): (\d+), (\d+), (\d+); past the body (\d+): (\d+) hit drawn, "
+    r"(\d+) hit; the drawn shapes ([\d.]+) past the bounding sphere")
+
+
+def test_skate_hitbox(tmp_path):
+    """A skater is hit where their body is drawn (port/linux/game/skate_hitbox.c):
+    two real games on Blood Gulch, the client riding the scripted pad
+    (debug.network_test_skate: pushes, carves, ollies and, with
+    debug.skate_hitbox_test, flip tricks), the host watching, and both
+    checking every skater's hit shapes (debug.skate_hitbox_test) before and
+    after objects_update, as projectiles meet them: the client its own
+    skater, the host the client's, posed from their state. Each node's
+    collision shapes must be where the drawn pose puts them, and the bounding
+    sphere too; lines a bullet takes at each part of the drawn body (head,
+    torso, arms, legs; from the side and the front) must hit the node they hit
+    on the drawn body, and lines just past the body (over the head, either
+    side) nothing of the skater. It needs what test_skate_multiplayer
+    needs, and skips without it; about a minute and a half."""
+    game = os.environ.get("HALO_TEST_GAME")
+    assets = os.environ.get("HALO_SKATE_TEST_ASSETS")
+    maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
+    if not (game and assets and maps and Path(game).is_file() and Path(maps, "bloodgulch.map").is_file()):
+        pytest.skip("needs HALO_TEST_GAME, HALO_SKATE_TEST_ASSETS and HALO_SKATE_TEST_HALO_MAPS")
+    seconds = 70
+    common = {"HALO_FULLSCREEN": "0", "HALO_NO_AUDIO": "1", "HALO_EXIT_AFTER": str(seconds),
+              "HALO_UPDATE_ANSWER": "never", "HALO_NULL_RENDERER": "1", "HALO_HIDDEN_WINDOW": "1",
+              "HALO_SKATE_ASSETS": assets, "HALO_NET_STUN": "", "HALO_SKATE_HITBOX_TEST": "1"}
+    host_address, join_address = os.environ.get("HALO_TEST_SKATE_NET", "127.0.0.210,127.0.0.211").split(",")
+    machines = {"host": {"HALO_NET_ADDRESS": host_address, "HALO_NET_BROADCAST": join_address,
+                         "HALO_NETWORK_TEST": "host:bloodgulch", "HALO_NETWORK_TEST_START": "12",
+                         "HALO_NETWORK_TEST_SKATE_WATCH": "1"},
+                "join": {"HALO_NET_ADDRESS": join_address, "HALO_NET_BROADCAST": host_address,
+                         "HALO_NETWORK_TEST": "join", "HALO_NETWORK_TEST_SKATE": "15"}}
+    games = {}
+    try:
+        for name, settings in machines.items():
+            folder = tmp_path / name
+            (folder / "data").mkdir(parents=True)
+            (folder / "saves").mkdir()
+            (folder / "data" / "maps").symlink_to(maps)
+            env = dict(os.environ, **common, **settings, HALO_DATA_ROOT=str(folder / "data"),
+                       HALO_SAVE_ROOT=str(folder / "saves"))
+            with open(folder / "run.log", "w") as log:
+                games[name] = subprocess.Popen([game], cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+            if name == "host":
+                time.sleep(4)
+        deadline = time.monotonic() + seconds + 30
+        for process in games.values():
+            try:
+                process.wait(timeout=max(1.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        for process in games.values():
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+    checks = []
+    for name in machines:
+        log = (tmp_path / name / "run.log").read_text(errors="replace")
+        for m in SKATE_HITBOX_LINE.finditer(log):
+            who, when, state = m.group(1), m.group(2), m.group(3)
+            numbers = [float(x) for x in m.groups()[3:]]
+            off, sphere, lag = numbers[0:3]
+            parts = [numbers[3 + 4 * i: 7 + 4 * i] for i in range(4)]
+            outside, outside_drawn, outside_hit = numbers[19:22]
+            unbounded = numbers[22]
+            checks.append({"machine": name, "who": who, "when": when, "state": state, "off": off, "sphere": sphere,
+                           "lag": lag, "lines": sum(p[0] for p in parts), "alike": sum(p[1] for p in parts),
+                           "head": parts[0], "outside": outside, "outside_drawn": outside_drawn,
+                           "outside_hit": outside_hit, "unbounded": unbounded})
+    own = [c for c in checks if c["machine"] == "join" and c["who"] == "this"]
+    others = [c for c in checks if c["machine"] == "host" and c["who"] == "another"]
+    states = sorted({c["state"] for c in own})
+    lags = sorted(c["lag"] for c in checks if c["lag"] >= 0)
+    print(f"{len(own)} checks of the client's own skater (states {states}), {len(others)} of it on the host; "
+          f"shapes off at most {max((c['off'] for c in checks), default=None)}, the bounding sphere "
+          f"{max((c['sphere'] for c in checks), default=None)}; lines alike {sum(c['alike'] for c in checks)} of "
+          f"{sum(c['lines'] for c in checks)}, head {sum(c['head'][1] for c in checks)} of "
+          f"{sum(c['head'][0] for c in checks)}; past the body hit {sum(c['outside_hit'] for c in checks)} of "
+          f"{sum(c['outside'] for c in checks)}; the last drawn tick off by "
+          f"{lags[len(lags) // 2] if lags else None} (median), {lags[-1] if lags else None} at most")
+    join_tail = (tmp_path / "join" / "run.log").read_text(errors="replace")[-4000:]
+    host_tail = (tmp_path / "host" / "run.log").read_text(errors="replace")[-4000:]
+    assert len(own) >= 60, f"the client checked its skater {len(own)} times:\n{join_tail}"
+    assert len(others) >= 60, f"the host checked the client's skater {len(others)} times:\n{host_tail}"
+    assert any("Air" in state for state in states), f"the skater was never checked in the air: {states}"
+    # (where collision has the shapes is where the drawn pose has them, to the
+    # log's thousandth of a world unit: before objects_update and after it)
+    for check in checks:
+        assert check["off"] <= 0.002 and check["sphere"] <= 0.002, f"hit shapes off the drawn body: {check}"
+    lines = sum(c["lines"] for c in checks)
+    assert lines >= 1000, f"only {lines} lines met the drawn body"
+    assert sum(c["alike"] for c in checks) >= 0.99 * lines, f"lines hit elsewhere than on the drawn body: " \
+        f"{[c for c in checks if c['alike'] < c['lines']][:5]}"
+    assert sum(c["head"][0] for c in checks) >= 50, "too few lines met the drawn head"
+    assert sum(c["head"][1] for c in checks) >= 0.99 * sum(c["head"][0] for c in checks), "a headshot went astray"
+    # (lines just past the drawn body hit nothing of it, drawn or as hit)
+    assert not any(c["outside_drawn"] for c in checks), "a line past the drawn body met its drawn shapes"
+    assert not any(c["outside_hit"] for c in checks), \
+        f"a line past the drawn body hit the skater: {[c for c in checks if c['outside_hit']][:5]}"
+    # (and the bounding sphere collision passes over far objects by holds
+    # the drawn body whole)
+    assert not any(c["unbounded"] for c in checks), \
+        f"the drawn body outside its bounding sphere: {[c for c in checks if c['unbounded']][:5]}"
+    # (and what is hit is what was drawn the tick before, but for a tick's
+    # travel: a skater at a board's speed goes a tenth of a world unit or so)
+    assert lags and lags[len(lags) // 2] < 0.2, f"the hit shapes are far from the last drawn tick: {lags[-20:]}"
+
+
 def test_dedicated_server(tmp_path):
     """A dedicated server (server.dedicated) and a client on this machine: the
     server starts with no display or SDL driver set and no player of its own,

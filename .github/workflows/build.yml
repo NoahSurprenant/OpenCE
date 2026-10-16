@@ -439,6 +439,8 @@ jobs:
     # job at a time, so the two take turns. test_dedicated_server_without_maps
     # (the server's refusal to start without its maps) runs here too, and in
     # the linux job.
+    # test_skate_hitbox (a skater hit where their body is drawn, a minute and
+    # a half: port/skate/README.md, "Where a skater is hit") too.
     #
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
     # --skate --lto=off --pgo=off), and the server of
@@ -520,9 +522,9 @@ jobs:
         run: |
           set -o pipefail
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
-            tools/test_linux_port.py -k "test_skate_multiplayer or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log"
-          if ! grep -q '5 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
-            echo "::error::test_skate_multiplayer and the four test_dedicated_server tests did not all run and pass"
+            tools/test_linux_port.py -k "test_skate_multiplayer or test_skate_hitbox or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log"
+          if ! grep -q '6 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
+            echo "::error::test_skate_multiplayer, test_skate_hitbox and the four test_dedicated_server tests did not all run and pass"
             exit 1
           fi
 

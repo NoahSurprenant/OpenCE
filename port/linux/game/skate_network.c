@@ -676,6 +676,24 @@ boolean skate_network_unit_skating(long unit_index)
 	return skate_network_player_skating(absolute_index) && skate_network_player_unit(absolute_index) == unit_index;
 }
 
+boolean skate_network_pose(long unit_index, real_matrix4x3 *nodes, short count)
+{
+	struct skate_network_player const *player;
+	struct skate_network_skeleton *skeleton;
+	struct skate_state state;
+	byte player_index;
+
+	if (!skate_network_unit_skating(unit_index))
+		return FALSE;
+	player = &skate_network_players[DATUM_INDEX_TO_ABSOLUTE_INDEX(unit_get(unit_index)->unit.player_index)];
+	skeleton = skate_network_skeleton(unit_index);
+	/* (as skate_network_update_after_objects poses them, where the unit is now) */
+	return skeleton && skeleton->count == count &&
+		skate_state_read(player->entry, player->entry + player->size, &player_index, &state) &&
+		skate_pose_rebuild(&state, skeleton->defaults, skeleton->parents, count, &object_get(unit_index)->object.position,
+		nodes);
+}
+
 /* (the sender) its own skater's state, rebuilt as another machine will, and
 how far that is from the pose: the most a node is off, world units and
 degrees (logged in a network test) */

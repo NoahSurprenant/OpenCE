@@ -619,6 +619,47 @@ failing that, above the model's origin. The log says what it found once
 measured the first time the feet were on the deck (`halo-skate: feet on the
 deck: the skater's ankles ... above it`).
 
+### Where a skater is hit
+
+A biped is hit where its collision model is: each node's collision BSP,
+placed by that node's matrix as the object has it when a projectile, a
+bullet's line or a melee is tested, during `objects_update`. Explosions and
+melee reach an object by its bounding sphere, placed from its root node. A
+skater's nodes are written as the skate pose after `objects_update`, for
+drawing; but Halo places a biped's nodes again during the tick (in
+`object_set_position`, as `skate.c` puts the biped where the board is, and in
+each object's update), from its own animation. So, until this was fixed,
+shots met Halo's standing Chief, not the skater drawn: in real-data runs his
+hit shapes were half a world unit (1.5 m) from the drawn ones at their worst
+part (the arms) and 0.2 to 0.35 at the head, a line at a drawn part hit that
+part in a quarter of the cases, a quarter of the lines just over or beside
+the drawn body hit him anyway, and the bounding sphere was 0.07 to 0.17 off.
+Another machine's skater, posed from their state, was the same on every
+machine, the host's included, whose hits count.
+
+Now `object_compute_node_matrices` asks `skate_hitbox.c`: a skater's nodes
+(this machine's from the engine, another machine's from their latest state,
+where their unit is now) are the skate pose there too, before the bounding
+sphere is placed from them, and Halo's aim and weapon IK leave them as posed.
+The bounding sphere is grown `SKATE_BOUNDING_MARGIN` (0.1 world units): a
+hand or a foot of a pose reaches past the model's radius by as much as 0.054.
+What is hit is then what is drawn, but for a tick's travel (some 0.12 world
+units at a board's speed): the tick is drawn after it is hit, as for a
+player on foot. The board is drawn only, and blocks no shot, as a held
+weapon blocks none.
+
+`debug.skate_hitbox_test` (`HALO_SKATE_HITBOX_TEST`) checks it in a game:
+every five ticks, before and after `objects_update`, each skater's collision
+shapes against the drawn pose, lines a bullet takes at each part of the
+drawn body (head, torso, arms, legs; from the side and the front: they must
+hit the same node as on the drawn body) and lines just past it (over the
+head and either side: they must hit nothing), and how far the shapes are
+from the tick drawn before. It makes the network test's scripted pad flip
+its board too. `debug.skate_hitbox_dump` (`HALO_SKATE_HITBOX_DUMP`, a file in
+the data folder) writes some of the checks whole, for pictures.
+`tools/test_linux_port.py`'s `test_skate_hitbox` runs it with two games, the
+client skating and the host watching (CI's `skate-multiplayer` job).
+
 ### Obstacles
 
 The level's structure BSP is the skater's world (above, "Loading"), and with
