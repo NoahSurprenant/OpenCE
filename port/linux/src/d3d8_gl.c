@@ -633,6 +633,12 @@ static struct
 	unsigned long target_changes;
 	/* vertex and index bytes drawn from the mirror, and streamed */
 	unsigned long mirrored_bytes, streamed_bytes;
+	/* shaders compiled and programs linked (each a wait for the GPU, which
+	stutters: a new effect's first frame), and the state cache emptied */
+	unsigned long shaders_compiled, programs_linked, state_resets;
+	/* the time from one frame's present to the next's, its total and the
+	longest, in microseconds */
+	unsigned long frame_microseconds, longest_frame_microseconds;
 } stats;
 
 static D3DDevice *device_pointer(void)
@@ -782,6 +788,7 @@ static void vertex_array_cache_invalidate(void);
 
 void xgpu_gl_state_invalidate(void)
 {
+	stats.state_resets++;
 	memset(&gl_state, 0xff, sizeof(gl_state));
 #ifdef HALO_WEB
 	vertex_array_cache_invalidate();
@@ -1189,39 +1196,59 @@ void platform_wait_for_vertical_blank(void)
 
 /* ---------- GL helpers */
 
+/* A shader's compile status is not asked for here: asking waits for the
+compile, and in a browser it is a round trip to the GPU process that waits
+for every call queued before it too (hundreds of draws, mid-frame, each time
+an effect or object brings a new pixel shader). The program's link status
+says whether both compiled, and only a failed link asks each shader why
+(xgpu_link_program). The source is logged from here when it is asked for
+(debug.gl_debug), as the shaders are dumped (debug.gpu_dump_shaders). */
+/* why the shader did not compile, if it did not (with its source, if given) */
+static void shader_log_failure(GLuint shader, const char *what, const char *source)
+{
+	GLint status = 0;
+	char log[4096];
+
+	if (!shader)
+		return;
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+	if (status)
+		return;
+	glGetShaderInfoLog(shader, sizeof(log), NULL, log);
+	platform_log("cannot compile the %s shader %u:\n%s%s%s", what, shader, log, source ? "\n" : "", source ? source : "");
+}
+
 GLuint xgpu_compile_shader(GLenum type, const char *source, const char *what)
 {
 	GLuint shader = glCreateShader(type);
-	GLint status = 0;
 
 	glShaderSource(shader, 1, &source, NULL);
 	glCompileShader(shader);
-	glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-	if (!status)
-	{
-		char log[4096];
-
-		glGetShaderInfoLog(shader, sizeof(log), NULL, log);
-		platform_log("cannot compile the %s shader:\n%s\n%s", what, log, source);
-		glDeleteShader(shader);
-		return 0;
-	}
+	stats.shaders_compiled++;
+	if (config_boolean("debug.gl_debug"))
+		shader_log_failure(shader, what, source);
 	return shader;
 }
 
 GLuint xgpu_link_program(GLuint vertex_shader, GLuint fragment_shader, const char *what)
 {
-	GLuint program = glCreateProgram();
+	GLuint program;
 	GLint status = 0;
 
+	if (!vertex_shader || !fragment_shader)
+		return 0;
+	program = glCreateProgram();
 	glAttachShader(program, vertex_shader);
 	glAttachShader(program, fragment_shader);
 	glLinkProgram(program);
+	stats.programs_linked++;
 	glGetProgramiv(program, GL_LINK_STATUS, &status);
 	if (!status)
 	{
 		char log[4096];
 
+		shader_log_failure(vertex_shader, "vertex", NULL);
+		shader_log_failure(fragment_shader, "pixel", NULL);
 		glGetProgramInfoLog(program, sizeof(log), NULL, log);
 		platform_log("cannot link the %s program: %s", what, log);
 		return 0;
@@ -3424,10 +3451,19 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 #ifdef HALO_GLES
 	/* (a stage the pixel shader does not sample keeps what it had: unbinding
 	it, to bind it again at the next draw that has it, is two calls) */
-	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
-		if (gl_textures[stage] || key->sampler_type[stage] != _xgpu_sampler_none)
-			state_texture(stage, gl_targets[stage], gl_textures[stage]);
+		/* the active unit first: a draw that binds a new texture to it then
+		selects one unit fewer (a call into the browser each, at hundreds of
+		draws a frame) */
+		GLenum active = gl_state.active_texture - GL_TEXTURE0;
+
+		if (active < D3DTSS_MAXSTAGES && (gl_textures[active] || key->sampler_type[active] != _xgpu_sampler_none))
+			state_texture((int)active, gl_targets[active], gl_textures[active]);
+		for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+		{
+			if ((GLenum)stage != active && (gl_textures[stage] || key->sampler_type[stage] != _xgpu_sampler_none))
+				state_texture(stage, gl_targets[stage], gl_textures[stage]);
+		}
 	}
 #else
 	{
@@ -6154,13 +6190,33 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	}
 	device.frame++;
 	stats.presents++;
+	if (debug_settings.statistics)
+	{
+		static struct timespec previous;
+		struct timespec now;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (previous.tv_sec || previous.tv_nsec)
+		{
+			unsigned long microseconds = (unsigned long)((now.tv_sec - previous.tv_sec) * 1000000L +
+				(now.tv_nsec - previous.tv_nsec) / 1000L);
+
+			stats.frame_microseconds += microseconds;
+			if (stats.longest_frame_microseconds < microseconds)
+				stats.longest_frame_microseconds = microseconds;
+		}
+		previous = now;
+	}
 	if (debug_settings.statistics && device.frame % 60 == 0)
 	{
 		platform_log("frame %lu: %lu draws, %lu immediate, %lu clears, %lu target changes; skipped %lu no program, %lu no target, %lu link; "
-			"%lu KB mirrored, %lu KB streamed",
+			"%lu KB mirrored, %lu KB streamed; %.1f ms a frame, longest %.1f ms; %lu shaders compiled, %lu programs linked, "
+			"%lu state resets a frame",
 			device.frame, stats.draws / stats.presents, stats.immediate_draws / stats.presents, stats.clears / stats.presents,
 			stats.target_changes / stats.presents, stats.skipped_no_program, stats.skipped_no_target, stats.skipped_link,
-			stats.mirrored_bytes / stats.presents / 1024, stats.streamed_bytes / stats.presents / 1024);
+			stats.mirrored_bytes / stats.presents / 1024, stats.streamed_bytes / stats.presents / 1024,
+			stats.frame_microseconds / 1000.0 / stats.presents, stats.longest_frame_microseconds / 1000.0,
+			stats.shaders_compiled, stats.programs_linked, stats.state_resets / stats.presents);
 		memset(&stats, 0, sizeof(stats));
 	}
 	platform_pump_events();
