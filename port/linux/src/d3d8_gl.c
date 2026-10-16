@@ -783,16 +783,21 @@ static struct
 } gl_state;
 
 #ifdef HALO_WEB
+struct vertex_array_cache_entry;
 static void vertex_array_cache_invalidate(void);
+static void vertex_array_cache_bind(struct vertex_array_cache_entry *entry);
+static BOOL vertex_array_cache_bound_known(void);
 #endif
 
 void xgpu_gl_state_invalidate(void)
 {
 	stats.state_resets++;
-	memset(&gl_state, 0xff, sizeof(gl_state));
 #ifdef HALO_WEB
+	/* (before the shadows are forgotten: the bound vertex array's index
+	buffer binding, kept for it) */
 	vertex_array_cache_invalidate();
 #endif
+	memset(&gl_state, 0xff, sizeof(gl_state));
 }
 
 /* (a unit the shadows still said had it would never be bound to a new
@@ -907,6 +912,13 @@ static void state_array_buffer(GLuint buffer)
 
 static void state_element_array_buffer(GLuint buffer)
 {
+#ifdef HALO_WEB
+	/* (the index buffer binding is the bound vertex array's: with which one
+	is bound unknown, the device's own, so that none of the cache's changes
+	unseen) */
+	if (!vertex_array_cache_bound_known())
+		vertex_array_cache_bind(NULL);
+#endif
 	if (gl_state.element_array_buffer != buffer)
 	{
 		gl_state.element_array_buffer = buffer;
@@ -1505,7 +1517,10 @@ static void render_target_resolve(struct xgpu_render_target *target)
 	glBlitFramebuffer(0, 0, (GLint)target->gl_width, (GLint)target->gl_height,
 		0, 0, (GLint)target->gl_width, (GLint)target->gl_height,
 		target->depth ? GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT : GL_COLOR_BUFFER_BIT, GL_NEAREST);
-	xgpu_gl_state_invalidate();
+	/* (of the cached state, only the framebuffer bindings and the scissor
+	test changed) */
+	gl_state.framebuffer = (GLuint)-1;
+	gl_state.scissor_test = 0;
 }
 
 /* a target's renderbuffer with these samples a pixel (0: none, its storage
@@ -3241,8 +3256,12 @@ static void copy_level_by_blit(GLuint source, GLuint destination, GLint level, G
 	glDisable(GL_SCISSOR_TEST);
 	glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	/* the blit bypasses the cached state, so the next draw must re-apply it */
-	xgpu_gl_state_invalidate();
+	/* the blit bypasses the cached state: of it, only the framebuffer binding
+	and the scissor test changed (not the whole cache, which the next draw
+	would set again: the sampled back buffer's copy, feedback_copy, is made a
+	few times a frame in WebGL) */
+	gl_state.framebuffer = 0;
+	gl_state.scissor_test = 0;
 }
 #endif
 
@@ -4761,15 +4780,28 @@ static struct
 	BOOL bound_known;
 	GLuint device_element_array_buffer;
 	/* the entries' element array buffer bindings are known only from the
-	latest invalidation on (xgpu_gl_state_invalidate) */
+	latest epoch on (each entry made in an earlier one starts unknown) */
 	unsigned long element_epoch;
 } vertex_array_cache;
 
+/* Code outside the cache (xgpu_gl_state_invalidate's callers) binds vertex
+arrays of its own, or the device's, but never an entry's, so an entry's index
+buffer binding changes only through state_element_array_buffer while the
+cache knows it is bound: an invalidation forgets which vertex array is bound
+and the device's binding, and keeps what each entry has. (Forgetting every
+entry's too made each draw from one bind its index buffer again after each
+invalidation, a few a frame: some 200 calls a frame in a busy scene.) */
 static void vertex_array_cache_invalidate(void)
 {
+	if (vertex_array_cache.bound_known && vertex_array_cache.bound)
+		vertex_array_cache.bound->element_array_buffer = gl_state.element_array_buffer;
 	vertex_array_cache.bound_known = FALSE;
 	vertex_array_cache.device_element_array_buffer = (GLuint)-1;
-	vertex_array_cache.element_epoch++;
+}
+
+static BOOL vertex_array_cache_bound_known(void)
+{
+	return vertex_array_cache.bound_known;
 }
 
 /* binds the entry's vertex array (NULL: the device's own) */
