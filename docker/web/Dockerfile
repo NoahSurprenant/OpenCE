@@ -20,6 +20,8 @@
 #   /srv/game-data/skate-data/assets   Skate 3 mode's converted data, mounted read-only
 #   /srv/game-data/skate-data/sounds
 #   /srv/generated                     manifest.json and server-data.json (written by the script)
+#   /etc/nginx/opence/conf.d           more http-level settings (*.conf), empty: the chart mounts its
+#                                      realIp settings here
 #   /tmp                               nginx's pid and temporary files: the only writable path
 #
 # nginx runs as uid/gid 101 (nginx-unprivileged's) on port 8080, so the root filesystem can be
@@ -35,7 +37,7 @@ USER root
 RUN apk add --no-cache python3 \
  && rm -f /etc/nginx/conf.d/default.conf \
  && mkdir -p /srv/site /srv/generated /srv/game-data/maps /srv/game-data/skate-data/assets \
-      /srv/game-data/skate-data/sounds /opt/opence-web \
+      /srv/game-data/skate-data/sounds /opt/opence-web /etc/nginx/opence/conf.d \
  && chown 101:101 /srv/generated
 COPY docker/web/nginx.conf /etc/nginx/nginx.conf
 COPY docker/web/headers.conf docker/web/game-data.conf /etc/nginx/opence/

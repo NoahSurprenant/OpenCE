@@ -2,7 +2,7 @@
 # Smoke test of the web image (docker/web/Dockerfile): ./smoke-test.sh IMAGE
 #
 # Needs only docker (a remote daemon too: nothing is bind-mounted, and the requests are made with the
-# image's own curl, inside the container). Two containers, each as the image's user on a read-only
+# image's own curl, inside the container). Three containers, each as the image's user on a read-only
 # root filesystem with /tmp a tmpfs, no capabilities and no privilege escalation:
 #   1. the plain site: index.html with the cross-origin isolation headers, halo.wasm as
 #      application/wasm (gzipped when asked), a Range request answered 206, /server-data.json and
@@ -12,6 +12,9 @@
 #      /server-data.json and /game-data/manifest.json as it wrote them, every file it lists served
 #      with its size and SHA-256, a Range request on a map answered 206 and not gzipped, and a
 #      symbolic link, a hidden file and anything outside the three folders a 404.
+#   3. a trusted proxy: nginx logs the connection's address, X-Forwarded-For or not; with realip
+#      settings in /etc/nginx/opence/conf.d (the chart's realIp) the header's right-most untrusted
+#      address.
 set -euo pipefail
 
 image=${1:?usage: $0 IMAGE}
@@ -26,6 +29,8 @@ code() { local path=$1; shift; in_web curl -sS -o /dev/null -w '%{http_code}' "$
 headers() { local path=$1; shift; in_web curl -sS -o /dev/null -D - "$@" "http://127.0.0.1:8080$path" | tr -d '\r' | sed 's/^[^:]*:/\L&/'; }
 header() { headers "$1" "${@:3}" | sed -n "s/^$2: *//p" | head -n 1; }
 expect() { [ "$2" = "$3" ] || fail "$1: got '$2', expected '$3'"; }
+# the client address of the last request in nginx's access log (its first field)
+last_client() { docker logs "$name" 2>/dev/null | grep -E '^[0-9a-f.:]+ - \[' | tail -n 1 | cut -d" " -f1; }
 start() {
   cleanup
   docker run -d --name "$name" --read-only --cap-drop ALL --security-opt no-new-privileges \
@@ -122,5 +127,18 @@ expect "a folder" "$(code /game-data/maps/)" 404
 expect "outside the folders" "$(code /game-data/skate-data/)" 404
 expect "a path out" "$(code '/game-data/maps/../../etc/passwd' --path-as-is)" 404
 echo "ok"
+
+echo "=== a trusted proxy's header (realip settings in /etc/nginx/opence/conf.d)"
+start --tmpfs "/etc/nginx/opence/conf.d:uid=101,gid=101"
+code /version.json -H 'X-Forwarded-For: 203.0.113.7' >/dev/null
+expect "the client without settings" "$(last_client)" 127.0.0.1
+in_web sh -c 'printf "set_real_ip_from 127.0.0.1/32;\nreal_ip_header X-Forwarded-For;\nreal_ip_recursive on;\n" > /etc/nginx/opence/conf.d/real-ip.conf'
+in_web nginx -t 2>/dev/null || fail "nginx refuses the realip settings"
+in_web nginx -s reload 2>/dev/null
+sleep 1
+code /version.json -H 'X-Forwarded-For: 198.51.100.1, 203.0.113.7' >/dev/null
+expect "the client from the trusted proxy's header" "$(last_client)" 203.0.113.7
+echo "ok"
+
 echo
 echo "PASS"

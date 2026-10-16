@@ -18,7 +18,8 @@
 #      writes the manifest; /server-data.json names it; it lists exactly the files, and each one
 #      served from its base has the listed size and SHA-256; a Range request gets 206; the decoys are
 #      neither listed nor reachable (not over HTTP, not in the pod), and the data and the manifest are
-#      read-only in nginx's container;
+#      read-only in nginx's container; with realIp trusting the port-forward, the access log names
+#      the client from X-Forwarded-For;
 #   3. a restart: a new pod hashes the data again and gets ready.
 set -euo pipefail
 
@@ -193,7 +194,8 @@ spec:
   resources: { requests: { storage: 1Gi } }
 EOF
 helm upgrade "$release" "$chart" -n "$ns" --reuse-values \
-  --set-json 'gameData.volume={"persistentVolumeClaim":{"claimName":"games","readOnly":true}}'
+  --set-json 'gameData.volume={"persistentVolumeClaim":{"claimName":"games","readOnly":true}}' \
+  --set-json 'realIp={"trustedProxies":["127.0.0.1/32"]}'
 kubectl -n "$ns" rollout status "$deploy" --timeout=180s || fail "the pod with game data did not get ready"
 pod=$(pod_name)
 log=$(kubectl -n "$ns" logs "$pod" -c manifest)
@@ -229,6 +231,11 @@ expect "/halo.wasm Content-Type" "$(header /halo.wasm content-type)" application
 if in_pod sh -c 'ls -a /srv/game-data /srv/game-data/skate-data' | grep -qE 'decoy|conversion'; then fail "the decoys are visible in the pod"; fi
 if in_pod touch /srv/game-data/maps/x 2>/dev/null; then fail "the maps are writable"; fi
 if in_pod touch /srv/generated/x 2>/dev/null; then fail "the manifest's folder is writable in nginx's container"; fi
+# realIp: the port-forward connects from 127.0.0.1 in the pod, trusted here, so its header names the
+# client in the access log
+code /version.json -H 'X-Forwarded-For: 198.51.100.1, 203.0.113.7' >/dev/null
+logged=$(kubectl -n "$ns" logs "$pod" -c nginx | grep -E '^[0-9a-f.:]+ - \[' | tail -n 1 | cut -d" " -f1)
+expect "the client from the trusted header (realIp)" "$logged" 203.0.113.7
 expect "uid" "$(in_pod id -u)" 101
 echo "manifest and files match; 206; decoys unreachable; data read-only: $pod"
 

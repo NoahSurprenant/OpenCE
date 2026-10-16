@@ -35,6 +35,10 @@ service:
     team: games
   loadBalancerClass: example.com/lb
   loadBalancerSourceRanges: [192.0.2.0/24]
+realIp:
+  trustedProxies: [10.42.0.0/16, "fd00:42::/56"]
+  header: X-Real-IP
+  recursive: false
 ingress:
   enabled: true
   className: nginx

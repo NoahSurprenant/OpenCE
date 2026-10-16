@@ -71,6 +71,23 @@ service:
   loadBalancerClass: ""
   loadBalancerSourceRanges: []
 
+# The visitors' own addresses in nginx's access log (and $remote_addr), behind an ingress or another
+# reverse proxy: nginx's realip module takes them from the header the proxy writes, believed only on a
+# connection from one of trustedProxies. Off by default (empty trustedProxies): nginx logs the
+# address of whatever connected to it, the ingress controller's pod behind an ingress.
+realIp:
+  # The proxies' addresses or CIDRs, e.g. the cluster's pod network (k3s's default is 10.42.0.0/16)
+  # for an ingress controller in the cluster. Only the network the proxy connects from: a header from
+  # anyone else is ignored.
+  trustedProxies: []
+  # The header that carries the visitor's address. X-Forwarded-For (a list) is read from the right,
+  # skipping trusted addresses when recursive is true; a proxy that writes the visitor alone in a
+  # header of its own (X-Real-IP, CF-Connecting-IP) can be named instead.
+  header: X-Forwarded-For
+  # nginx's real_ip_recursive: with X-Forwarded-For, the right-most address that is not one of
+  # trustedProxies (on) rather than simply the right-most one (off).
+  recursive: true
+
 ingress:
   enabled: false
   # Empty: the cluster's default IngressClass.

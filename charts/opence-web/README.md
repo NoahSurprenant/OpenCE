@@ -82,6 +82,30 @@ Site files are sent with `Cache-Control: no-cache` (the browser revalidates with
 `/server-data.json` and `/game-data/manifest.json` with `no-store`. `halo.wasm` is
 `application/wasm`, gzipped when the browser asks.
 
+## Behind a proxy: the visitors' addresses
+
+nginx logs the address of whatever connected to it: behind an ingress, the ingress controller's pod,
+for every visitor. `realIp` has nginx's realip module take the visitor's address from the header the
+proxy writes, in the access log and `$remote_addr`, believed only on a connection from
+`realIp.trustedProxies` (off while that is empty, the default):
+
+```yaml
+realIp:
+  # where the ingress controller connects from: the pod network (k3s's default here)
+  trustedProxies: [10.42.0.0/16]
+  # X-Forwarded-For, read from the right past every trusted address (recursive: true), is the
+  # default; a proxy that writes the visitor alone in a header can be named instead
+  header: X-Forwarded-For
+  recursive: true
+```
+
+With X-Forwarded-For, any hop between the visitor and nginx that appends itself (a CDN in front of
+the ingress, say) must be in `trustedProxies` too, or nginx logs that hop instead; when the ingress
+already resolves the visitor into a header of its own (`X-Real-IP`, say), naming that header avoids
+listing them. The chart writes the settings into a ConfigMap mounted at `/etc/nginx/opence/conf.d`,
+which the image's nginx includes; a change rolls the pod. Only the log and `$remote_addr` change: the
+site serves everyone the same.
+
 ## A private server: game data
 
 Not set (the default), the chart serves the plain site: no init container, and `/server-data.json`
@@ -158,6 +182,7 @@ requests and limits. A change to the data needs a new pod (`kubectl rollout rest
 | Manifest | `/srv/generated/{manifest.json,server-data.json}` (written by the script) |
 | Script | `/opt/opence-web/web_server_data_manifest.py` (Python 3, standard library) |
 | Writable | `/tmp` (pid and temporary files) |
+| Settings | `/etc/nginx/opence/conf.d/*.conf`, included at nginx's http level (the chart's `realIp`) |
 
 ## Tests
 

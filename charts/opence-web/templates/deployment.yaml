@@ -21,9 +21,15 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
+      {{- if or .Values.podAnnotations .Values.realIp.trustedProxies }}
       annotations:
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.realIp.trustedProxies }}
+        # (nginx reads its settings at start: a new pod when they change)
+        checksum/real-ip: {{ include "opence-web.realIpConf" . | sha256sum }}
+        {{- end }}
       {{- end }}
     spec:
       # nginx and the manifest script never call the Kubernetes API.
@@ -111,6 +117,11 @@ spec:
             # nginx's pid and temporary files.
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.realIp.trustedProxies }}
+            - name: nginx-conf
+              mountPath: /etc/nginx/opence/conf.d
+              readOnly: true
+            {{- end }}
             {{- if $gameData }}
             {{- include "opence-web.gameDataMounts" . | nindent 12 }}
             - name: generated
@@ -121,6 +132,11 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if .Values.realIp.trustedProxies }}
+        - name: nginx-conf
+          configMap:
+            name: {{ $fullname }}-nginx
+        {{- end }}
         {{- if $gameData }}
         - name: generated
           emptyDir:
