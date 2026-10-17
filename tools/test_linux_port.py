@@ -1217,6 +1217,82 @@ def test_dedicated_server(tmp_path):
             process.wait()
 
 
+def test_dedicated_server_after_a_player_leaves(tmp_path):
+    """A dedicated server goes on hosting after a player leaves its game: a
+    client joins the game in progress and plays, and is stopped (as a player
+    who quits or loses their connection), and a second client then joins the
+    same game and plays. Before, the server's own machine, which has no player,
+    took the first player's quit for its own last player's and left the game:
+    the server stopped hosting ("no local players remain in the game", then
+    "no network game server") until it was restarted. Needs HALO_TEST_GAME (or
+    HALO_TEST_SERVER for the server) and the Halo maps
+    (HALO_SKATE_TEST_HALO_MAPS); about a minute and a half."""
+    game = os.environ.get("HALO_TEST_GAME")
+    server = os.environ.get("HALO_TEST_SERVER") or game
+    maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
+    if not (game and maps and Path(game).is_file() and Path(server).is_file() and
+            Path(maps, "bloodgulch.map").is_file()):
+        pytest.skip("needs HALO_TEST_GAME and HALO_SKATE_TEST_HALO_MAPS")
+    # (the second client at the first's address, which the server answers the
+    # search for games at, once the first has gone)
+    addresses = {"host": _test_address(214), "first": _test_address(215), "second": _test_address(215)}
+    games = {}
+
+    def start(name, settings):
+        folder = tmp_path / name
+        (folder / "data").mkdir(parents=True)
+        (folder / "saves").mkdir()
+        (folder / "data" / "maps").symlink_to(maps)
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
+        env.update(settings, HALO_NET_ONLINE="false", HALO_UPDATE_ANSWER="never", HALO_NET_ADDRESS=addresses[name],
+                   HALO_NET_BROADCAST=addresses["host"] if name != "host" else addresses["first"],
+                   HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
+        with open(folder / "run.log", "w") as log:
+            games[name] = subprocess.Popen([server if name == "host" else game], cwd=folder, env=_game_env(env),
+                                           stdout=log, stderr=subprocess.STDOUT)
+
+    def log(name):
+        return (tmp_path / name / "run.log").read_text(errors="replace")
+
+    def wait_for(condition, seconds, what):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            assert games["host"].poll() is None, f"the server stopped:\n{log('host')[-4000:]}"
+            if condition():
+                return
+            time.sleep(1)
+        raise AssertionError(f"{what}:\n{log('host')[-4000:]}")
+
+    position = re.compile(r"network test: tick \d+ player \d+: \(")
+    client = {"HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7"}
+    try:
+        start("host", {"HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "5"})
+        start("first", client)
+        wait_for(lambda: len(position.findall(log("first"))) >= 5 and "server: Player joined" in log("host"), 90,
+                 "the first client never played")
+        games["first"].kill()
+        games["first"].wait()
+        wait_for(lambda: "server: Player left (0 players)" in log("host"), 60, "the server never saw the player leave")
+        # (the server hosting still: its game goes on, and the second client joins it)
+        time.sleep(5)
+        host = log("host")
+        assert "no local players remain in the game" not in host, host[-4000:]
+        assert "no network game server" not in host, host[-4000:]
+        start("second", client)
+        wait_for(lambda: len(position.findall(log("second"))) >= 5 and log("host").count("server: Player joined") >= 2,
+                 90, f"the second client never played; its log:\n{log('second')[-3000:]}")
+        assert "no network game server" not in log("host"), log("host")[-4000:]
+    finally:
+        failing = sys.exc_info()[0] is not None
+        for name, process in games.items():
+            if process.poll() is None:
+                if failing:
+                    _stall_backtraces(name, process, server if name == "host" else game, tmp_path / name / "run.log")
+                process.kill()
+            process.wait()
+
+
 def test_dedicated_server_skaters(tmp_path):
     """Skate 3 mode on a dedicated server built without it: the server
     (HALO_TEST_SERVER: a Linux build without --skate, as the server image's)
