@@ -40,9 +40,6 @@ weapon by the range are for later. */
 
 #include <math.h>
 
-/* the platform layer's (port_config.c) */
-int config_boolean(const char *name);
-
 /* ---------- difficulty */
 
 struct bot_skill
@@ -63,6 +60,7 @@ struct bot_skill
 
 static struct bot_skill const bot_skills[NUMBER_OF_BOT_DIFFICULTIES] =
 {
+	/* peaceful (it never fights: bot_combat_engaged) */ { 18.0f, 4.5f, 0.07f, 0.10f, 1.57f, 25.0f, 1.6f },
 	/* easy */ { 18.0f, 4.5f, 0.07f, 0.10f, 1.57f, 25.0f, 1.6f },
 	/* normal */ { 12.0f, 3.0f, 0.12f, 0.06f, 1.92f, 35.0f, 1.3f },
 	/* hard */ { 7.5f, 1.8f, 0.17f, 0.035f, 2.09f, 45.0f, 1.0f },
@@ -307,16 +305,15 @@ boolean bot_combat_engaged(
 	long bot_slot)
 {
 	struct bot_combat *combat = &bot->brain.combat;
-	static boolean checked, peaceful;
 
-	/* (debug.bot_peaceful: bots that only roam, for the walking graph's tests) */
-	if (!checked)
+	/* (a peaceful bot sees nobody to fight: it never aims at, shoots or
+	strikes a player) */
+	if (bot->difficulty == _bot_difficulty_peaceful)
 	{
-		checked = TRUE;
-		peaceful = config_boolean("debug.bot_peaceful") != 0;
-	}
-	if (peaceful)
+		combat->target_player = NONE;
+		combat->target_visible = FALSE;
 		return FALSE;
+	}
 	if ((game_time_get() + bot_slot) % BOT_SIGHT_TICKS == 0)
 		bot_perceive(bot, player_index, unit_index);
 	if (combat->target_player != NONE)

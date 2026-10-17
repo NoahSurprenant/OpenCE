@@ -419,8 +419,7 @@ the setting for one start of the game. It has priority over the file.
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays, logs how much of the map it reaches, and ends the game. Refer to "Bots". |
 | `debug.bot_trace` | `false` | `HALO_BOT_TRACE` | Each bot's way in the log every second. |
-| `debug.bot_peaceful` | `false` | `HALO_BOT_PEACEFUL` | Bots that only roam and never fight, for testing how they get about. |
-| `server.bot_difficulty` | `normal` | `HALO_SERVER_BOT_DIFFICULTY` | How well the bots fight: `easy`, `normal`, `hard` or `legendary`. Refer to "Bots". |
+| `server.bot_difficulty` | `normal` | `HALO_SERVER_BOT_DIFFICULTY` | How well the bots fight: `peaceful` (they never fight), `easy`, `normal`, `hard` or `legendary`. Refer to "Bots". |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds (without a window, as on SIGTERM). `0`: never. |
 | `debug.screenshot_directory`, `debug.screenshot_every` | `""`, `0` | `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | The game writes each Nth frame to this folder as a BMP file. |
@@ -1161,14 +1160,19 @@ seconds and goes there.
 
 | Difficulty | Reaction | Aim turns | Aim error | Sees | Field of view |
 | --- | --- | --- | --- | --- | --- |
+| `peaceful` | never fights | - | - | - | - |
 | `easy` | 600 ms | 120 degrees/s | large | 25 world units | 90 degrees |
 | `normal` (default) | 400 ms | 205 degrees/s | medium | 35 world units | 110 degrees |
 | `hard` | 250 ms | 290 degrees/s | small | 45 world units | 120 degrees |
 | `legendary` | 170 ms | 410 degrees/s | very small | 55 world units | 130 degrees |
 
 Grenades, choosing a weapon by the range, objectives (CTF, King of the
-Hill, Oddball) and vehicles are for later. `debug.bot_peaceful` makes bots
-that only roam.
+Hill, Oddball) and vehicles are for later.
+
+Peaceful bots roam, take weapons and play as the others do, but never fight:
+they never aim at a player, shoot, throw a grenade or strike. They can still
+die (a fall, another player, a skater running them over), and they are on
+the scoreboard.
 
 ### The walking graph
 
@@ -1221,10 +1225,11 @@ The host's console has a `bot` command:
 
 | Command | Effect |
 | --- | --- |
-| `bot add [count]` | Adds bots to the lobby or to the game that is in progress (1 if no count). |
+| `bot add [count] [difficulty]` | Adds bots to the lobby or to the game that is in progress (1 if no count; `server.bot_difficulty` if no difficulty). |
+| `bot difficulty <level> [name]` | Sets the difficulty (`peaceful`, `easy`, `normal`, `hard` or `legendary`) of every bot, or of the bot named. |
 | `bot remove <name>` | Removes a bot. The name can be the full name, the name without `[BOT] `, or the start of either. |
 | `bot remove all` | Removes all the bots. |
-| `bot list` | Lists the bots and their teams. |
+| `bot list` | Lists the bots, their teams and their difficulties. |
 
 `kick <name>` and `ban <name>` remove a bot (a bot has no address to keep
 out), and so do Kick and Ban on the scoreboard. A vote to kick a bot is
