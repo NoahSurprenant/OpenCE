@@ -284,8 +284,11 @@ STOCK_MAPS = ("beavercreek", "bloodgulch", "boardingaction", "carousel", "chillo
 # the multiplayer weapons the walking graph reaches on each stock map, at
 # least (the rest of each map's are all of them): those it does not, a few,
 # need a map's own links checked in the game (bots_nav_game.c's overrides)
-WEAPONS_REACHED_AT_LEAST = {"beavercreek": 34, "chillout": 32, "damnation": 35, "hangemhigh": 44, "longest": 36,
-                            "ratrace": 29, "wizard": 42}
+# (Damnation's other five lie in a duct behind a slit no biped passes;
+# Longest's four are on platforms 2.1 high with nothing to climb from, and
+# Chillout's, Hang 'Em High's and Rat Race's one each on ledges too narrow
+# for the graph)
+WEAPONS_REACHED_AT_LEAST = {"chillout": 32, "damnation": 41, "hangemhigh": 44, "longest": 36, "ratrace": 29}
 GRAPH = re.compile(r"bots: walking graph of (\w+) (built|read from the cache) in (\d+) ms: (\d+) nodes, .*? spawns "
                    r"(\d+)/(\d+) reach the main part, weapons (\d+)/(\d+) are reached from it")
 
@@ -393,9 +396,15 @@ def test_bots_roam(tmp_path):
         print(f"{name}: {m[2]} goals, {m[3]} paths ({m[4]} failed), stuck {m[5]} times, went {m[6]} world units, "
               f"{m[7]} drops, {m[8]} jumps, {m[9]} teleporters, {m[10]} ladders up, {m[11]} down, {m[12]} weapons taken")
     assert len(last) == 4, last
+    stuck = {name: counts.get("seconds", 0) for name, counts in _reports(_log(tmp_path, "server")).items()
+             if counts["tick"] == 2400}
+    print(f"seconds stuck in 80: {stuck}")
     for name, m in last.items():
         assert int(m[2]) + int(m[12]) >= 1, f"{name} reached no goal and took no weapon: {m}"
         assert int(m[6]) >= 60, f"{name} went only {m[6]} world units: {m}"
+        # (Boarding Action's ladders and lips: 9 to 21 seconds stuck in 80 before
+        # the climb counted as getting somewhere, 0 to 3 since)
+        assert stuck.get(name, 0) <= 12, f"{name} was stuck {stuck.get(name)} seconds of 80: {m}"
     assert sum(int(m[10]) + int(m[11]) for m in last.values()) >= 1, f"no bot took a ladder: {last}"
 
 

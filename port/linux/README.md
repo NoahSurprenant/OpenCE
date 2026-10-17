@@ -1247,23 +1247,53 @@ The host builds a walking graph of each map that it plays with bots
   of a map once. It is made from the player's own map files, and is never in
   the repository or in a build.
 - A bot plans its way with A* and follows it: it cuts across between nodes
-  that lie along a line, hops up steps, jumps, drops, steps onto a
-  teleporter (off it and on again if it came out on it), and climbs
-  ladders. When it gets nowhere, it jumps, then plans again, then keeps off
-  the edge it was on and picks another place.
+  that lie along a line where nothing is in the way, hops up steps, jumps
+  (a long jump with a run-up), drops, steps onto a teleporter (off it and on
+  again if it came out on it), and climbs ladders (going up or down counts
+  as getting somewhere; near the top it steps off with a hop).
+- A point it comes no nearer for a moment (a wall, a railing or a player
+  between) is as near as it gets: it goes on. Pushing on and hardly moving
+  for a quarter of a second, it hops (a lip or a ridge the graph walks
+  over). When it still gets nowhere, it jumps and steps aside, then plans
+  again, then keeps off the edge it was on and picks another place. An edge
+  that a bot fails costs more for every bot on that map, and a second
+  failure removes it.
+- It takes a weapon from the ground with the swap button when its hands
+  are full (the weapon in hand is dropped), and swaps no other for 30
+  seconds after. It gives up on an item that it stood at for 2 seconds
+  without taking it.
+- Each bot's report in the log has the seconds it was stuck (each look at
+  how far it had come, a second and a half apart, that found it had not).
+  Four bots roaming each stock map for 80 seconds were stuck 0 to 6 seconds
+  each (0 to 18 before these rules).
 
 `debug.bot_nav_check` builds the graph of each map the host plays, logs
 how much of the map it serves, and ends the game, so that a dedicated
 server with `server.maps` set to the thirteen stock maps goes through them
 a map at a time (about three and a half minutes). Every spawn of the 13
-stock maps reaches the main part, and the main part reaches 514 of their 534
-multiplayer weapons: all of them on 7 maps; the rest are on Beaver Creek (34
-of 35), Chillout (32 of 33), Damnation (35 of 46: most of its upper tier),
-Hang 'Em High (44 of 45), Longest (36 of 40), Rat Race (29 of 30) and Wizard
-(42 of 44). The check logs each one that is not reached and why. A table of
-hand-checked extra links for a map (`bots_nav_overrides` in
-`game/bots_nav_game.c`, points only) is for those; it is empty for now.
-`debug.bot_trace` logs each bot's way every second.
+stock maps reaches the main part, and the main part reaches 523 of their 534
+multiplayer weapons: all of them on 9 maps. The check logs each one that is
+not reached, why, and what is over it.
+
+A table of hand-checked links for a map (`bots_nav_overrides` in
+`game/bots_nav_game.c`, points only) adds what the generator does not
+find: Damnation's upper tier (its floor meets the main part's at a corner,
+across a little hole: a hop), Wizard's raised middle (a running jump across
+the moat from each corner of the walkway; bots make it about one try in
+five, and give up on a corner they fail twice), and the rock by Beaver
+Creek's blue base. Not reached, and why:
+
+- Damnation, 5 of 46: they lie in a duct behind a slit that no biped
+  passes.
+- Longest, 4 of 40: they are on platforms 2.1 world units high, with
+  nothing to climb from.
+- Chillout, Hang 'Em High and Rat Race, 1 each: on ledges or beams too
+  narrow for the graph.
+
+`debug.bot_goal` sends every bot again and again to one point, to check a
+map's links in the game (each arrival is logged). `debug.bot_trace` logs
+each bot's way every second, each time it gets stuck, and what is in its
+way.
 
 The host's console has a `bot` command:
 
@@ -1290,7 +1320,7 @@ bots (`HALO_TEST_OLD_CLIENT`) on a server with bots; a listen host with
 bots and a client; the walking graph of every stock map
 (`test_bots_nav_on_every_map`: each map's reach, and the cache); and four
 bots roaming Boarding Action (`test_bots_roam`: goals reached, ladders
-taken); and four bots playing a two-minute Slayer on Hang 'Em High
+taken, no bot stuck more than 12 seconds of 80); and four bots playing a two-minute Slayer on Hang 'Em High
 (`test_bots_slayer`: each kills and dies, weapons taken). CI runs them in the `bots` job on `opence-k8s`, in about 12
 minutes. `tools/harness/tests/test_bots_nav.py` tests the graph's builder on
 made-up levels, without the game.
