@@ -27,6 +27,7 @@ boolean network_game_server_playing(
 struct network_game_server;
 struct game_variant;
 struct network_player;
+struct network_game;
 
 struct network_game_server *network_game_server_create(
 	void);
@@ -67,6 +68,8 @@ a bot added to the lobby or the game (added: as the game has it), removed,
 and found */
 boolean network_game_server_port_machine_is_bot(
 	long machine_index);
+boolean network_game_server_port_room_for_person(
+	struct network_game *game);
 boolean network_game_server_port_add_bot(
 	wchar_t const *name,
 	struct network_player *added);

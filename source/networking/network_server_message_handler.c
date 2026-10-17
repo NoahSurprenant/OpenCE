@@ -1769,7 +1769,7 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 			once it is over, nor in progress when no player can join it) */
 			if (network_game_server_get_state(server, NULL) == _network_game_server_state_ingame
 				? network_game_server_accepts_late_joins(server)
-				: network_game_server_game_is_open(server) && network_game_has_free_player_slot(game))
+				: network_game_server_game_is_open(server) && network_game_server_port_room_for_person(game))
 			{
 				advertisement.flags |= FLAG(_game_advertisement_open_bit);
 			}
@@ -1923,7 +1923,8 @@ static boolean network_game_server_handle_message_client_join_game_request(
 			fill it) is full: a machine that joined could add none, and held
 			the countdown for ever */
 			boolean full = network_game_server_get_state(server, NULL) == _network_game_server_state_pregame &&
-				!network_game_has_free_player_slot(network_game_server_get_game(server));
+				/* (port: a bot leaves for a person) */
+				!network_game_server_port_room_for_person(network_game_server_get_game(server));
 
 			/* port: its hardware id, as it tells it: hex only (anything else
 			left out), no more than its field; the host logs it, and refuses

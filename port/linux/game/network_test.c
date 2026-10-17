@@ -1118,8 +1118,11 @@ void network_test_update(
 			{
 				char const *server_name = config_string("network.server_name");
 				int online = config_boolean("network.online");
+				/* port: server.max_players, a dedicated server's (0: every
+				player the build holds) */
+				long maximum_players = network_test.dedicated ? config_integer("server.max_players") : 0;
 
-				if (server_name && server_name[0])
+				if ((server_name && server_name[0]) || maximum_players > 0)
 				{
 					wchar_t wide[NETWORK_GAME_SERVER_NAME_TEXT_SIZE];
 					int index;
@@ -1128,7 +1131,7 @@ void network_test_update(
 						wide[index] = (wchar_t)(unsigned char)server_name[index];
 					wide[index] = 0;
 					/* (0: the most players the build holds, as the menus leave it) */
-					network_game_server_port_set_settings(wide, 0);
+					network_game_server_port_set_settings(wide, maximum_players);
 				}
 				/* port: (a dedicated server only: the tests' hosts stay unlisted) */
 				if (network_test.dedicated)

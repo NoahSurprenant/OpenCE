@@ -2844,6 +2844,8 @@ VOTING), PASSWORD's and MAP SHARING's (its help_strings, tools/port_settings.py)
 #define COOPERATIVE_VOICE_OPTIONS_HELP 13
 #define SERVER_PASSWORD_HELP 14
 #define MAP_SHARE_OPTIONS_HELP 15
+/* (BOTS', a multiplayer game's: tools/port_settings.py's BOT_SETUP) */
+#define BOT_OPTIONS_HELP 16
 
 /* co-op's EXTRA ENEMIES' choices (network.coop_enemies_mode's values, as
 gametype_options' coop_extra_enemies_spinner has them, in this order): its
@@ -2986,6 +2988,10 @@ static void server_settings_update(struct widget_instance *list)
 			/* (MAP SHARING's, any game's: map_share.c) */
 			else if (help && list->focused_child == named(list, "op_map_share_options", 0))
 				help->parameters.text_box.string_list_index = MAP_SHARE_OPTIONS_HELP;
+			/* (BOTS, a multiplayer game's: bots.c) */
+			visible_set(named(list, "op_bot_options", 0), !cooperative);
+			if (help && list->focused_child == named(list, "op_bot_options", 0))
+				help->parameters.text_box.string_list_index = BOT_OPTIONS_HELP;
 		}
 	}
 	/* LISTING (an internet game's): PUBLIC, listed in everyone's server
@@ -4757,6 +4763,12 @@ static struct gametype_option const gametype_options[] =
 	{ "map_share_spinner", _option_setting, 0, 0, 2, { 0 }, "network.map_share", { "true", "false" } },
 	{ "map_share_upload_spinner", _option_setting, 0, 0, 6, { 0 }, "network.map_share_upload",
 		{ "256", "512", "1024", "2048", "4096", "8192" } },
+	/* bots' (Server Setup's BOTS: tools/port_settings.py's BOT_SETUP; bots.c) */
+	{ "bots_spinner", _option_setting, 0, 0, 16, { 0 }, "server.bots",
+		{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" } },
+	{ "bot_difficulty_spinner", _option_setting, 0, 0, 5, { 0 }, "server.bot_difficulty",
+		{ "peaceful", "easy", "normal", "hard", "legendary" } },
+	{ "bots_fill_spinner", _option_setting, 0, 0, 2, { 0 }, "server.bots_fill", { "false", "true" } },
 	/* vehicle options (the side's set and counts: vehicles_update) */
 	{ "vehicles_respawn_spinner", _option_short, OPTIONS_FIELD(vehicle_respawn_time), 0, 7,
 		{ 0, 30, 60, 90, 120, 180, 300 } },

@@ -146,6 +146,9 @@ try {
       // policy drops broadcasts, and the browser joins over WebRTC)
       HALO_NET_BROADCAST: '127.0.0.1',
       HALO_UPDATE_ANSWER: 'never', HALO_EXIT_AFTER: '600',
+      // (two bots, which the browser must see as players of the server's bot
+      // machine: port/linux/game/bots.c)
+      HALO_SERVER_BOTS: '2',
     });
     const server = spawn(halo, [], { cwd: path.join(work, 'server'), env });
     server.stdout.on('data', lines('server', serverLines));
@@ -211,13 +214,22 @@ try {
   await page.waitForFunction(() => !document.querySelector('#play').disabled, null, { timeout: 60000 });
   await page.click('#play');
   const ticks = () => browserLines.filter((line) => /network test: tick \d+ .*player 0: \(/.test(line)).length;
-  const joined = () => external || serverLines.some((line) => /server: .+ joined/.test(line));
+  const joined = () => external || serverLines.some((line) => /server: (?!\[BOT\]).+ joined/.test(line));
   if (!await until(() => ticks() >= TICKS && joined(), 240)) {
     fail(`the browser did not play on the server (${ticks()} ticks logged` +
       `${external ? '' : joined() ? '; the server saw it join' : '; the server saw nobody join'})`);
   }
   if (!external && !serverLines.some((line) => /WebRTC connected to player .*browser/.test(line))) {
     fail('the server had no WebRTC connection');
+  }
+  // the server's bots, seen in the browser as other players, on the bot
+  // machine (127), moving
+  if (!external) {
+    const bots = new Set(browserLines.map((line) => /network test: player \d+ is named (\[BOT\] \w+)/.exec(line))
+      .filter(Boolean).map((match) => match[1]));
+    const botTicks = browserLines.filter((line) => /network test: tick \d+ .* m127/.test(line)).length;
+    console.log(`the browser saw the bots ${[...bots].join(', ') || 'none'} (${botTicks} seconds on the bot machine)`);
+    if (bots.size < 2 || botTicks < 3) fail('the browser did not see the server\'s two bots play');
   }
 
   // the browser's chosen path: the forwarded address

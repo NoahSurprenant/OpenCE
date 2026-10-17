@@ -415,6 +415,8 @@ the setting for one start of the game. It has priority over the file.
 | `server.game_types` | `"slayer"` | `HALO_SERVER_GAME_TYPES` | The game types (with commas between them) of each map of `server.maps` that has no game type of its own, in turn: `slayer`, `team_slayer`, `ctf`, `king`, `oddball`, `race` and the other built-in game types. |
 | `server.time_limit` | `15` | `HALO_SERVER_TIME_LIMIT` | The longest time of a game of a dedicated server, in minutes. `0`: the limit of the game type (the built-in game types have none). |
 | `server.score_limit` | `0` | `HALO_SERVER_SCORE_LIMIT` | The score to win a game of a dedicated server. `0`: the score of the game type. |
+| `server.bots_fill` | `false` | `HALO_SERVER_BOTS_FILL` | `server.bots` is how many players the game has in all: a bot leaves as a person joins, and comes back as one leaves. Refer to "Bots". |
+| `server.max_players` | `0` | `HALO_SERVER_MAX_PLAYERS` | The most players (people and bots) in a dedicated server's games; 0 for the build's 128. |
 | `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 16. Refer to "Bots". |
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays, logs how much of the map it reaches, and ends the game. Refer to "Bots". |
@@ -1132,6 +1134,15 @@ Co-op games have no bots.
   as the host's own players do.
 - The bots are on machine slots of their own, from the last slot (127)
   down, four bots to a slot. No connection uses these slots.
+- When a person joins a game that is full, a bot leaves at once to make
+  room for them (one of the larger team, so that the teams stay even), and
+  comes back when a person leaves. With `server.bots_fill`, `server.bots`
+  is how many players the game has in all: a bot leaves as each person
+  joins. `server.max_players` sets how many players a dedicated server's
+  games take (0: 128).
+- A host that the menus make sets them in Server Setup's BOTS screen
+  (BOTS, DIFFICULTY and FILL, which write these settings); a change in the
+  lobby takes effect at once.
 - A bot plays Slayer: it roams the map along the walking graph (below),
   takes weapons lying about that it has none of, and fights the players of
   the other team (anyone, without teams) that it sees. In the other game
