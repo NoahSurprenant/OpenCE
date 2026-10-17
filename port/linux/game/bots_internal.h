@@ -23,6 +23,9 @@ struct bot_statistics
 	long paths_planned;
 	long paths_failed;
 	long stuck;
+	/* the ticks it spent getting nowhere on its way (each look at how far
+	it had come that found it had not) */
+	long stuck_ticks;
 	real travelled;
 	/* the drops, jumps, teleporters and ladders it went by (bots_nav.h's edge types) */
 	long moves[NUMBER_OF_BOTS_NAV_EDGE_TYPES];
@@ -150,6 +153,10 @@ struct bot_brain
 	/* a weapon it goes to take (NONE for none), until when it tries, and
 	when it looks for one next */
 	long pickup_object;
+	long pickup_at_ticks;
+	/* the tick before which it swaps no weapon of its own for one on the
+	ground (one swap, then a while) */
+	long pickup_swap_tick;
 	real_point3d pickup_position;
 	long pickup_until_tick;
 	long pickup_look_tick;
@@ -158,6 +165,23 @@ struct bot_brain
 	/* the goal it was given fighting, and when */
 	long combat_goal_node;
 	long combat_goal_tick;
+	/* standing its ground in a fight (last tick): not getting nowhere */
+	boolean holding;
+	/* its approach to the point it heads for (the step of its way, the
+	nearest it came, the ticks since it came nearer: bot_near_enough) */
+	long approach_step;
+	real approach_best;
+	long approach_ticks;
+	/* stepping aside, getting nowhere: the ticks left, and to which side */
+	long sidestep_ticks;
+	real sidestep_side;
+	/* how far it went last tick, and the ticks it has pushed on a walk
+	while hardly moving (a lip the graph walks over: a hop) */
+	real last_step;
+	long stall_ticks;
+	/* a long jump's run-up: the step of its way it is for, and whether done */
+	long run_up_step;
+	boolean run_up_done;
 };
 
 /* a bot of the host's (bots.c) */

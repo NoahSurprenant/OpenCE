@@ -363,7 +363,7 @@ def _nav_check_again(tmp_path, server, maps, map_names):
 
 
 ROAMED = re.compile(r"bots: (\[BOT\] \w+) at tick (\d+): (\d+) goals reached, (\d+) paths \((\d+) failed\), stuck (\d+) "
-                    r"times, went (\d+) world units \((\d+) drops, (\d+) jumps, (\d+) teleporters, (\d+) ladders up, "
+                    r"times(?: \(\d+ seconds\))?, went (\d+) world units \((\d+) drops, (\d+) jumps, (\d+) teleporters, (\d+) ladders up, "
                     r"(\d+) down\); \d+ targets seen, fired \d+ ticks, (\d+) weapons taken")
 
 

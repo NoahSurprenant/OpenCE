@@ -553,6 +553,10 @@ static const struct config_setting config_settings[] =
 	{ "debug.bot_trace", _config_boolean, "false", "HALO_BOT_TRACE", _environment_value, _platform_all,
 		"Each bot's way (where it is, the edge of the walking graph it is on,\n"
 		"where it heads) in the log every second, for working on the bots." },
+	{ "debug.bot_goal", _config_string, "\"\"", "HALO_BOT_GOAL", _environment_value, _platform_all,
+		"\"x y z\": every bot goes to the walking graph's node at this point, and\n"
+		"logs when it gets there (then roams a while and goes again), to check a\n"
+		"map's links (bots_nav_game.c's overrides). Empty: none." },
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>[:<variant>,<variant>...]\" hosts a game on that map with those\n"
