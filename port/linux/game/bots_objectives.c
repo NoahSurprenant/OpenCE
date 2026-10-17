@@ -42,6 +42,9 @@ netgame flags), as a place a bot goes to, holds, or carries something to:
 
 #include <math.h>
 
+/* the platform layer's (port_config.c, the port's log) */
+int config_boolean(const char *name);
+void platform_log(const char *format, ...);
 /* game_engine_oddball.c's: whether the player has a ball */
 boolean player_has_ball(long player_index);
 
@@ -423,6 +426,8 @@ void bot_objective_update(
 {
 	struct game_variant *variant = game_engine_running() ? game_engine_get_variant() : NULL;
 
+	short before = objective->kind;
+
 	csmemset(objective, 0, sizeof(*objective));
 	objective->kind = _bot_objective_none;
 	objective->object_index = NONE;
@@ -449,5 +454,20 @@ void bot_objective_update(
 		break;
 	default:
 		break;
+	}
+	if (objective->kind != before && config_boolean("debug.bot_trace"))
+	{
+		struct object_datum *unit = object_get(unit_index);
+
+		struct unit_datum *carrier = (struct unit_datum *)unit;
+		long held = carrier->unit.current_weapon_index != NONE ? carrier->unit.weapon_object_indices[carrier->unit.current_weapon_index] : NONE;
+
+		platform_log("bots: objective %p %d -> %d at (%.1f %.1f %.1f): to (%.1f %.1f %.1f) radius %.1f; body %.2f shield %.2f, "
+			"in hand %s (slot %d, desired %d), throw state %d", (void *)bot,
+			(int)before, (int)objective->kind, unit->object.position.x, unit->object.position.y, unit->object.position.z,
+			objective->point.x, objective->point.y, objective->point.z, objective->radius, unit->object.body_vitality,
+			unit->object.shield_vitality, held != NONE ? tag_get_name(object_get(held)->definition_index) : "-",
+			(int)carrier->unit.current_weapon_index, (int)carrier->unit.desired_weapon_index,
+			(int)carrier->unit.grenade_throw_state);
 	}
 }

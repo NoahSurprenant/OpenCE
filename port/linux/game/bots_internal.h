@@ -6,6 +6,8 @@
 #include "bots.h"
 #include "bots_nav.h"
 
+struct unit_datum;
+
 /* the most a bot looks up or down: the game's own limit for a player's
 aim is 85.5 degrees (player_control.c's valid_euler_angles2d) */
 #define BOT_MAXIMUM_PITCH_DEGREES 85.0f
@@ -335,6 +337,9 @@ boolean bot_cover_goal(
 	struct bot *bot,
 	real_point3d const *position,
 	struct bots_nav_point *goal);
+/* (bots_combat.c) whether the unit has a flag or a ball in hand */
+boolean bot_holds_flag(
+	struct unit_datum *unit);
 /* (bots_objectives.c) the bot's objective in the game type being played */
 void bot_objective_update(
 	struct bot *bot,

@@ -1123,11 +1123,10 @@ static boolean bot_objective_move(
 		bot_action_idle(action, brain->yaw, brain->pitch);
 		if (distance > 0.2f)
 			bot_move_toward(action, brain, position, &objective->point);
-		if (objective->kind == _bot_objective_take && now % 8 < 2)
-		{
+		/* (a ball taken with the action button; a flag is taken by touching
+		it; neither with the swap button, which would put one in hand down) */
+		if (objective->kind == _bot_objective_take && now % 8 < 2 && !bot_holds_flag(unit_get(unit_index)))
 			SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
-			SET_FLAG(action->control_flags, _unit_control_swap_weapons_bit, TRUE);
-		}
 		brain->check_position = *position;
 		brain->check_ticks = BOT_CHECK_TICKS;
 		brain->progress_ticks = 0;
@@ -1405,14 +1404,15 @@ void bot_brain_think(
 	}
 	else
 	{
+		boolean urgent;
+
 		brain->combat_goal_node = NONE;
 		brain->holding = FALSE;
 		/* (an objective that cannot wait - a flag to carry home or to take, a
 		ball, a carrier to hunt - first; then an item it wants; then the
 		objective's place to be; then a noise it heard; then roaming) */
-		boolean urgent = brain->objective.kind == _bot_objective_carry || brain->objective.kind == _bot_objective_take ||
+		urgent = brain->objective.kind == _bot_objective_carry || brain->objective.kind == _bot_objective_take ||
 			brain->objective.kind == _bot_objective_hunt;
-
 		if (nav && !urgent)
 			bot_pickup_goal(bot, nav, unit_index, &position);
 		else
