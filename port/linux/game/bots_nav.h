@@ -18,7 +18,7 @@ memory and exact maths only), so tools/harness can build it alone. */
 #define __BOTS_NAV_H
 
 /* the generator's version: a graph cached by another is built again */
-#define BOTS_NAV_GENERATOR_VERSION 1
+#define BOTS_NAV_GENERATOR_VERSION 2
 
 /* how a bot goes along an edge */
 enum
@@ -124,7 +124,9 @@ struct bots_nav_edge
 	long target;
 	float cost;
 	unsigned char type;
-	unsigned char pad[3];
+	/* (bots_brain.c) a bot failed to go along it on this map */
+	unsigned char failed;
+	unsigned char pad[2];
 	/* where the move starts and ends (a drop's edge, a jump's take-off) */
 	struct bots_nav_point from, to;
 };

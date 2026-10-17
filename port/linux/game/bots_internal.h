@@ -10,6 +10,9 @@
 aim is 85.5 degrees (player_control.c's valid_euler_angles2d) */
 #define BOT_MAXIMUM_PITCH_DEGREES 85.0f
 
+/* how long a bot goes on to see to a noise it heard (ticks) */
+#define BOT_INVESTIGATE_FORGET_TICKS (6 * TICKS_PER_SECOND)
+
 /* the most edges a bot's path has (a longer way is gone along in parts) */
 #define BOT_PATH_MAXIMUM 256
 
@@ -20,12 +23,28 @@ struct bot_statistics
 	long paths_planned;
 	long paths_failed;
 	long stuck;
+	/* the ticks it spent getting nowhere on its way (each look at how far
+	it had come that found it had not) */
+	long stuck_ticks;
 	real travelled;
 	/* the drops, jumps, teleporters and ladders it went by (bots_nav.h's edge types) */
 	long moves[NUMBER_OF_BOTS_NAV_EDGE_TYPES];
 	long targets_seen;
 	long ticks_fired;
 	long weapons_taken;
+	/* the equipment it took (grenades, powerups) */
+	long items_taken;
+	/* its grenades (bots_grenades.c): thrown, and the players they killed:
+	enemies, itself and team mates (bots_note_kill) */
+	long grenades_thrown;
+	long grenade_hits;
+	long grenade_kills;
+	long grenade_suicides;
+	long team_kills;
+	/* the noises it went to see (bots_hearing.c), and the grenades it ran
+	from */
+	long noises_heard;
+	long grenades_dodged;
 };
 
 /* a bot's fighting (bots_combat.c) */
@@ -50,6 +69,37 @@ struct bot_combat
 	/* its strafing */
 	real strafe_direction;
 	long strafe_until_tick;
+	/* what it heard (bots_hearing.c): where it reckons the noise was (no
+	better than an ear: off by more the further it was), when, whose (NONE:
+	nobody's it knows), until when it turns to look, and whether it has yet
+	to go and see */
+	real_point3d heard_position;
+	long heard_tick;
+	long heard_player;
+	long look_until_tick;
+	boolean heard_new;
+	/* a live grenade near it: where, and until when it runs from it */
+	real_point3d danger_position;
+	long danger_until_tick;
+	/* its grenades (bots_grenades.c): the earliest it thinks of throwing
+	again; a throw under way: its kind, the aim it holds, when it began and
+	whether the button went down */
+	long grenade_after_tick;
+	boolean throwing;
+	short throw_type;
+	real throw_yaw, throw_pitch;
+	long throw_tick;
+	boolean throw_pressed;
+	/* until when it backs away from its target (a plasma grenade thrown at
+	it may be stuck to it) */
+	long back_off_until_tick;
+	/* until when it comes no nearer its target (its grenade goes off) */
+	long hold_until_tick;
+	/* (debug.bot_trace) its grenade in the air, where it last was, and where
+	it was thrown at */
+	long grenade_object;
+	real_point3d grenade_last;
+	real_point3d grenade_aimed;
 };
 
 /* a bot's thinking, from one tick to the next */
@@ -103,6 +153,11 @@ struct bot_brain
 	/* a weapon it goes to take (NONE for none), until when it tries, and
 	when it looks for one next */
 	long pickup_object;
+	long pickup_at_ticks;
+	/* the tick before which it swaps no weapon of its own for one on the
+	ground (one swap, then a while) */
+	long pickup_swap_tick;
+	real_point3d pickup_position;
 	long pickup_until_tick;
 	long pickup_look_tick;
 	/* the last weapon it gave up on (not tried again) */
@@ -110,6 +165,23 @@ struct bot_brain
 	/* the goal it was given fighting, and when */
 	long combat_goal_node;
 	long combat_goal_tick;
+	/* standing its ground in a fight (last tick): not getting nowhere */
+	boolean holding;
+	/* its approach to the point it heads for (the step of its way, the
+	nearest it came, the ticks since it came nearer: bot_near_enough) */
+	long approach_step;
+	real approach_best;
+	long approach_ticks;
+	/* stepping aside, getting nowhere: the ticks left, and to which side */
+	long sidestep_ticks;
+	real sidestep_side;
+	/* how far it went last tick, and the ticks it has pushed on a walk
+	while hardly moving (a lip the graph walks over: a hop) */
+	real last_step;
+	long stall_ticks;
+	/* a long jump's run-up: the step of its way it is for, and whether done */
+	long run_up_step;
+	boolean run_up_done;
 };
 
 /* a bot of the host's (bots.c) */
@@ -159,6 +231,56 @@ void bot_combat_idle(
 	struct bot *bot,
 	long unit_index,
 	struct player_action *action);
+/* (bots_grenades.c) a throw under way, or one begun now, at the target or
+where it was last seen: the aim and the button for the tick (TRUE: it
+throws, and neither fires nor aims otherwise) */
+boolean bot_grenade_act(
+	struct bot *bot,
+	long unit_index,
+	struct player_action *action);
+/* (bots_items.c) how much the bot wants an item lying about (0: not at all;
+1: as much as a weapon it has none of), for bots_brain.c's pickups */
+real bot_item_value(
+	struct bot const *bot,
+	long unit_index,
+	long object_index);
+/* (bots_grenades.c, debug.bot_trace) where the bot's grenade went off */
+void bot_grenade_follow(
+	struct bot *bot);
+/* (bots_grenades.c) how near a grenade of the kind going off hurts */
+real bot_grenade_danger_radius(
+	short type);
+/* (bots_hearing.c) what the bot hears of its enemies (gunfire, grenades)
+when it sees nobody; the live grenades near it (any bot, a peaceful one
+too: running from a grenade is no fighting), and its moves away from one */
+void bot_hear(
+	struct bot *bot,
+	long player_index,
+	long unit_index);
+void bot_sense_danger(
+	struct bot *bot,
+	long unit_index);
+void bot_dodge(
+	struct bot *bot,
+	long unit_index,
+	struct player_action *action);
+/* (bots_combat.c) the bot's skill at its difficulty: how far it hears, how
+often it throws a grenade, how well, and how long between throws (ticks) */
+real bot_skill_hearing_range(
+	struct bot const *bot);
+real bot_skill_grenade_chance(
+	struct bot const *bot);
+real bot_skill_grenade_error(
+	struct bot const *bot);
+long bot_skill_grenade_cooldown(
+	struct bot const *bot);
+/* a normally distributed number (mean 0, spread 1) from the brain's own
+random numbers */
+real bot_gaussian(
+	struct bot_brain *brain);
+/* the player datum of a unit (NONE if no player's) */
+long bot_unit_player(
+	long unit_index);
 /* an action that does nothing (no buttons, no weapon change) */
 void bot_action_idle(
 	struct player_action *action,

@@ -6,8 +6,10 @@ bot (its field of view), near enough, and with nothing of the level or its
 scenery between the bot's eyes and the target's head or middle (the game's
 own line of sight test, which sees through two-sided surfaces: fences,
 grates). No bot sees through walls. A player who hurt it in the last second
-it knows of too, wherever they are, and turns to them. It remembers where it
-last saw its target for a few seconds, and goes there.
+it knows of too: it turns to where the shots came from, roughly (the
+direction, give or take a little). It remembers where it last saw its
+target for a few seconds, and goes there. Seeing nobody, it listens
+(bots_hearing.c).
 
 Fighting, a person's way:
 - It waits its reaction time after first seeing a target before it fires.
@@ -19,14 +21,17 @@ Fighting, a person's way:
 - It strafes while it fights (where the walking graph has floor beside it),
   closes on a far target, backs off a near one, and strikes one at hand.
 - It reloads when its magazine is empty, or low with no target in view.
-All of it set by the difficulty (bots_difficulty). Grenades and choosing a
-weapon by the range are for later. */
+- It holds its fire while a team mate is in the line of fire.
+- Now and then it throws a grenade (bots_grenades.c).
+All of it set by the difficulty (bot_skills). Choosing a weapon by the
+range is for later. */
 
 #include "cseries.h"
 #include "math/real_math.h"
 #include "memory/data.h"
 #include "game/game.h"
 #include "game/game_allegiance.h"
+#include "game/game_engine.h"
 #include "game/players.h"
 #include "items/projectile_definitions.h"
 #include "items/weapon_definitions.h"
@@ -56,15 +61,24 @@ struct bot_skill
 	/* how far off it may aim and still fire (times the target's own width
 	as seen) */
 	real fire_cone;
+	/* how far it hears gunfire and grenades (world units) */
+	real hearing_range;
+	/* its grenades: the chance it throws one at each look when a throw
+	would do (bots_grenades.c), its aim's error (radians), and the seconds
+	at least between two */
+	real grenade_chance;
+	real grenade_error;
+	real grenade_cooldown;
 };
 
 static struct bot_skill const bot_skills[NUMBER_OF_BOT_DIFFICULTIES] =
 {
-	/* peaceful (it never fights: bot_combat_engaged) */ { 18.0f, 4.5f, 0.07f, 0.10f, 1.57f, 25.0f, 1.6f },
-	/* easy */ { 18.0f, 4.5f, 0.07f, 0.10f, 1.57f, 25.0f, 1.6f },
-	/* normal */ { 12.0f, 3.0f, 0.12f, 0.06f, 1.92f, 35.0f, 1.3f },
-	/* hard */ { 7.5f, 1.8f, 0.17f, 0.035f, 2.09f, 45.0f, 1.0f },
-	/* legendary */ { 5.0f, 1.2f, 0.24f, 0.018f, 2.27f, 55.0f, 0.8f },
+	/* peaceful (it never fights: bot_combat_engaged; it throws nothing) */
+	{ 18.0f, 4.5f, 0.07f, 0.10f, 1.57f, 25.0f, 1.6f, 0.0f, 0.0f, 0.10f, 1000.0f },
+	/* easy */ { 18.0f, 4.5f, 0.07f, 0.10f, 1.57f, 25.0f, 1.6f, 18.0f, 0.02f, 0.09f, 12.0f },
+	/* normal */ { 12.0f, 3.0f, 0.12f, 0.06f, 1.92f, 35.0f, 1.3f, 26.0f, 0.05f, 0.05f, 7.0f },
+	/* hard */ { 7.5f, 1.8f, 0.17f, 0.035f, 2.09f, 45.0f, 1.0f, 32.0f, 0.08f, 0.03f, 5.0f },
+	/* legendary */ { 5.0f, 1.2f, 0.24f, 0.018f, 2.27f, 55.0f, 0.8f, 38.0f, 0.12f, 0.015f, 3.5f },
 };
 
 /* the ticks between looks, how long a target is remembered, and how long one
@@ -82,7 +96,31 @@ that hurt it is known of */
 
 /* ---------- small things */
 
-static real bot_gaussian(
+real bot_skill_hearing_range(
+	struct bot const *bot)
+{
+	return bot_skills[bot->difficulty].hearing_range;
+}
+
+real bot_skill_grenade_chance(
+	struct bot const *bot)
+{
+	return bot->difficulty == _bot_difficulty_peaceful ? 0.0f : bot_skills[bot->difficulty].grenade_chance;
+}
+
+real bot_skill_grenade_error(
+	struct bot const *bot)
+{
+	return bot_skills[bot->difficulty].grenade_error;
+}
+
+long bot_skill_grenade_cooldown(
+	struct bot const *bot)
+{
+	return (long)(bot_skills[bot->difficulty].grenade_cooldown * TICKS_PER_SECOND);
+}
+
+real bot_gaussian(
 	struct bot_brain *brain)
 {
 	/* (twelve uniforms: near enough a normal distribution) */
@@ -107,8 +145,7 @@ static real bot_angle_difference(
 	return difference;
 }
 
-/* the player datum of a unit (NONE if no player's) */
-static long bot_unit_player(
+long bot_unit_player(
 	long unit_index)
 {
 	struct unit_datum *unit = unit_index != NONE ? (struct unit_datum *)object_try_and_get(unit_index) : NULL;
@@ -161,6 +198,84 @@ static real bot_projectile_speed(
 		}
 	}
 	return 0.0f;
+}
+
+/* whether a team mate (alive, a person too) stands near the line of fire
+from the eye to the point, before it: no shooting through them */
+static boolean bot_team_mate_in_the_way(
+	long player_index,
+	long unit_index,
+	real_point3d const *eye,
+	real_point3d const *point)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	struct data_iterator iterator;
+	struct player_datum *other;
+	real sx = point->x - eye->x, sy = point->y - eye->y, sz = point->z - eye->z;
+	real length_squared = sx * sx + sy * sy + sz * sz;
+
+	if (!game_engine_has_teams() || length_squared < 0.01f)
+		return FALSE;
+	data_iterator_new(&iterator, player_data);
+	while ((other = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct object_datum *mate;
+		real t, px, py, pz;
+
+		if (iterator.datum_index == player_index || other->unit_index == NONE)
+			continue;
+		mate = object_get(other->unit_index);
+		if (TEST_FLAG(mate->object.damage_flags, _object_dead_bit) ||
+			game_team_is_enemy(unit->object.owner_team_index, mate->object.owner_team_index))
+		{
+			continue;
+		}
+		t = ((mate->object.bounding_sphere_center.x - eye->x) * sx + (mate->object.bounding_sphere_center.y - eye->y) * sy +
+			(mate->object.bounding_sphere_center.z - eye->z) * sz) / length_squared;
+		if (t <= 0.0f || t >= 1.0f)
+			continue;
+		px = eye->x + sx * t - mate->object.bounding_sphere_center.x;
+		py = eye->y + sy * t - mate->object.bounding_sphere_center.y;
+		pz = eye->z + sz * t - mate->object.bounding_sphere_center.z;
+		if (px * px + py * py + pz * pz < 0.7f * 0.7f)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* whether a team mate (alive) stands at hand in front of the bot, within a
+blow's reach of the way it faces */
+static boolean bot_team_mate_at_hand(
+	long player_index,
+	long unit_index,
+	real yaw)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	struct data_iterator iterator;
+	struct player_datum *other;
+
+	if (!game_engine_has_teams())
+		return FALSE;
+	data_iterator_new(&iterator, player_data);
+	while ((other = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct object_datum *mate;
+		real dx, dy;
+
+		if (iterator.datum_index == player_index || other->unit_index == NONE)
+			continue;
+		mate = object_get(other->unit_index);
+		if (TEST_FLAG(mate->object.damage_flags, _object_dead_bit) ||
+			game_team_is_enemy(unit->object.owner_team_index, mate->object.owner_team_index))
+		{
+			continue;
+		}
+		dx = mate->object.position.x - unit->object.position.x;
+		dy = mate->object.position.y - unit->object.position.y;
+		if (dx * dx + dy * dy < 2.2f * 2.2f && fabs(bot_angle_difference(yaw, (real)atan2(dy, dx))) < 1.0f)
+			return TRUE;
+	}
+	return FALSE;
 }
 
 /* ---------- seeing */
@@ -253,10 +368,23 @@ static void bot_perceive(
 			if (hurter && hurt->player_index != player_index && hurter->unit_index != NONE &&
 				(long)hurt->game_time_stamp + BOT_HURT_TICKS >= now && (long)hurt->game_time_stamp <= now)
 			{
+				real_point3d const *at = &object_get(hurter->unit_index)->object.position;
+				real away = (real)sqrt((at->x - eye.x) * (at->x - eye.x) + (at->y - eye.y) * (at->y - eye.y));
+
 				combat->target_player = hurt->player_index;
 				combat->target_visible = FALSE;
 				combat->last_seen_tick = now;
-				combat->last_seen_position = object_get(hurter->unit_index)->object.position;
+				/* (where the shots came from, as near as being hit tells:
+				a way to turn, not the attacker's place) */
+				if (combat->heard_player != hurt->player_index || now - combat->heard_tick > BOT_HURT_TICKS)
+				{
+					combat->last_seen_position = *at;
+					combat->last_seen_position.x += bot_gaussian(brain) * away * 0.08f;
+					combat->last_seen_position.y += bot_gaussian(brain) * away * 0.08f;
+					combat->heard_player = hurt->player_index;
+					combat->heard_tick = now;
+					combat->heard_position = combat->last_seen_position;
+				}
 				/* (hurt: its aim shaken) */
 				combat->error_scale = 1.5f;
 				return;
@@ -268,6 +396,8 @@ static void bot_perceive(
 		combat->target_visible = FALSE;
 		if (combat->target_player != NONE && now - combat->last_seen_tick > BOT_MEMORY_TICKS)
 			combat->target_player = NONE;
+		/* (nobody in sight: its ears) */
+		bot_hear(bot, player_index, unit_index);
 		return;
 	}
 	if (best_player != combat->target_player || !combat->target_visible)
@@ -296,6 +426,9 @@ void bot_combat_reset(
 	csmemset(combat, 0, sizeof(*combat));
 	combat->target_player = NONE;
 	combat->error_scale = 1.0f;
+	combat->heard_tick = -BOT_INVESTIGATE_FORGET_TICKS;
+	combat->heard_player = NONE;
+	combat->grenade_object = NONE;
 }
 
 boolean bot_combat_engaged(
@@ -340,8 +473,12 @@ struct bots_nav_point const *bot_combat_goal(
 	real dx = combat->last_seen_position.x - position->x;
 	real dy = combat->last_seen_position.y - position->y;
 
-	if (combat->target_visible && dx * dx + dy * dy < BOT_FAR_RANGE * BOT_FAR_RANGE)
+	/* (in view and near enough, or its grenade about to go off: it holds) */
+	if ((combat->target_visible && dx * dx + dy * dy < BOT_FAR_RANGE * BOT_FAR_RANGE) ||
+		game_time_get() < combat->hold_until_tick)
+	{
 		return NULL;
+	}
 	goal->x = combat->last_seen_position.x;
 	goal->y = combat->last_seen_position.y;
 	goal->z = combat->last_seen_position.z;
@@ -368,6 +505,9 @@ void bot_combat_act(
 	long weapon_index;
 
 	if (!target_player || target_player->unit_index == NONE)
+		return;
+	/* (a grenade on its way out: its aim held, no shots) */
+	if (bot_grenade_act(bot, unit_index, action))
 		return;
 	target = object_get(target_player->unit_index);
 	unit_get_camera_position(unit_index, &eye);
@@ -439,6 +579,10 @@ void bot_combat_act(
 		}
 		side = combat->strafe_direction;
 		along = distance > BOT_FAR_RANGE * 0.7f ? 1.0f : distance < BOT_NEAR_RANGE ? -0.6f : 0.0f;
+		if (now < combat->hold_until_tick && along > 0.0f)
+			along = 0.0f;
+		if (now < combat->back_off_until_tick)
+			along = -1.0f;
 		/* (only onto floor: the walking graph beside it) */
 		if (nav)
 		{
@@ -475,7 +619,8 @@ void bot_combat_act(
 	cone = (real)atan2(0.35f, MAX(distance, 0.5f)) * skill->fire_cone;
 	aim_off = (real)fabs(bot_angle_difference(combat->aim_yaw, (real)atan2(dy, dx))) +
 		(real)fabs(combat->aim_pitch - (real)atan2(dz, MAX(horizontal, 0.01f)));
-	if (combat->target_visible && now >= combat->fire_after_tick && aim_off < cone && weapon_index != NONE)
+	if (combat->target_visible && now >= combat->fire_after_tick && aim_off < cone && weapon_index != NONE &&
+		!bot_team_mate_in_the_way(unit->unit.player_index, unit_index, &eye, &aim_point))
 	{
 		if (combat->burst_ticks < BOT_BURST_TICKS)
 		{
@@ -490,9 +635,10 @@ void bot_combat_act(
 	{
 		combat->burst_ticks = 0;
 	}
-	/* (a target at hand, faced: struck) */
+	/* (a target at hand, faced: struck, unless a team mate is at hand in
+	front, whom the blow would strike) */
 	if (combat->target_visible && distance < BOT_MELEE_RANGE + 0.5f && aim_off < 0.5f &&
-		now >= combat->melee_after_tick)
+		now >= combat->melee_after_tick && !bot_team_mate_at_hand(unit->unit.player_index, unit_index, combat->aim_yaw))
 	{
 		SET_FLAG(action->control_flags, _unit_control_use_equipment_bit, TRUE);
 		combat->melee_after_tick = now + TICKS_PER_SECOND;

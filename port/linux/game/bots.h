@@ -52,6 +52,15 @@ boolean bots_console_command(
 bots: a bot leaves at once */
 void bots_make_room(
 	void);
+/* (damage.c, the host's) an object hurt by the damage, killed or not: a
+bot's grenade's hit on an enemy, its grenade's kill (an enemy, itself, a
+team mate), or its team kill, for its statistics */
+struct damage_data;
+void bots_note_damage(
+	long object_index,
+	struct damage_data const *damage,
+	real amount,
+	boolean killed);
 /* whether the player is one of the host's bots */
 boolean bots_player_is_bot(
 	struct player_datum const *player);

@@ -317,7 +317,18 @@ struct bots_nav_override
 
 static struct bots_nav_override const bots_nav_overrides[] =
 {
-	{ NULL, { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, _bots_nav_walk } },
+	/* Damnation: the upper floor (6.7) meets the main part's at a corner,
+	across a little hole: a hop each way */
+	{ "damnation", { { 4.45f, -7.05f, 6.70f }, { 5.05f, -6.55f, 6.70f }, _bots_nav_jump } },
+	{ "damnation", { { 5.05f, -6.55f, 6.70f }, { 4.45f, -7.05f, 6.70f }, _bots_nav_jump } },
+	/* Wizard: the middle's raised disc (-2.3), across the moat from the
+	walkway's four corners (-2.75): a running jump */
+	{ "wizard", { { 3.10f, -3.10f, -2.75f }, { 1.60f, -1.60f, -2.30f }, _bots_nav_jump } },
+	{ "wizard", { { 3.10f, 3.10f, -2.75f }, { 1.60f, 1.60f, -2.30f }, _bots_nav_jump } },
+	{ "wizard", { { -3.10f, 3.10f, -2.75f }, { -1.60f, 1.60f, -2.30f }, _bots_nav_jump } },
+	{ "wizard", { { -3.10f, -3.10f, -2.75f }, { -1.60f, -1.60f, -2.30f }, _bots_nav_jump } },
+	/* Beaver Creek: onto the rock by the blue base (the sniper rifle's) */
+	{ "beavercreek", { { 14.40f, 20.45f, 2.90f }, { 14.94f, 18.85f, 3.63f }, _bots_nav_jump } },
 };
 
 /* ---------- the graph */
@@ -445,12 +456,29 @@ static long bots_nav_reached(
 		else if (check)
 		{
 			struct bots_nav_point const *at = node >= 0 ? &bots_nav_game.nav.nodes[node].point : NULL;
+			struct collision_result collision;
+			real_point3d from;
+			real_vector3d up = { 0.0f, 0.0f, 3.0f };
+			boolean above;
+			char what[96];
 
-			platform_log("bots: nav check: %s %s %ld at (%.2f %.2f %.2f) not reached: %s (%.2f %.2f %.2f)%s",
+			/* (what is over it, within a biped's height and more: a low
+			ceiling, a piece of scenery) */
+			from.x = points[index].x;
+			from.y = points[index].y;
+			from.z = points[index].z + 0.05f;
+			above = collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) |
+				FLAG(_collision_test_back_facing_surfaces_bit) | FLAG(_collision_test_structure_bit) |
+				FLAG(_collision_test_objects_bit) | _collision_test_objects_all_types_flags, &from, &up, NONE, &collision);
+			snprintf(what, sizeof(what), "%s %.2f above %s", above ? "something" : "nothing",
+				above ? collision.point.z - points[index].z : 0.0f,
+				above && collision.type == _collision_result_object && object_try_and_get(collision.object_index) ?
+				tag_get_name(object_get(collision.object_index)->definition_index) : above ? "(the level)" : "");
+			platform_log("bots: nav check: %s %s %ld at (%.2f %.2f %.2f) not reached: %s (%.2f %.2f %.2f); %s",
 				bots_nav_game.map, kind, index, points[index].x, points[index].y, points[index].z,
 				!at ? "no node" : bots_nav_game.nav.nodes[node].reach == _bots_nav_reached_bit ? "its node is reached, not reaching back" :
 				bots_nav_game.nav.nodes[node].reach == _bots_nav_reaches_bit ? "its node reaches the main part, not reached" : "node",
-				at ? at->x : 0.0f, at ? at->y : 0.0f, at ? at->z : 0.0f, "");
+				at ? at->x : 0.0f, at ? at->y : 0.0f, at ? at->z : 0.0f, what);
 		}
 	}
 	return reached;
