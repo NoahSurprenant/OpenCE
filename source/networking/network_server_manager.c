@@ -475,6 +475,7 @@ symbols in this file:
 #include "interface/player_ui.h"
 #include "tag_files/tag_files.h"
 #include "map_share.h" /* port: port/linux/game/map_share.c */
+#include "bots.h" /* port: port/linux/game/bots.c */
 
 /* port: internet play's Discord presence (port/linux/src/p2p.c), and the
 server browser's listing of a public game (p2p_lobby.c) */
@@ -808,6 +809,9 @@ start, or joining the game in progress) gets the host's game update every
 tick; after that once a second (network_game_server_update_ticks) */
 static long network_game_server_frequent_updates_until[MAXIMUM_NETWORK_MACHINE_COUNT];
 
+/* port: the machine slots that hold bots (network_game_server_port_add_bot) */
+static boolean network_game_server_bot_machines[MAXIMUM_NETWORK_MACHINE_COUNT];
+
 /* port: the client machines that have slowed this countdown (once each:
 network_game_server_client_machine_may_slow_countdown) */
 static boolean network_game_server_countdown_slowed[MAXIMUM_NETWORK_MACHINE_COUNT];
@@ -829,6 +833,7 @@ enum
 void p2p_hardware_id_sanitize(char *destination, int size, const char *source);
 /* console.c's */
 void console_warning(const char *format, ...);
+void console_printf(boolean clear, const char *format, ...);
 
 /* port: the client machines to drop, as this server next looks at its
 machines: those the distributed netcode asked to (their games sped up:
@@ -983,6 +988,7 @@ static boolean network_game_server_named_machine(
 	char const *command,
 	char const *text,
 	long *machine_index,
+	long *player_list_index,
 	char *names,
 	long names_size)
 {
@@ -1046,6 +1052,13 @@ static boolean network_game_server_named_machine(
 		return FALSE;
 	}
 	*machine_index = server->game.players[found_index].machine_index;
+	*player_list_index = found_index;
+	/* (port: a bot, which the commands remove: network_game_server_kick_player) */
+	if (network_game_server_port_machine_is_bot(*machine_index))
+	{
+		network_game_server_player_name_text(&server->game.players[found_index], names, names_size);
+		return TRUE;
+	}
 	if (!VALID_INDEX(*machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) ||
 		!network_game_server_client_machine_is_joined_to_game(server, &server->client_machines[*machine_index]) ||
 		network_game_server_client_machine_is_local(server, &server->client_machines[*machine_index]))
@@ -1115,16 +1128,39 @@ static void network_game_server_kick_named_machine(
 	network_game_server_kick_pending[machine_index] = _kick_rejoinable;
 }
 
+/* port: the host's kick or ban of a bot (network_game_server_named_machine):
+the bot removed, as the bot command's "bot remove" does (port/linux/game/bots.c) */
+static boolean network_game_server_remove_named_bot(
+	char const *command,
+	long player_list_index,
+	char const *name)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	struct network_player const *player = &server->game.players[player_list_index];
+
+	if (!bots_remove(player->machine_index, player->controller_index))
+	{
+		console_warning("%s: %s cannot be removed now (between games)", command, name);
+		return FALSE;
+	}
+	console_printf(FALSE, "%s: %s removed", command, name);
+	return TRUE;
+}
+
 /* port: the host's ban command: the player's machine (as
 network_game_server_named_machine finds it) banned */
 boolean network_game_server_ban_player(
 	char const *text)
 {
 	long machine_index;
+	long player_list_index;
 	char names[96];
 
-	if (!network_game_server_named_machine("ban", text, &machine_index, names, sizeof(names)))
+	if (!network_game_server_named_machine("ban", text, &machine_index, &player_list_index, names, sizeof(names)))
 		return FALSE;
+	/* port: a bot is only removed: it has no address to keep out */
+	if (network_game_server_port_machine_is_bot(machine_index))
+		return network_game_server_remove_named_bot("ban", player_list_index, names);
 	network_game_server_ban_machine(machine_index, names);
 	return TRUE;
 }
@@ -1135,10 +1171,13 @@ boolean network_game_server_kick_player(
 	char const *text)
 {
 	long machine_index;
+	long player_list_index;
 	char names[96];
 
-	if (!network_game_server_named_machine("kick", text, &machine_index, names, sizeof(names)))
+	if (!network_game_server_named_machine("kick", text, &machine_index, &player_list_index, names, sizeof(names)))
 		return FALSE;
+	if (network_game_server_port_machine_is_bot(machine_index))
+		return network_game_server_remove_named_bot("kick", player_list_index, names);
 	network_game_server_kick_named_machine(machine_index, names);
 	return TRUE;
 }
@@ -1303,6 +1342,8 @@ struct network_game_server *network_game_server_create(
 			server->sent_start_game_message = FALSE;
 			server->time_of_first_client_loading_completion = 0;
 			csmemset(network_game_server_start_players, NONE, sizeof(network_game_server_start_players));
+			/* (port: a new server has no bots) */
+			csmemset(network_game_server_bot_machines, 0, sizeof(network_game_server_bot_machines));
 
 			if (!network_game_server_reset_to_pregame(server))
 			{
@@ -4383,6 +4424,219 @@ void network_game_server_port_clear_queued_players(
 	}
 }
 
+/* port: bots (port/linux/game/bots.c). A bot is a player the host plays
+itself, and to every machine an ordinary network player: the settings and
+_message_server_add_player_ingame carry it as they carry anyone's. It is on a
+machine slot of its own that no connection holds: not the host's own
+machine, whose players are its split screen players (a view, a controller),
+and a dedicated server has none. Bot machines are taken from the last slot
+down, each holding up to four bots (players.c's machine_add_player ends the
+game on a fifth), and are named in the machine list. The server's handling
+of its client machines passes them by: their slots have no client machine,
+and network_game_server_add_new_client gives a connection none of them
+(network_game_server_bot_machines). */
+
+boolean network_game_server_port_machine_is_bot(
+	long machine_index)
+{
+	return VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) &&
+		network_game_server_bot_machines[machine_index];
+}
+
+/* a controller of the machine none of its players has, NONE if all four have */
+static long network_game_server_free_controller(
+	struct network_game_server *server,
+	long machine_index)
+{
+	boolean used[MAXIMUM_LOCAL_PLAYERS];
+	long index;
+
+	csmemset(used, 0, sizeof(used));
+	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+	{
+		struct network_player *player = &server->game.players[index];
+
+		if (network_player_is_valid(player) && player->machine_index == machine_index)
+			used[player->controller_index] = TRUE;
+	}
+	for (index = 0; index < MAXIMUM_LOCAL_PLAYERS; index++)
+	{
+		if (!used[index])
+			return index;
+	}
+	return NONE;
+}
+
+/* a bot machine whose last bot has gone: its slot is free again */
+static void network_game_server_release_bot_machine(
+	struct network_game_server *server,
+	long machine_index)
+{
+	if (!network_game_server_port_machine_is_bot(machine_index) ||
+		network_game_server_machine_has_players(server, machine_index))
+	{
+		return;
+	}
+	network_game_remove_machine(&server->game, &server->game.machines[machine_index]);
+	network_game_server_bot_machines[machine_index] = FALSE;
+}
+
+/* adds a bot of the name (made unique, as any player's is) to the lobby or
+to the game being played; FALSE when the server is between games, or full.
+added gets the player as the game has it (machine, controller, team, slot) */
+boolean network_game_server_port_add_bot(
+	wchar_t const *name,
+	struct network_player *added)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	struct network_game_server_client_machine bot_machine;
+	struct network_player player;
+	long machine_index = NONE;
+	long controller_index = NONE;
+	boolean new_machine = FALSE;
+	long index;
+
+	if (!server || !network_game_has_free_player_slot(&server->game) ||
+		!(network_game_server_lobby_is_open(server) || server->state == _network_game_server_state_ingame))
+	{
+		return FALSE;
+	}
+	/* (a bot machine with room, else a free slot, from the last down) */
+	for (index = MAXIMUM_NETWORK_MACHINE_COUNT - 1; index >= 0 && controller_index == NONE; index--)
+	{
+		if (network_game_server_bot_machines[index])
+		{
+			machine_index = index;
+			controller_index = network_game_server_free_controller(server, index);
+		}
+	}
+	for (index = MAXIMUM_NETWORK_MACHINE_COUNT - 1; index >= 0 && controller_index == NONE; index--)
+	{
+		if (server->client_machines[index].machine_index == NONE &&
+			!network_machine_is_valid(&server->game.machines[index]) &&
+			!network_game_server_machine_has_players(server, index))
+		{
+			struct network_machine machine;
+
+			csmemset(&machine, 0, sizeof(machine));
+			ustrncpy(machine.name, L"Bots", NUMBEROF(machine.name) - 1);
+			machine.machine_index = (char)index;
+			if (!network_game_add_machine(&server->game, &machine))
+				return FALSE;
+			network_game_server_bot_machines[index] = TRUE;
+			new_machine = TRUE;
+			machine_index = index;
+			controller_index = 0;
+		}
+	}
+	if (controller_index == NONE)
+		return FALSE;
+
+	csmemset(&player, 0, sizeof(player));
+	ustrncpy(player.name, name, NETWORK_PLAYER_NAME_LENGTH - 1);
+	player.name[NETWORK_PLAYER_NAME_LENGTH - 1] = 0;
+	player.primary_color_index = NONE;
+	player.machine_index = (char)machine_index;
+	player.controller_index = (char)controller_index;
+	player.player_list_index = NONE;
+	/* (as its machine's: add_player_to_game checks that the player is) */
+	csmemset(&bot_machine, 0, sizeof(bot_machine));
+	bot_machine.machine_index = (short)machine_index;
+	if (!network_game_server_add_player_to_game(server, &bot_machine, &player))
+	{
+		if (new_machine)
+			network_game_server_release_bot_machine(server, machine_index);
+		return FALSE;
+	}
+	if (server->state == _network_game_server_state_ingame)
+	{
+		if (!network_game_server_send_player_joined_info_ingame(server, &player))
+			network_event("some machines missed a bot joining the game");
+	}
+	else if (!network_game_server_send_game_data_pregame(server))
+	{
+		network_event("network_game_server_port_add_bot() failed to send the lobby's settings");
+	}
+	if (added)
+		*added = player;
+	return TRUE;
+}
+
+/* removes the bot of the machine and controller from the lobby or the
+game, every machine told; FALSE if there is none, or between games */
+boolean network_game_server_port_remove_bot(
+	long machine_index,
+	long controller_index)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	struct network_player player;
+	long index;
+
+	if (!server || !network_game_server_port_machine_is_bot(machine_index) ||
+		server->state == _network_game_server_state_postgame)
+	{
+		return FALSE;
+	}
+	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+	{
+		if (network_player_is_valid(&server->game.players[index]) &&
+			server->game.players[index].machine_index == machine_index &&
+			server->game.players[index].controller_index == controller_index)
+		{
+			break;
+		}
+	}
+	if (index == MAXIMUM_NETWORK_PLAYER_COUNT)
+		return FALSE;
+	player = server->game.players[index];
+	if (!network_game_remove_player(&server->game, &player))
+		return FALSE;
+	if (server->state == _network_game_server_state_ingame)
+	{
+		struct message_server_remove_player_ingame remove_player;
+		void *message;
+
+		remove_player.player = player;
+		remove_player.reason = game_time_get() + NETWORK_GAME_PLAYER_QUIT_DELAY;
+		message = create_network_game_message(_message_server_remove_player_ingame, &remove_player,
+			sizeof(remove_player));
+		if (message && !network_game_server_send_message_to_all_machines(server, message))
+			network_event("some machines missed a bot leaving the game");
+	}
+	/* (in the lobby; a game that is loading quits the players gone while it
+	loaded once it has: network_game_server_remove_players_gone_while_loading) */
+	else if (network_game_server_lobby_is_open(server) && !network_game_server_send_game_data_pregame(server))
+	{
+		network_event("network_game_server_port_remove_bot() failed to send the lobby's settings");
+	}
+	network_game_server_release_bot_machine(server, machine_index);
+	return TRUE;
+}
+
+/* the game's player that is the bot of the machine and controller, NULL if
+there is none */
+struct network_player const *network_game_server_port_bot_player(
+	long machine_index,
+	long controller_index)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	long index;
+
+	if (!server || !network_game_server_port_machine_is_bot(machine_index))
+		return NULL;
+	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+	{
+		struct network_player *player = &server->game.players[index];
+
+		if (network_player_is_valid(player) && player->machine_index == machine_index &&
+			player->controller_index == controller_index)
+		{
+			return player;
+		}
+	}
+	return NULL;
+}
+
 /* port: a gametype's PC options: the menus' (player_ui_set_game_variant_options)
 when it is the menus' gametype, else its defaults */
 static void network_game_server_variant_options(
@@ -4457,7 +4711,8 @@ static boolean network_game_server_add_new_client(
 	{
 		for (i = 0; i < MAXIMUM_NETWORK_MACHINE_COUNT; i++)
 		{
-			if (server->client_machines[i].machine_index == NONE)
+			/* (port: nor a bot machine's slot, network_game_server_port_add_bot) */
+			if (server->client_machines[i].machine_index == NONE && !network_game_server_bot_machines[i])
 			{
 				struct transport_address client_address = { 0 };
 

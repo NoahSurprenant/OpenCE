@@ -2842,6 +2842,7 @@ symbols in this file:
 #include "units/units.h"
 #include "units/vehicles.h"
 #include "coop_scripts.h" /* port: port/linux/game/coop_scripts.c */
+#include "bots.h" /* port: port/linux/game/bots.c */
 #ifdef HALO_PROFILE
 #include "profile_console.h" /* port: port/linux/game/profile_console.c */
 #endif
@@ -15508,6 +15509,14 @@ static boolean hs_compile_and_evaluate_command(
 			name[length] = 0;
 			return kick ? network_game_server_kick_player(name) : network_game_server_ban_player(name);
 		}
+	}
+	/* port: the host's bots ("bot add [count]", "bot remove <name|all>",
+	"bot list": port/linux/game/bots.c), which are no script's either */
+	{
+		char const *text = hs_host_player_command(expression, "bot");
+
+		if (text)
+			return bots_console_command(text);
 	}
 	csstrncpy(buffer, expression, sizeof(buffer));
 	buffer[sizeof(buffer)-1] = 0;

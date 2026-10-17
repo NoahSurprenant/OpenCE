@@ -1,0 +1,54 @@
+/* bots.h: players the host plays itself (bots.c)
+
+A bot is an ordinary network player whom the host gives input every tick,
+on a machine slot of its own (network_server_manager.c's bot machines).
+Every machine sees it as it sees any other machine's player, so builds that
+know nothing of bots play with them. Only the host has bots: a client runs
+none of this. */
+
+#ifndef __BOTS_H
+#define __BOTS_H
+
+struct player_datum;
+
+/* the most bots a game has (four to a bot machine) */
+#define BOTS_MAXIMUM 16
+/* the tag every bot's name starts with, so that people know who is one
+(nothing on the wire says so) */
+#define BOTS_NAME_TAG L"[BOT] "
+
+/* the bots' skill (server.bot_difficulty) */
+enum
+{
+	_bot_difficulty_easy,
+	_bot_difficulty_normal,
+	_bot_difficulty_hard,
+	_bot_difficulty_legendary,
+	NUMBER_OF_BOT_DIFFICULTIES
+};
+
+/* (player_queues_new.c's update_server_next_update, the host's every tick)
+each bot's input for the tick */
+void bots_take_actions(
+	void);
+/* (main.c, every frame) the bots the settings ask for, added and removed */
+void bots_update(
+	void);
+/* a bot added to the host's lobby or game; FALSE (said) if it cannot be */
+boolean bots_add(
+	short difficulty);
+/* the bot of the bot machine and controller removed from the host's lobby
+or game (network_server_manager.c's kick and ban of one); FALSE if it
+cannot be now */
+boolean bots_remove(
+	long machine_index,
+	long controller_index);
+/* (hs.c) the host's bot command: "add [count]", "remove <name|all>",
+"list" */
+boolean bots_console_command(
+	char const *text);
+/* whether the player is one of the host's bots */
+boolean bots_player_is_bot(
+	struct player_datum const *player);
+
+#endif

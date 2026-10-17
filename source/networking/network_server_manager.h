@@ -26,6 +26,7 @@ boolean network_game_server_playing(
 
 struct network_game_server;
 struct game_variant;
+struct network_player;
 
 struct network_game_server *network_game_server_create(
 	void);
@@ -60,6 +61,21 @@ void network_game_server_port_set_playerless(
 starts with none (network_test.c's host) */
 void network_game_server_port_clear_queued_players(
 	struct network_game_server *server);
+/* port: bots (port/linux/game/bots.c): players the host plays itself, on
+machine slots of their own that no connection holds. A bot machine's index;
+a bot added to the lobby or the game (added: as the game has it), removed,
+and found */
+boolean network_game_server_port_machine_is_bot(
+	long machine_index);
+boolean network_game_server_port_add_bot(
+	wchar_t const *name,
+	struct network_player *added);
+boolean network_game_server_port_remove_bot(
+	long machine_index,
+	long controller_index);
+struct network_player const *network_game_server_port_bot_player(
+	long machine_index,
+	long controller_index);
 /* port: the players a host's game holds (a variant with teams asks for
 one on each: server_needs_more_teams) */
 long network_game_server_port_player_count(

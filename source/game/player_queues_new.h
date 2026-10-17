@@ -76,6 +76,10 @@ void update_server_handle_distributed_input(
 	struct player_action const *action,
 	unsigned short const *control_flags,
 	short count);
+/* port: a bot's action for this tick (port/linux/game/bots.c) */
+void update_server_take_bot_action(
+	long player_index,
+	struct player_action const *action);
 /* (the host) the update its last tick ran (NONE for none), and an update's
 actions (NULL once it is gone) */
 long update_server_ticked_update_number(

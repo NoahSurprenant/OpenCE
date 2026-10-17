@@ -14,6 +14,7 @@ server:
   gameTypes: [slayer, oddball]
   timeLimit: 10
   scoreLimit: 25
+  bots: 4
 network:
   tunnelPort: 27016
   publicAddress: halo.example.com:27016

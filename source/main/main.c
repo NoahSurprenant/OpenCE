@@ -689,6 +689,8 @@ void platform_wait_for_vertical_blank(void);
 /* port: a dedicated server's log, and its quitting on SIGTERM
 (port/linux/game/dedicated_server.c) */
 void dedicated_server_update(void);
+/* port: the host's bots, as many as its settings ask for (port/linux/game/bots.c) */
+void bots_update(void);
 /* port: a dedicated server stopped by a fatal error, out with status 1
 (port/linux/game/dedicated_server.c); returns on the desktop */
 void dedicated_server_fatal(char const *errors);
@@ -3567,6 +3569,8 @@ static boolean main_loop_iteration(
 			network_voice_update();
 			/* port: map sharing, in the lobby and in game (port/linux/game/map_share.c) */
 			map_share_update();
+			/* port: the host's bots (port/linux/game/bots.c) */
+			bots_update();
 			profile_scope_enter(main_network_start_frame_section)
 			connection = main_globals.connection;
 			if (connection==_game_connection_network_client)
