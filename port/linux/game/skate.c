@@ -1922,6 +1922,70 @@ static boolean skate_skater_obstacles(long object_index, real_point3d const *ska
 	return TRUE;
 }
 
+/* debug.network_test_skate: every other time a person on foot turns up right
+in the riding skater's way (the host's watcher stepping in,
+debug.network_test_skate_block, a jump of theirs to just ahead), the skater
+is pushed on to SKATE_TEST_RUN_OVER_SPEED along the way they go (a blast's
+push, halo_skate_apply_impulse, under the bail speed), so that the network
+tests have a run-over at Halo's lethal vehicle speed for certain (6.1 m/s,
+skate_authority.c) whatever speed the scripted ride had there; the others
+come as the ride has them. A person in the way: a biped obstacle to be run
+over within SKATE_TEST_RUN_OVER_AHEAD world units ahead,
+SKATE_TEST_RUN_OVER_ASIDE of the line, who was not there the tick before */
+#define SKATE_TEST_RUN_OVER_SPEED (8.5f / 3.048f)
+#define SKATE_TEST_RUN_OVER_MOST_PUSH (5.5f / 3.048f)
+#define SKATE_TEST_RUN_OVER_SURE (7.5f / 3.048f)
+#define SKATE_TEST_RUN_OVER_AHEAD 2.f
+#define SKATE_TEST_RUN_OVER_ASIDE 0.4f
+
+static void skate_test_run_over_boost(struct skate_obstacles const *kept, real_point3d const *skater)
+{
+	static long in_way = NONE;
+	static long seen = 0;
+	float const *v = skate_globals.frame.velocity;
+	real speed = (real)sqrt(v[0] * v[0] + v[1] * v[1]);
+	long found = NONE;
+	int index;
+
+	if (!(config_real("debug.network_test_skate") > 0.) || !skate_obstacles_held || !skate_local_skater_riding() ||
+		!(speed > 0.1f))
+	{
+		in_way = NONE;
+		return;
+	}
+	for (index = 0; index < kept->count && found == NONE; index++)
+	{
+		struct halo_skate_obstacle const *obstacle = &kept->obstacles[index];
+		real dx = obstacle->center[0] - skater->x;
+		real dy = obstacle->center[1] - skater->y;
+		real ahead = (dx * v[0] + dy * v[1]) / speed;
+		real aside = (real)fabs(dx * v[1] - dy * v[0]) / speed;
+
+		if (obstacle->kind == HALO_SKATE_OBSTACLE_BIPED && obstacle->run_over && ahead > 0.f &&
+			ahead < SKATE_TEST_RUN_OVER_AHEAD && aside < SKATE_TEST_RUN_OVER_ASIDE)
+		{
+			found = obstacle->tag;
+		}
+	}
+	if (found != NONE && found != in_way)
+	{
+		real push = MIN(SKATE_TEST_RUN_OVER_SPEED - speed, SKATE_TEST_RUN_OVER_MOST_PUSH);
+
+		/* (one pushed on to less than SKATE_TEST_RUN_OVER_SURE, from nearly still, does
+		not count: the next is pushed on too) */
+		if (seen % 2 == 0 && push > 0.f &&
+			halo_skate_apply_impulse(v[0] / speed * push, v[1] / speed * push, 0.f) == 0)
+		{
+			if (speed + push < SKATE_TEST_RUN_OVER_SURE)
+				seen--;
+			platform_log("skate test: a person on foot in the way, the skater pushed on from %.1f m/s to %.1f m/s",
+				speed * 3.048f, (speed + push) * 3.048f);
+		}
+		seen++;
+	}
+	in_way = found;
+}
+
 /* the obstacles around the skater's biped unit_index, to the engine */
 static void skate_send_obstacles(long unit_index)
 {
@@ -1986,6 +2050,7 @@ static void skate_send_obstacles(long unit_index)
 	}
 	kept.count = sent;
 	halo_skate_set_obstacles(kept.obstacles, kept.count, triangles, used);
+	skate_test_run_over_boost(&kept, &skater);
 	/* (the network tests, debug.network_test_skate and _duel, tell what is
 	near once a second; the engine tells of each hit: "halo-skate: hit a biped
 	at ...") */
