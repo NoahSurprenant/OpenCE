@@ -29,6 +29,7 @@ and stay from game to game as the other players do. Co-op games have none. */
 #include "networking/network_server_manager.h"
 #include "networking/network_server_manager_internal.h"
 #include "cseries/cseries_windows.h"
+#include "items/weapons.h"
 #include "objects/damage.h"
 #include "objects/objects.h"
 #include "tag_files/tag_files.h"
@@ -37,6 +38,7 @@ and stay from game to game as the other players do. Co-op games have none. */
 
 #include "bots_internal.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -255,7 +257,7 @@ static void bots_report_objective(
 	struct player_datum *player = player_try_and_get(bots_player_index(bot));
 	struct game_variant *variant = game_engine_get_variant();
 	union multiplayer_statistics const *statistics;
-	long grabs = 0, returns = 0, captures = 0, hill = 0, ball = 0;
+	long grabs = 0, returns = 0, captures = 0, hill = 0, ball = 0, laps = 0;
 
 	if (!player || !variant)
 		return;
@@ -274,11 +276,15 @@ static void bots_report_objective(
 	case game_engine_oddball:
 		ball = (unsigned short)statistics->oddball_statistics.time_with_the_ball / TICKS_PER_SECOND;
 		break;
+	case game_engine_race:
+		laps = statistics->race_statistics.laps;
+		break;
 	default:
 		return;
 	}
 	platform_log("bots: %s objective at tick %ld: %ld flag grabs, %ld flag returns, %ld flag captures, %ld hill seconds, "
-		"%ld ball seconds", name, now, grabs, returns, captures, hill, ball);
+		"%ld ball seconds, %ld race flags, %ld laps", name, now, grabs, returns, captures, hill, ball,
+		bot->brain.statistics.race_flags, laps);
 }
 
 /* every BOTS_REPORT_TICKS of a game, what each bot has done (the tests
@@ -634,6 +640,41 @@ void bots_take_actions(
 		else
 		{
 			bot_brain_think(bot, player_index, player->unit_index, &action);
+			{
+				struct unit_datum *unit = unit_get(player->unit_index);
+				long held = unit->unit.current_weapon_index != NONE ? unit->unit.weapon_object_indices[unit->unit.current_weapon_index] : NONE;
+				boolean flag = held != NONE && weapon_is_flag(held);
+				short k;
+
+				if (bot->brain.held_flag && !flag)
+					platform_log("bots: lost the flag at (%.1f %.1f %.1f): buttons %lx %lx %lx %lx weapons %d %d %d %d, now in hand %d of %d", unit->object.position.x, unit->object.position.y, unit->object.position.z,
+						bot->brain.recent_flags[0], bot->brain.recent_flags[1], bot->brain.recent_flags[2], bot->brain.recent_flags[3],
+						bot->brain.recent_weapons[0], bot->brain.recent_weapons[1], bot->brain.recent_weapons[2], bot->brain.recent_weapons[3],
+						(int)unit->unit.current_weapon_index, (int)unit_get_weapon_count(player->unit_index));
+				if (bot->brain.held_flag && !flag)
+				{
+					{
+						struct data_iterator it;
+						struct player_datum *o;
+
+						data_iterator_new(&it, player_data);
+						while ((o = (struct player_datum *)data_iterator_next(&it)) != NULL)
+							if (o->unit_index != NONE && o->unit_index != player->unit_index)
+								platform_log("bots: lost the flag: player team %d at %.2f", (int)o->team_index, (real)sqrt((object_get(o->unit_index)->object.position.x - unit->object.position.x) * (object_get(o->unit_index)->object.position.x - unit->object.position.x) + (object_get(o->unit_index)->object.position.y - unit->object.position.y) * (object_get(o->unit_index)->object.position.y - unit->object.position.y)));
+					}
+					for (k = 0; k < MAXIMUM_WEAPONS_PER_UNIT; k++)
+						if (unit->unit.weapon_object_indices[k] != NONE)
+							platform_log("bots: lost the flag: slot %d %s", (int)k, tag_get_name(object_get(unit->unit.weapon_object_indices[k])->definition_index));
+				}
+				bot->brain.held_flag = flag;
+				for (k = 3; k > 0; k--)
+				{
+					bot->brain.recent_flags[k] = bot->brain.recent_flags[k - 1];
+					bot->brain.recent_weapons[k] = bot->brain.recent_weapons[k - 1];
+				}
+				bot->brain.recent_flags[0] = action.control_flags;
+				bot->brain.recent_weapons[0] = action.desired_weapon_index;
+			}
 		}
 		update_server_take_bot_action(player_index, &action);
 	}

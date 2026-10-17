@@ -57,6 +57,8 @@ struct bot_statistics
 	long power_weapons_taken;
 	/* the times it killed itself, by any means */
 	long suicides;
+	/* the race flags it touched (bots_objectives.c) */
+	long race_flags;
 };
 
 /* a game type's objective for a bot (bots_objectives.c) */
@@ -225,6 +227,10 @@ struct bot_brain
 	struct bots_nav_point objective_planned;
 	long objective_plan_tick;
 	long objective_wander_tick;
+	/* (debug) the last ticks' buttons, and whether it held a flag */
+	unsigned long recent_flags[4];
+	short recent_weapons[4];
+	boolean held_flag;
 	/* a race's next flag; Team Slayer's team mate to go over to, and when
 	it chooses again */
 	long race_flag;

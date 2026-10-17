@@ -7097,6 +7097,10 @@ struct game_variant *game_engine_get_variant_by_name(
 		result = *build_game_variant_king(&temporary);
 	else if (csstrcmp(name, "team_king") == 0)
 		result = *build_game_variant_team_king(&temporary);
+	/* port: and juggernaut (oddball's terminator ball), for a dedicated
+	server's server.game_types */
+	else if (csstrcmp(name, "juggernaut") == 0)
+		result = *build_game_variant_juggernaut(&temporary);
 
 	*variant = result;
 

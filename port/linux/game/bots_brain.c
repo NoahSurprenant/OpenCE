@@ -1038,7 +1038,15 @@ static struct bots_nav_point const *bot_objective_combat_goal(
 		}
 		return &objective->point;
 	case _bot_objective_take:
-		return bot_flat(position, &objective->point) < 10.0f ? &objective->point : goal;
+	{
+		/* (on to it, fighting on the way, unless an enemy in view is near) */
+		struct bot_combat const *combat = &brain->combat;
+		real dx = combat->last_seen_position.x - position->x, dy = combat->last_seen_position.y - position->y;
+
+		if (combat->target_visible && dx * dx + dy * dy < 8.0f * 8.0f && bot_flat(position, &objective->point) > 3.0f)
+			return goal;
+		return &objective->point;
+	}
 	case _bot_objective_hold:
 		if (bot_flat(position, &objective->point) > objective->radius + 2.0f)
 			return &objective->point;
@@ -1454,5 +1462,16 @@ void bot_brain_think(
 		brain->jump = FALSE;
 	}
 	/* (and away from a grenade, whatever else it does) */
-	bot_dodge(bot, unit_index, action);
+	bot_dodge(bot, unit_index, action);	/* (a flag or a ball in hand: no button that puts it down - the trigger,
+	the action and reload buttons drop a flag, and a change of weapon puts
+	it away; a blow with it is struck with the melee button) */
+	if (bot_holds_flag(unit_get(unit_index)))
+	{
+		SET_FLAG(action->control_flags, _unit_control_weapon_primary_trigger_bit, FALSE);
+		action->primary_trigger = 0.0f;
+		SET_FLAG(action->control_flags, _unit_control_action_bit, FALSE);
+		SET_FLAG(action->control_flags, _unit_control_weapon_reload_bit, FALSE);
+		SET_FLAG(action->control_flags, _unit_control_swap_weapons_bit, FALSE);
+		action->desired_weapon_index = NONE;
+	}
 }

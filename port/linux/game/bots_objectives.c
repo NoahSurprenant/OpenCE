@@ -54,6 +54,8 @@ boolean player_has_ball(long player_index);
 /* how near a defender keeps to its flag's stand, an escort to the carrier,
 and how far it goes to return its flag (world units) */
 #define BOT_DEFEND_RADIUS 5.0f
+/* how near the carrier of its flag an attacker turns to hunt them */
+#define BOT_HUNT_NEAR 12.0f
 #define BOT_ESCORT_RADIUS 4.0f
 /* the hill's radius taken when its markers say nothing */
 #define BOT_HILL_RADIUS 1.5f
@@ -205,8 +207,13 @@ static void bot_objective_ctf(
 		bot_objective_at(objective, _bot_objective_carry, &home, 0.5f);
 		return;
 	}
-	/* its own flag carried off: the carrier hunted; dropped: returned */
-	if (own && own->carrier_player != NONE)
+	rank = bots_team_rank(bot, &mates);
+	/* its own flag carried off: the carrier hunted, by the defender, the
+	nearest of the team and any near (the attackers go on); dropped:
+	returned */
+	if (own && own->carrier_player != NONE &&
+		((mates > 1 && rank % 2 == 1) || bot_nearest_of_team(player_index, unit_index, &own->position) ||
+		bot_flat_distance(&unit->object.position, &own->position) < BOT_HUNT_NEAR))
 	{
 		bot_objective_at(objective, _bot_objective_hunt, &own->position, 1.0f);
 		objective->hunted_player = own->carrier_player;
@@ -218,7 +225,6 @@ static void bot_objective_ctf(
 		objective->object_index = own->object_index;
 		return;
 	}
-	rank = bots_team_rank(bot, &mates);
 	/* a defender (every second bot of a team, and the team of the one flag) */
 	if (own && (!enemy || (mates > 1 && rank % 2 == 1)) && bot_flag_stand(team, &home))
 	{
@@ -364,6 +370,7 @@ static void bot_objective_race(
 		if (bot_flat_distance(&point, &unit->object.position) < BOT_RACE_TOUCH)
 		{
 			brain->race_flag = goal + 1;
+			brain->statistics.race_flags++;
 			continue;
 		}
 		brain->race_flag = goal;

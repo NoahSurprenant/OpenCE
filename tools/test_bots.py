@@ -567,6 +567,87 @@ def test_bots_grenades(tmp_path):
     assert total("grenades dodged") >= 1, "no bot ran from a grenade"
 
 
+OBJECTIVE = re.compile(r"bots: (\[BOT\] \w+) objective at tick (\d+): (\d+) flag grabs, (\d+) flag returns, (\d+) flag "
+                       r"captures, (\d+) hill seconds, (\d+) ball seconds, (\d+) race flags, (\d+) laps")
+
+
+def _games(log):
+    """the log of each game a server played, in turn: (its game type, map, its
+    text)"""
+    parts = re.split(r"server: the game starts: (\S+) on (\w+)", log)
+    return [(parts[index], parts[index + 1], parts[index + 2]) for index in range(1, len(parts) - 2, 3)]
+
+
+def _objectives(text):
+    """each bot's last objective report in a game's text: {name: (grabs,
+    returns, captures, hill, ball, race flags, laps)}"""
+    return {m[0]: tuple(int(value) for value in m[2:]) for m in OBJECTIVE.findall(text)}
+
+
+def test_bots_ctf(tmp_path):
+    """Six bots (normal) play a three-minute Capture the Flag on Beaver Creek,
+    three against three (bots_objectives.c): the attackers take the enemy's
+    flag and carry it home, the defender stays by its own and the nearest
+    hunt a carrier of it, and a dropped flag is returned: flags are grabbed
+    and returned, and at least one is captured. About three and a half
+    minutes."""
+    maps, _ = _needs("HALO_TEST_SERVER")
+    if not Path(maps, "beavercreek.map").is_file():
+        pytest.skip("needs beavercreek.map")
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "6", "HALO_BOT_SEED": "9", "HALO_SERVER_BOT_DIFFICULTY": "normal",
+        "HALO_SERVER_MAPS": "beavercreek", "HALO_SERVER_GAME_TYPES": "ctf", "HALO_SERVER_TIME_LIMIT": "3",
+        "HALO_NET_ADDRESS": _test_address(241), "HALO_NET_BROADCAST": _test_address(242)})
+    objectives = _objectives(log)
+    teams = TEAMS_SCORE.findall(log)
+    print(f"objectives (grabs, returns, captures, ...): {objectives}; teams {teams}")
+    assert len(objectives) == 6 and teams, log[-4000:]
+    grabs, returns, captures = (sum(o[index] for o in objectives.values()) for index in range(3))
+    assert grabs >= 2, f"the bots grabbed the flags only {grabs} times"
+    assert returns >= 1, "no bot returned its flag"
+    assert captures >= 1 and sum(int(score) for score in teams[-1]) >= 1, f"no flag was captured: {objectives}, {teams}"
+
+
+def test_bots_game_types(tmp_path):
+    """Four bots (normal) play two minutes of each of King of the Hill on
+    Chillout, Oddball on Beaver Creek, Race on Blood Gulch and Juggernaut on
+    Hang 'Em High, a dedicated server's rotation (bots_objectives.c): they
+    stand on the hill (each some seconds, and the hill the most of the
+    game), take and keep the ball (each some seconds), run to the race's
+    flags in turn (some each), and in Juggernaut hunt the juggernaut and fight
+    on (kills scored, no bot standing still). About nine minutes."""
+    maps, _ = _needs("HALO_TEST_SERVER")
+    names = ("chillout", "beavercreek", "bloodgulch", "hangemhigh")
+    if not all(Path(maps, f"{name}.map").is_file() for name in names):
+        pytest.skip(f"needs {', '.join(names)}")
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "10", "HALO_SERVER_BOT_DIFFICULTY": "normal",
+        "HALO_SERVER_MAPS": "chillout:king,beavercreek:oddball,bloodgulch:race,hangemhigh:juggernaut",
+        "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(243), "HALO_NET_BROADCAST": _test_address(244)}, games_over=4, seconds=720)
+    games = _games(log)
+    print(f"games: {[(kind, where) for kind, where, _ in games]}")
+    assert len(games) >= 4, log[-4000:]
+    by_kind = {}
+    for kind, where, text in games[:4]:
+        by_kind[where] = (kind, text)
+        print(f"{kind} on {where}: {_objectives(text)}; {SCORE.findall(text)}")
+    king = _objectives(by_kind["chillout"][1])
+    assert len(king) == 4 and all(o[3] >= 1 for o in king.values()), f"a bot was never on the hill: {king}"
+    assert sum(o[3] for o in king.values()) >= 30, f"the bots held the hill only {sum(o[3] for o in king.values())} s"
+    ball = _objectives(by_kind["beavercreek"][1])
+    assert len(ball) == 4 and sum(o[4] for o in ball.values()) >= 30 and sum(o[4] > 0 for o in ball.values()) >= 2, \
+        f"the bots hardly had the ball: {ball}"
+    race = _objectives(by_kind["bloodgulch"][1])
+    assert len(race) == 4 and all(o[5] >= 1 for o in race.values()), f"a bot touched no race flag: {race}"
+    juggernaut = by_kind["hangemhigh"][1]
+    scores = SCORE.findall(juggernaut)
+    moved = {m[0]: int(m[2]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick (\d+): .*?went (\d+) world units",
+                                                   juggernaut)}
+    assert len(scores) == 4 and sum(int(kills) for _, _, kills, _ in scores) >= 2, f"no fight in Juggernaut: {scores}"
+    assert all(distance >= 40 for distance in moved.values()), f"a bot hardly moved in Juggernaut: {moved}"
+
+
 def test_bots_leave_for_a_person(tmp_path):
     """A dedicated server full of bots (server.max_players 3, server.bots 3)
     and a person who joins it: a bot leaves at once to make room, the person
