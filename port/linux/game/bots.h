@@ -17,9 +17,10 @@ struct player_datum;
 (nothing on the wire says so) */
 #define BOTS_NAME_TAG L"[BOT] "
 
-/* the bots' skill (server.bot_difficulty) */
+/* the bots' skill (server.bot_difficulty); peaceful bots never fight */
 enum
 {
+	_bot_difficulty_peaceful,
 	_bot_difficulty_easy,
 	_bot_difficulty_normal,
 	_bot_difficulty_hard,
@@ -43,8 +44,8 @@ cannot be now */
 boolean bots_remove(
 	long machine_index,
 	long controller_index);
-/* (hs.c) the host's bot command: "add [count]", "remove <name|all>",
-"list" */
+/* (hs.c) the host's bot command: "add [count] [difficulty]", "remove
+<name|all>", "difficulty <level> [name]", "list" */
 boolean bots_console_command(
 	char const *text);
 /* whether the player is one of the host's bots */

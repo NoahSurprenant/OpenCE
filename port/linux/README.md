@@ -419,6 +419,7 @@ the setting for one start of the game. It has priority over the file.
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays, logs how much of the map it reaches, and ends the game. Refer to "Bots". |
 | `debug.bot_trace` | `false` | `HALO_BOT_TRACE` | Each bot's way in the log every second. |
+| `server.bot_difficulty` | `normal` | `HALO_SERVER_BOT_DIFFICULTY` | How well the bots fight: `peaceful` (they never fight), `easy`, `normal`, `hard` or `legendary`. Refer to "Bots". |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds (without a window, as on SIGTERM). `0`: never. |
 | `debug.screenshot_directory`, `debug.screenshot_every` | `""`, `0` | `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | The game writes each Nth frame to this folder as a BMP file. |
@@ -1131,8 +1132,47 @@ Co-op games have no bots.
   as the host's own players do.
 - The bots are on machine slots of their own, from the last slot (127)
   down, four bots to a slot. No connection uses these slots.
-- For now a bot roams: it picks a place on the map, goes there along the
-  walking graph (below), and picks another. It does not fight yet.
+- A bot plays Slayer: it roams the map along the walking graph (below),
+  takes weapons lying about that it has none of, and fights the players of
+  the other team (anyone, without teams) that it sees. In the other game
+  types it does the same, for now.
+
+### Fighting
+
+A bot sees as a person does (`game/bots_combat.c`): a few times a second it
+looks for enemies in front of it (its field of view), near enough, with
+nothing of the level or its scenery between its eyes and their head or body
+(the game's line of sight test, which sees through fences and grates). It
+never sees through walls. It knows of a player who hurt it in the last
+second, and turns to them. It remembers where it last saw its target for 4
+seconds and goes there.
+
+- It waits its reaction time after it first sees a target before it fires.
+- Its aim turns at most so fast, and is off by an error that wanders, that
+  shrinks while it keeps the target in view, and that grows when it is hit.
+  It leads a moving target by the flight time of its weapon's projectile.
+- It fires in bursts, and only when its aim is near enough the target.
+- While it fights it strafes (only onto floor that the walking graph has),
+  closes on a far target, backs off a near one, and strikes one at hand.
+- It reloads an empty magazine, and one below a third when it fights nobody.
+
+`server.bot_difficulty` sets how well the bots fight:
+
+| Difficulty | Reaction | Aim turns | Aim error | Sees | Field of view |
+| --- | --- | --- | --- | --- | --- |
+| `peaceful` | never fights | - | - | - | - |
+| `easy` | 600 ms | 120 degrees/s | large | 25 world units | 90 degrees |
+| `normal` (default) | 400 ms | 205 degrees/s | medium | 35 world units | 110 degrees |
+| `hard` | 250 ms | 290 degrees/s | small | 45 world units | 120 degrees |
+| `legendary` | 170 ms | 410 degrees/s | very small | 55 world units | 130 degrees |
+
+Grenades, choosing a weapon by the range, objectives (CTF, King of the
+Hill, Oddball) and vehicles are for later.
+
+Peaceful bots roam, take weapons and play as the others do, but never fight:
+they never aim at a player, shoot, throw a grenade or strike. They can still
+die (a fall, another player, a skater running them over), and they are on
+the scoreboard.
 
 ### The walking graph
 
@@ -1185,10 +1225,11 @@ The host's console has a `bot` command:
 
 | Command | Effect |
 | --- | --- |
-| `bot add [count]` | Adds bots to the lobby or to the game that is in progress (1 if no count). |
+| `bot add [count] [difficulty]` | Adds bots to the lobby or to the game that is in progress (1 if no count; `server.bot_difficulty` if no difficulty). |
+| `bot difficulty <level> [name]` | Sets the difficulty (`peaceful`, `easy`, `normal`, `hard` or `legendary`) of every bot, or of the bot named. |
 | `bot remove <name>` | Removes a bot. The name can be the full name, the name without `[BOT] `, or the start of either. |
 | `bot remove all` | Removes all the bots. |
-| `bot list` | Lists the bots and their teams. |
+| `bot list` | Lists the bots, their teams and their difficulties. |
 
 `kick <name>` and `ban <name>` remove a bot (a bot has no address to keep
 out), and so do Kick and Ban on the scoreboard. A vote to kick a bot is
@@ -1205,7 +1246,8 @@ bots (`HALO_TEST_OLD_CLIENT`) on a server with bots; a listen host with
 bots and a client; the walking graph of every stock map
 (`test_bots_nav_on_every_map`: each map's reach, and the cache); and four
 bots roaming Boarding Action (`test_bots_roam`: goals reached, ladders
-taken). CI runs them in the `bots` job on `opence-k8s`, in about 12
+taken); and four bots playing a two-minute Slayer on Hang 'Em High
+(`test_bots_slayer`: each kills and dies, weapons taken). CI runs them in the `bots` job on `opence-k8s`, in about 12
 minutes. `tools/harness/tests/test_bots_nav.py` tests the graph's builder on
 made-up levels, without the game.
 

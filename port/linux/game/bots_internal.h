@@ -23,6 +23,33 @@ struct bot_statistics
 	real travelled;
 	/* the drops, jumps, teleporters and ladders it went by (bots_nav.h's edge types) */
 	long moves[NUMBER_OF_BOTS_NAV_EDGE_TYPES];
+	long targets_seen;
+	long ticks_fired;
+	long weapons_taken;
+};
+
+/* a bot's fighting (bots_combat.c) */
+struct bot_combat
+{
+	/* its target (a player datum, NONE for none), whether it sees it now,
+	and where and when it last saw it */
+	long target_player;
+	boolean target_visible;
+	long last_seen_tick;
+	real_point3d last_seen_position;
+	/* the tick from which it fires (its reaction), its bursts, its strikes
+	and reloads */
+	long fire_after_tick;
+	long burst_ticks;
+	long melee_after_tick;
+	long reload_after_tick;
+	/* its aim, and the aim's error */
+	boolean aim_set;
+	real aim_yaw, aim_pitch;
+	real error_yaw, error_pitch, error_scale;
+	/* its strafing */
+	real strafe_direction;
+	long strafe_until_tick;
 };
 
 /* a bot's thinking, from one tick to the next */
@@ -72,6 +99,17 @@ struct bot_brain
 	long avoided_ticks;
 	real_point3d last_position;
 	struct bot_statistics statistics;
+	struct bot_combat combat;
+	/* a weapon it goes to take (NONE for none), until when it tries, and
+	when it looks for one next */
+	long pickup_object;
+	long pickup_until_tick;
+	long pickup_look_tick;
+	/* the last weapon it gave up on (not tried again) */
+	long pickup_given_up;
+	/* the goal it was given fighting, and when */
+	long combat_goal_node;
+	long combat_goal_tick;
 };
 
 /* a bot of the host's (bots.c) */
@@ -81,6 +119,8 @@ struct bot
 	long machine_index;
 	long controller_index;
 	short difficulty;
+	/* its index among the bots (the ticks it looks around on) */
+	short slot;
 	struct bot_brain brain;
 };
 
@@ -93,6 +133,30 @@ alive: an action fit for update_server_take_bot_action */
 void bot_brain_think(
 	struct bot *bot,
 	long player_index,
+	long unit_index,
+	struct player_action *action);
+/* (bots_combat.c) a fight afresh; whether the bot fights now (it looks
+around every few ticks); the goal it heads for fighting (NULL: it holds its
+ground); its aim, fire and moves fighting (moving: the walking set its
+moves), or its reloading when it fights nobody */
+void bot_combat_reset(
+	struct bot_combat *combat);
+boolean bot_combat_engaged(
+	struct bot *bot,
+	long player_index,
+	long unit_index,
+	long bot_slot);
+struct bots_nav_point const *bot_combat_goal(
+	struct bot *bot,
+	real_point3d const *position,
+	struct bots_nav_point *goal);
+void bot_combat_act(
+	struct bot *bot,
+	long unit_index,
+	struct player_action *action,
+	boolean moving);
+void bot_combat_idle(
+	struct bot *bot,
 	long unit_index,
 	struct player_action *action);
 /* an action that does nothing (no buttons, no weapon change) */

@@ -19,6 +19,7 @@ machine takes it as it takes a person's. */
 #include "memory/data.h"
 #include "game/game.h"
 #include "game/players.h"
+#include "items/weapons.h"
 #include "objects/objects.h"
 #include "units/units.h"
 
@@ -51,6 +52,8 @@ must be */
 #define BOT_CORRIDOR 0.45f
 /* the ticks an edge a bot got stuck on is kept off */
 #define BOT_AVOID_TICKS (10 * TICKS_PER_SECOND)
+/* how far a weapon on the ground may be for a bot to go and take it */
+#define BOT_PICKUP_RANGE 20.0f
 
 /* ---------- random numbers, the bot's own (debug.bot_seed: the same each run) */
 
@@ -151,6 +154,10 @@ void bot_brain_reset(
 	brain->path_next = NONE;
 	brain->goal_node = NONE;
 	brain->avoided_edge = NONE;
+	brain->pickup_object = NONE;
+	brain->pickup_given_up = NONE;
+	brain->combat_goal_node = NONE;
+	bot_combat_reset(&brain->combat);
 }
 
 /* ---------- wandering, without a graph */
@@ -177,6 +184,16 @@ static void bot_wander(
 }
 
 /* ---------- roaming the graph */
+
+/* an edge a bot could not go along (a railing the graph did not see, a jump
+too high in fact): dearer for every bot from now on, for this map */
+static void bot_edge_failed(
+	struct bots_nav *nav,
+	long edge)
+{
+	if (edge >= 0 && edge < nav->edge_count && nav->edges[edge].cost < 500.0f)
+		nav->edges[edge].cost += 40.0f;
+}
 
 static real bot_distance2d(
 	real_point3d const *position,
@@ -260,6 +277,12 @@ static boolean bot_plan(
 	{
 		brain->statistics.paths_failed += count < 0;
 		brain->goal_node = NONE;
+		/* (a weapon it cannot get to: given up) */
+		if (brain->pickup_object != NONE)
+		{
+			brain->pickup_given_up = brain->pickup_object;
+			brain->pickup_object = NONE;
+		}
 		return FALSE;
 	}
 	brain->path_next = count - 1;
@@ -415,8 +438,8 @@ static void bot_roam(
 		if (!brain->edge_begun && bot_distance2d(position, &edge->from) < BOT_MOVE_BEGUN)
 		{
 			brain->edge_begun = TRUE;
-			jump = edge->type == _bots_nav_jump;
 			brain->jump_ticks = 0;
+			jump = edge->type == _bots_nav_jump;
 			if (jump && bot_trace)
 				platform_log("bots: trace %p jump from (%.2f %.2f %.2f) up %.2f to (%.2f %.2f %.2f)", (void *)brain, position->x,
 					position->y, position->z, edge->to.z - edge->from.z, edge->to.x, edge->to.y, edge->to.z);
@@ -458,10 +481,13 @@ static void bot_roam(
 			if (!brain->step_off && bot_distance2d(position, &edge->from) < 2.0f)
 				target = &edge->from;
 		}
-		/* (a jump that did not make it, after a second and a half: kept off,
-		and another way) */
-		if (brain->edge_begun && edge->type == _bots_nav_jump && ++brain->jump_ticks > 45)
+		/* (a jump, a drop or a teleporter that did not work out in time - a
+		railing in the way, a ledge the graph took for a drop: kept off, and
+		another way) */
+		if (brain->edge_begun && ++brain->jump_ticks >
+			(edge->type == _bots_nav_jump ? 45 : edge->type == _bots_nav_drop ? 60 : 150))
 		{
+			bot_edge_failed(nav, brain->path[brain->path_next]);
 			brain->avoided_edge = brain->path[brain->path_next];
 			brain->avoided_ticks = BOT_AVOID_TICKS;
 			brain->edge_begun = FALSE;
@@ -523,6 +549,137 @@ static void bot_roam(
 		brain->crouch_ticks--;
 		SET_FLAG(action->control_flags, _unit_control_crouch_modifier_bit, TRUE);
 	}
+}
+
+/* ---------- weapons lying about */
+
+/* a weapon on the ground (not held, in the level) whose kind the unit holds
+none of, within reach, nearest first, gone to: its node the bot's goal.
+Looked for every few seconds; one not reached in time is given up */
+static void bot_pickup_goal(
+	struct bot_brain *brain,
+	struct bots_nav *nav,
+	long unit_index,
+	real_point3d const *position)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	struct object_iterator iterator;
+	long now = game_time_get();
+	long best = NONE;
+	long best_node = NONE;
+	real best_distance = BOT_PICKUP_RANGE * BOT_PICKUP_RANGE;
+
+	if (brain->pickup_object != NONE)
+	{
+		struct object_datum *weapon = object_try_and_get(brain->pickup_object);
+
+		if (!weapon || weapon->object.parent_object_index != NONE || now > brain->pickup_until_tick)
+		{
+			/* (taken, by it or another, or given up: not tried again, and no
+			other looked for a while) */
+			if (weapon && weapon->object.parent_object_index == unit_index)
+			{
+				brain->statistics.weapons_taken++;
+			}
+			else if (weapon && weapon->object.parent_object_index == NONE)
+			{
+				brain->pickup_given_up = brain->pickup_object;
+				brain->pickup_look_tick = now + 20 * TICKS_PER_SECOND;
+			}
+			brain->pickup_object = NONE;
+			brain->goal_node = NONE;
+			brain->path_next = NONE;
+		}
+		/* (its goal kept on the weapon: reaching the node is not taking it) */
+		else if (brain->goal_node == NONE)
+		{
+			brain->goal_node = bots_nav_locate(nav, weapon->object.position.x, weapon->object.position.y,
+				weapon->object.position.z);
+		}
+		return;
+	}
+	if (now < brain->pickup_look_tick)
+		return;
+	brain->pickup_look_tick = now + 3 * TICKS_PER_SECOND;
+	object_iterator_new(&iterator, _object_mask_weapon, 0);
+	while (object_iterator_next(&iterator))
+	{
+		struct weapon_datum *weapon = weapon_get(iterator.index);
+		real dx = weapon->object.position.x - position->x;
+		real dy = weapon->object.position.y - position->y;
+		real dz = weapon->object.position.z - position->z;
+		short slot;
+		boolean held = FALSE;
+		long node;
+
+		if (weapon->object.parent_object_index != NONE || !TEST_FLAG(weapon->object.flags, _object_connected_to_map_bit) ||
+			dx * dx + dy * dy + dz * dz > best_distance || iterator.index == brain->pickup_given_up)
+		{
+			continue;
+		}
+		for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+		{
+			long held_index = unit->unit.weapon_object_indices[slot];
+
+			if (held_index != NONE && weapon_get(held_index)->definition_index == weapon->definition_index)
+				held = TRUE;
+		}
+		node = held ? NONE : bots_nav_locate(nav, weapon->object.position.x, weapon->object.position.y,
+			weapon->object.position.z);
+		if (node == NONE || !(nav->nodes[node].reach & _bots_nav_reached_bit))
+			continue;
+		best = iterator.index;
+		best_node = node;
+		best_distance = dx * dx + dy * dy + dz * dz;
+	}
+	if (best == NONE)
+		return;
+	brain->pickup_object = best;
+	brain->pickup_until_tick = now + 10 * TICKS_PER_SECOND;
+	brain->goal_node = best_node;
+	brain->path_next = NONE;
+}
+
+/* at the weapon: the action button pressed (a press every few ticks: it
+takes the weapon, swapping its own for it when its hands are full) */
+static boolean bot_pickup_act(
+	struct bot_brain *brain,
+	real_point3d const *position,
+	struct player_action *action)
+{
+	struct object_datum *weapon = brain->pickup_object != NONE ? object_try_and_get(brain->pickup_object) : NULL;
+	struct bots_nav_point at;
+	real dx, dy;
+
+	if (!weapon)
+		return FALSE;
+	dx = weapon->object.position.x - position->x;
+	dy = weapon->object.position.y - position->y;
+	if (bot_trace && game_time_get() % TICKS_PER_SECOND == 0)
+	{
+		platform_log("bots: trace %p tick %ld pickup %lx at (%.2f %.2f %.2f), it at (%.2f %.2f %.2f) parent %lx",
+			(void *)brain, game_time_get(), brain->pickup_object, position->x, position->y, position->z,
+			weapon->object.position.x, weapon->object.position.y, weapon->object.position.z,
+			weapon->object.parent_object_index);
+	}
+	if (dx * dx + dy * dy >= 1.5f * 1.5f || fabs(weapon->object.position.z - position->z) >= 0.6f)
+		return FALSE;
+	/* (near: straight to it, the graph's node being only near it, and the
+	action button held, which takes it, swapping a weapon for it when its
+	hands are full; standing there is getting somewhere) */
+	at.x = weapon->object.position.x;
+	at.y = weapon->object.position.y;
+	at.z = weapon->object.position.z;
+	bot_turn_to(brain, (real)atan2(dy, dx));
+	bot_action_idle(action, brain->yaw, brain->pitch);
+	if (dx * dx + dy * dy >= 0.3f * 0.3f)
+		bot_move_toward(action, brain, position, &at);
+	/* (a press, again and again: a button held takes nothing more) */
+	if (dx * dx + dy * dy < 0.7f * 0.7f && game_time_get() % 8 < 2)
+		SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
+	brain->check_position = *position;
+	brain->progress_ticks = 0;
+	return TRUE;
 }
 
 /* ---------- getting nowhere */
@@ -591,12 +748,14 @@ static void bot_stuck(
 		/* (another goal, keeping off the edge it was on) */
 		if (brain->path_next != NONE)
 		{
+			bot_edge_failed(nav, brain->path[brain->path_next]);
 			brain->avoided_edge = brain->path[brain->path_next];
 			brain->avoided_ticks = BOT_AVOID_TICKS;
 		}
 		brain->path_next = NONE;
 		brain->goal_node = NONE;
 		brain->stuck_count = 0;
+		brain->pickup_object = NONE;
 	}
 }
 
@@ -642,14 +801,54 @@ void bot_brain_think(
 		brain->last_position = position;
 	}
 	bot_check_progress(brain, nav, &position);
-	if (nav)
-		bot_roam(brain, nav, &position, action);
+	if (bot_combat_engaged(bot, player_index, unit_index, bot->slot))
+	{
+		struct bots_nav_point goal_point;
+		struct bots_nav_point const *goal = bot_combat_goal(bot, &position, &goal_point);
+		boolean moving = FALSE;
+
+		brain->pickup_object = NONE;
+		/* (to where it last saw its target, along the graph: the goal given
+		again at most once a second, as the target moves) */
+		if (goal && nav)
+		{
+			long node = bots_nav_locate(nav, goal->x, goal->y, goal->z);
+
+			if (node != NONE && node != brain->combat_goal_node &&
+				game_time_get() - brain->combat_goal_tick >= TICKS_PER_SECOND)
+			{
+				brain->combat_goal_node = node;
+				brain->combat_goal_tick = game_time_get();
+				brain->goal_node = node;
+				brain->path_next = NONE;
+			}
+			bot_roam(brain, nav, &position, action);
+			moving = TRUE;
+		}
+		else
+		{
+			bot_action_idle(action, brain->yaw, brain->pitch);
+		}
+		bot_combat_act(bot, unit_index, action, moving);
+	}
 	else
-		bot_wander(brain, &position, action);
+	{
+		brain->combat_goal_node = NONE;
+		if (nav)
+		{
+			bot_pickup_goal(brain, nav, unit_index, &position);
+			if (!bot_pickup_act(brain, &position, action))
+				bot_roam(brain, nav, &position, action);
+		}
+		else
+		{
+			bot_wander(brain, &position, action);
+		}
+		bot_combat_idle(bot, unit_index, action);
+	}
 	if (!nav && brain->jump)
 	{
 		SET_FLAG(action->control_flags, _unit_control_jump_bit, TRUE);
 		brain->jump = FALSE;
 	}
-	(void)player_index;
 }

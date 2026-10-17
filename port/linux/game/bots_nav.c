@@ -857,29 +857,39 @@ static int bots_nav_link_clear(
 	struct bots_nav_candidate const *candidate)
 {
 	struct bots_nav_input const *input = builder->input;
-	struct bots_nav_point start, corner, end;
-	float lift = builder->parameters.agent_height * 0.5f;
 	float top = candidate->from.z > candidate->to.z ? candidate->from.z : candidate->to.z;
+	float const heights[3] = { 0.1f, 0.35f, 0.65f };
+	int index;
 
 	if (!input->clear)
 		return 1;
-	start = candidate->from;
-	start.z += lift;
-	end = candidate->to;
-	end.z += lift;
-	if (candidate->type == _bots_nav_drop)
+	/* (across at the higher floor's height, at the biped's feet, middle and
+	head: a railing stops it as a wall does; then down, or up, the far or
+	near side) */
+	for (index = 0; index < 3; index++)
 	{
-		corner.x = candidate->to.x;
-		corner.y = candidate->to.y;
-		corner.z = top + lift;
+		struct bots_nav_point start, corner, end;
+
+		start = candidate->from;
+		start.z += heights[index];
+		end = candidate->to;
+		end.z += heights[index];
+		if (candidate->type == _bots_nav_drop)
+		{
+			corner.x = candidate->to.x;
+			corner.y = candidate->to.y;
+			corner.z = top + heights[index];
+		}
+		else
+		{
+			corner.x = candidate->from.x;
+			corner.y = candidate->from.y;
+			corner.z = top + heights[index] + 0.1f;
+		}
+		if (!input->clear(input->context, &start, &corner) || !input->clear(input->context, &corner, &end))
+			return 0;
 	}
-	else
-	{
-		corner.x = candidate->from.x;
-		corner.y = candidate->from.y;
-		corner.z = top + lift + 0.1f;
-	}
-	return input->clear(input->context, &start, &corner) && input->clear(input->context, &corner, &end);
+	return 1;
 }
 
 /* the edges: walks between neighbouring cells' nodes, drops and jumps

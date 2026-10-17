@@ -531,6 +531,10 @@ static const struct config_setting config_settings[] =
 		"which every machine sees as other players (port/linux/README.md's\n"
 		"\"Bots\"); 0 to 16. Not in co-op." },
 
+	{ "server.bot_difficulty", _config_string, "\"normal\"", "HALO_SERVER_BOT_DIFFICULTY", _environment_value, _platform_all,
+		"How well the bots fight: \"peaceful\" (they never fight), \"easy\",\n"
+		"\"normal\", \"hard\" or \"legendary\" (their reaction time, how fast and how\n"
+		"well they aim, how far and how wide they see)." },
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
 		"The bots' random numbers start from this, so that a test's bots do the\n"
 		"same each run." },

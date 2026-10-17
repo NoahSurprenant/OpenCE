@@ -40,6 +40,7 @@ and stay from game to game as the other players do. Co-op games have none. */
 
 /* the platform layer's (port_config.c, the port's log) */
 long config_integer(const char *name);
+const char *config_string(const char *name);
 void platform_log(const char *format, ...);
 /* console.c's */
 void console_printf(boolean clear, const char *format, ...);
@@ -72,6 +73,33 @@ static struct
 
 /* how often (ticks) the bots tell the log what they have done */
 #define BOTS_REPORT_TICKS (20 * TICKS_PER_SECOND)
+
+static char const *const bots_difficulty_names[NUMBER_OF_BOT_DIFFICULTIES] =
+	{ "peaceful", "easy", "normal", "hard", "legendary" };
+
+/* a difficulty's index by its name, NONE for none */
+static short bots_difficulty_named(
+	char const *name)
+{
+	short index;
+
+	for (index = 0; name && index < NUMBER_OF_BOT_DIFFICULTIES; index++)
+	{
+		if (!strcmp(name, bots_difficulty_names[index]))
+			return index;
+	}
+	return NONE;
+}
+
+/* server.bot_difficulty: peaceful, easy, normal, hard or legendary (normal
+for anything else) */
+static short bots_difficulty_setting(
+	void)
+{
+	short difficulty = bots_difficulty_named(config_string("server.bot_difficulty"));
+
+	return difficulty == NONE ? _bot_difficulty_normal : difficulty;
+}
 
 /* ---------- the roster */
 
@@ -164,6 +192,7 @@ boolean bots_add(
 	bots_globals.bots[index].machine_index = added.machine_index;
 	bots_globals.bots[index].controller_index = added.controller_index;
 	bots_globals.bots[index].difficulty = PIN(difficulty, 0, NUMBER_OF_BOT_DIFFICULTIES - 1);
+	bots_globals.bots[index].slot = index;
 	bot_brain_reset(&bots_globals.bots[index].brain,
 		(unsigned long)config_integer("debug.bot_seed") * 7919UL + ++bots_globals.added_count);
 	bots_name_text(added.name, text, (int)sizeof(text));
@@ -233,10 +262,12 @@ static void bots_report(
 			continue;
 		bots_name_text(player->name, name, (int)sizeof(name));
 		platform_log("bots: %s at tick %ld: %ld goals reached, %ld paths (%ld failed), stuck %ld times, went %.0f world units"
-			" (%ld drops, %ld jumps, %ld teleporters, %ld ladders up, %ld down)",
+			" (%ld drops, %ld jumps, %ld teleporters, %ld ladders up, %ld down); %ld targets seen, fired %ld ticks, "
+			"%ld weapons taken",
 			name, now, statistics->goals_reached, statistics->paths_planned, statistics->paths_failed, statistics->stuck,
 			statistics->travelled, statistics->moves[_bots_nav_drop], statistics->moves[_bots_nav_jump],
-			statistics->moves[_bots_nav_teleport], statistics->moves[_bots_nav_climb], statistics->moves[_bots_nav_descend]);
+			statistics->moves[_bots_nav_teleport], statistics->moves[_bots_nav_climb], statistics->moves[_bots_nav_descend],
+			statistics->targets_seen, statistics->ticks_fired, statistics->weapons_taken);
 	}
 }
 
@@ -278,7 +309,7 @@ void bots_update(
 	/* (one a frame) */
 	if (count < bots_globals.wanted)
 	{
-		bots_add(_bot_difficulty_normal);
+		bots_add(bots_difficulty_setting());
 	}
 	else if (count > bots_globals.wanted)
 	{
@@ -438,8 +469,8 @@ static void bots_list(
 		if (!player)
 			continue;
 		bots_name_text(player->name, name, (int)sizeof(name));
-		console_printf(FALSE, "%s (team %d)", name, (int)player->team_index);
-		platform_log("bots: listed %s (team %d)", name, (int)player->team_index);
+		console_printf(FALSE, "%s (team %d, %s)", name, (int)player->team_index, bots_difficulty_names[bot->difficulty]);
+		platform_log("bots: listed %s (team %d, %s)", name, (int)player->team_index, bots_difficulty_names[bot->difficulty]);
 		count++;
 	}
 	console_printf(FALSE, "%d bots (server.bots asks for %d)", (int)count, (int)bots_globals.wanted);
@@ -472,10 +503,26 @@ boolean bots_console_command(
 
 	if (!strcmp(word, "add"))
 	{
-		long count = argument[0] ? atol(argument) : 1;
+		/* (a count, a difficulty, either or both, in either order) */
+		long count = 1;
+		short difficulty = bots_difficulty_setting();
 		long added = 0;
+		char *part = strtok(argument, " \t");
 
-		while (added < count && bots_count() < BOTS_MAXIMUM && bots_add(_bot_difficulty_normal))
+		for (; part; part = strtok(NULL, " \t"))
+		{
+			if (bots_difficulty_named(part) != NONE)
+				difficulty = bots_difficulty_named(part);
+			else if (atol(part) > 0)
+				count = atol(part);
+			else
+			{
+				console_warning("bot add: \"%s\" is neither a count nor a difficulty (peaceful, easy, normal, hard, "
+					"legendary)", part);
+				return FALSE;
+			}
+		}
+		while (added < count && bots_count() < BOTS_MAXIMUM && bots_add(difficulty))
 		{
 			added++;
 			bots_globals.wanted = MAX(bots_globals.wanted, bots_count());
@@ -511,11 +558,41 @@ boolean bots_console_command(
 			return bot && bots_remove(bot->machine_index, bot->controller_index);
 		}
 	}
+	if (!strcmp(word, "difficulty"))
+	{
+		/* (a difficulty for every bot, or for one bot named after it) */
+		char *level = strtok(argument, " \t");
+		char *name = level ? strtok(NULL, "") : NULL;
+		short difficulty = bots_difficulty_named(level);
+		short index;
+
+		if (difficulty == NONE)
+		{
+			console_warning("bot difficulty: peaceful, easy, normal, hard or legendary, and a bot's name (all if none)");
+			return FALSE;
+		}
+		if (name && *name)
+		{
+			struct bot *bot = bots_named(name);
+
+			if (!bot)
+				return FALSE;
+			bot->difficulty = difficulty;
+		}
+		else
+		{
+			for (index = 0; index < BOTS_MAXIMUM; index++)
+				bots_globals.bots[index].difficulty = difficulty;
+		}
+		platform_log("bots: difficulty %s for %s", bots_difficulty_names[difficulty], name && *name ? name : "every bot");
+		return TRUE;
+	}
 	if (!strcmp(word, "list") || !word[0])
 	{
 		bots_list();
 		return TRUE;
 	}
-	console_warning("bot: \"bot add [count]\", \"bot remove <name|all>\" or \"bot list\"");
+	console_warning("bot: \"bot add [count] [difficulty]\", \"bot remove <name|all>\", \"bot difficulty <level> "
+		"[name]\" or \"bot list\"");
 	return FALSE;
 }

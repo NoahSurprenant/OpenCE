@@ -210,8 +210,11 @@ def test_bots_on_a_dedicated_server(tmp_path):
 
         # one removed, one kicked: every machine is told they quit
         first, second = joined[0][0], joined[1][0]
-        answer = _console(port, f"bot remove {first[6:]}", f"kick {second}", "bot list")
+        third = joined[2][0]
+        answer = _console(port, f"bot remove {first[6:]}", f"kick {second}", f"bot difficulty peaceful {third[6:]}",
+                          "bot list")
         assert f"kick: {second} removed" in answer, answer
+        assert f"{third} (team" in answer and re.search(re.escape(third) + r" \(team \d+, peaceful\)", answer), answer
         _wait(lambda: f"server: {first} left" in _log(tmp_path, "server") and
               f"server: {second} left" in _log(tmp_path, "server") and
               _debug(tmp_path, "client").count("quit of of game") >= 2, 30, games, tmp_path,
@@ -359,21 +362,21 @@ def _nav_check_again(tmp_path, server, maps, map_names):
 
 ROAMED = re.compile(r"bots: (\[BOT\] \w+) at tick (\d+): (\d+) goals reached, (\d+) paths \((\d+) failed\), stuck (\d+) "
                     r"times, went (\d+) world units \((\d+) drops, (\d+) jumps, (\d+) teleporters, (\d+) ladders up, "
-                    r"(\d+) down\)")
+                    r"(\d+) down\); \d+ targets seen, fired \d+ ticks, (\d+) weapons taken")
 
 
 def test_bots_roam(tmp_path):
-    """Four bots on Boarding Action's dedicated server, alone, for 80
+    """Four peaceful bots (server.bot_difficulty) on Boarding Action's dedicated server, alone, for 80
     seconds of game: each goes from goal to goal along the walking graph
-    (bots_brain.c), going on a long way, and between them they take the
-    ladders up and down and the teleporters between the ships. About two
-    minutes."""
+    (bots_brain.c) and to weapons lying about, going a long way, and between
+    them they take the ladders. About two minutes."""
     maps, paths = _needs("HALO_TEST_SERVER")
     if not Path(maps, "boardingaction.map").is_file():
         pytest.skip("needs boardingaction.map")
     server = paths["HALO_TEST_SERVER"]
     games = {"server": _start(tmp_path, "server", server, maps, {
         "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "3",
+        "HALO_SERVER_BOT_DIFFICULTY": "peaceful",
         "HALO_SERVER_MAPS": "boardingaction", "HALO_NET_ADDRESS": _test_address(231),
         "HALO_NET_BROADCAST": _test_address(232)})}
     try:
@@ -386,9 +389,75 @@ def test_bots_roam(tmp_path):
     last = {m[0]: m for m in ROAMED.findall(_log(tmp_path, "server")) if int(m[1]) == 2400}
     for name, m in last.items():
         print(f"{name}: {m[2]} goals, {m[3]} paths ({m[4]} failed), stuck {m[5]} times, went {m[6]} world units, "
-              f"{m[7]} drops, {m[8]} jumps, {m[9]} teleporters, {m[10]} ladders up, {m[11]} down")
+              f"{m[7]} drops, {m[8]} jumps, {m[9]} teleporters, {m[10]} ladders up, {m[11]} down, {m[12]} weapons taken")
     assert len(last) == 4, last
     for name, m in last.items():
-        assert int(m[2]) >= 1, f"{name} reached no goal: {m}"
+        assert int(m[2]) + int(m[12]) >= 1, f"{name} reached no goal and took no weapon: {m}"
         assert int(m[6]) >= 60, f"{name} went only {m[6]} world units: {m}"
     assert sum(int(m[10]) + int(m[11]) for m in last.values()) >= 1, f"no bot took a ladder: {last}"
+
+
+SCORE = re.compile(r"server: score: (\[BOT\] \w+) (-?\d+), (\d+) kills, (\d+) deaths")
+
+
+def test_bots_slayer(tmp_path):
+    """Four bots (normal) play a two-minute Slayer on Hang 'Em High's
+    dedicated server, alone: they find each other, shoot (only at what they
+    see: bots_combat.c) and kill each other: the game ends with each bot
+    having killed and died, and between them they took weapons lying about.
+    About three minutes."""
+    maps, paths = _needs("HALO_TEST_SERVER")
+    server = paths["HALO_TEST_SERVER"]
+    games = {"server": _start(tmp_path, "server", server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "5",
+        "HALO_SERVER_BOT_DIFFICULTY": "normal", "HALO_SERVER_MAPS": "hangemhigh", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(233), "HALO_NET_BROADCAST": _test_address(234)})}
+    try:
+        _wait(lambda: len(SCORE.findall(_log(tmp_path, "server"))) >= 4, 240, games, tmp_path,
+              "the bots' game did not end with their scores")
+    finally:
+        _stop(games, tmp_path, {"server": server})
+        for cache in (tmp_path / "server" / "saves").rglob("cache*.map"):
+            cache.unlink()
+    log = _log(tmp_path, "server")
+    scores = SCORE.findall(log)[:4]
+    reports = {m[0]: m for m in re.findall(r"bots: (\[BOT\] \w+) at tick (\d+): .*?(\d+) targets seen, fired (\d+) ticks, "
+                                           r"(\d+) weapons taken", log)}
+    for name, score, kills, deaths in scores:
+        print(f"{name}: score {score}, {kills} kills, {deaths} deaths; {reports.get(name)}")
+    assert len(scores) == 4, log[-4000:]
+    assert sum(int(kills) for _, _, kills, _ in scores) >= 8, scores
+    assert all(int(kills) >= 1 and int(deaths) >= 1 for _, _, kills, deaths in scores), scores
+    assert sum(int(m[4]) for m in reports.values()) >= 1, f"no bot took a weapon: {reports}"
+
+
+def test_bots_peaceful(tmp_path):
+    """Four peaceful bots (server.bot_difficulty "peaceful") play the same
+    two-minute Slayer as test_bots_slayer's: they roam and take weapons as
+    the others do, but never fight - not one shot fired, no kills - where
+    the normal bots of test_bots_slayer kill each other. About three
+    minutes."""
+    maps, paths = _needs("HALO_TEST_SERVER")
+    server = paths["HALO_TEST_SERVER"]
+    games = {"server": _start(tmp_path, "server", server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "5",
+        "HALO_SERVER_BOT_DIFFICULTY": "peaceful", "HALO_SERVER_MAPS": "hangemhigh", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(237), "HALO_NET_BROADCAST": _test_address(238)})}
+    try:
+        _wait(lambda: len(SCORE.findall(_log(tmp_path, "server"))) >= 4, 240, games, tmp_path,
+              "the bots' game did not end with their scores")
+    finally:
+        _stop(games, tmp_path, {"server": server})
+        for cache in (tmp_path / "server" / "saves").rglob("cache*.map"):
+            cache.unlink()
+    log = _log(tmp_path, "server")
+    scores = SCORE.findall(log)[:4]
+    reports = {m[0]: m for m in re.findall(r"bots: (\[BOT\] \w+) at tick (\d+): .*?went (\d+) world units.*?(\d+) "
+                                           r"targets seen, fired (\d+) ticks, (\d+) weapons taken", log)}
+    for name, score, kills, deaths in scores:
+        print(f"{name}: score {score}, {kills} kills, {deaths} deaths; {reports.get(name)}")
+    assert len(scores) == 4 and len(reports) == 4, log[-4000:]
+    assert all(int(kills) == 0 for _, _, kills, _ in scores), f"a peaceful bot killed: {scores}"
+    assert all(int(m[4]) == 0 and int(m[3]) == 0 for m in reports.values()), f"a peaceful bot aimed or fired: {reports}"
+    assert all(int(m[2]) >= 60 for m in reports.values()), f"a peaceful bot hardly moved: {reports}"
+    assert sum(int(m[5]) for m in reports.values()) >= 1, f"no peaceful bot took a weapon: {reports}"
