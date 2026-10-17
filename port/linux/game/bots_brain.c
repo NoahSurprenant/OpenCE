@@ -751,6 +751,9 @@ static void bot_pickup_goal(
 			if (item && item->object.parent_object_index == unit_index)
 			{
 				brain->statistics.weapons_taken++;
+				/* (a rocket launcher, a sniper rifle, a fuel rod gun, a shotgun) */
+				if (item->object.type == _object_type_weapon && bot_weapon_power(brain->pickup_object) >= 2.2f)
+					brain->statistics.power_weapons_taken++;
 				/* (no other swapped for it for a while: no back and forth) */
 				brain->pickup_swap_tick = now + BOT_PICKUP_SWAP_TICKS;
 			}
@@ -760,7 +763,10 @@ static void bot_pickup_goal(
 				real dx = brain->pickup_position.x - position->x, dy = brain->pickup_position.y - position->y;
 
 				if (dx * dx + dy * dy < 1.5f * 1.5f)
+				{
 					brain->statistics.items_taken++;
+					brain->statistics.powerups_taken += brain->pickup_is_powerup;
+				}
 			}
 			else if (item->object.parent_object_index == NONE)
 			{
@@ -817,6 +823,7 @@ static void bot_pickup_goal(
 		return;
 	brain->pickup_object = best;
 	brain->pickup_at_ticks = 0;
+	brain->pickup_is_powerup = bot_item_is_powerup(best);
 	brain->pickup_position = object_get(best)->object.position;
 	brain->pickup_until_tick = now + 10 * TICKS_PER_SECOND;
 	brain->goal_node = best_node;
@@ -827,9 +834,12 @@ static void bot_pickup_goal(
 takes the weapon, swapping its own for it when its hands are full) */
 static boolean bot_pickup_act(
 	struct bot_brain *brain,
+	long unit_index,
 	real_point3d const *position,
 	struct player_action *action)
 {
+	short swap;
+	boolean ready = TRUE;
 	struct object_datum *weapon = brain->pickup_object != NONE ? object_try_and_get(brain->pickup_object) : NULL;
 	struct bots_nav_point at;
 	real dx, dy;
@@ -857,12 +867,20 @@ static boolean bot_pickup_act(
 	bot_action_idle(action, brain->yaw, brain->pitch);
 	if (dx * dx + dy * dy >= 0.3f * 0.3f)
 		bot_move_toward(action, brain, position, &at);
+	/* (its hands full: the worse of its weapons in hand first, the one the
+	swap drops) */
+	swap = bot_pickup_swap(unit_index, brain->pickup_object);
+	if (swap != NONE && unit_get(unit_index)->unit.current_weapon_index != swap)
+	{
+		action->desired_weapon_index = swap;
+		ready = FALSE;
+	}
 	/* (a press, again and again: a button held takes nothing more; the
 	weapon swap button too, which takes a weapon in place of the one in hand
 	when both hands are full, players.c's player_handle_weapon_swap) */
 	if (dx * dx + dy * dy < 0.7f * 0.7f)
 	{
-		if (game_time_get() % 8 < 2)
+		if (ready && game_time_get() % 8 < 2)
 		{
 			SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
 			SET_FLAG(action->control_flags, _unit_control_swap_weapons_bit, TRUE);
@@ -1154,7 +1172,7 @@ void bot_brain_think(
 			bot_pickup_goal(bot, nav, unit_index, &position);
 		if (nav && brain->pickup_object != NONE)
 		{
-			if (!bot_pickup_act(brain, &position, action))
+			if (!bot_pickup_act(brain, unit_index, &position, action))
 				bot_roam(brain, nav, &position, action);
 		}
 		else if (bot_investigate(bot, nav, &position, action))

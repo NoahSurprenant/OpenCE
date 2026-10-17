@@ -400,7 +400,8 @@ def test_bots_roam(tmp_path):
              if counts["tick"] == 2400}
     print(f"seconds stuck in 80: {stuck}")
     for name, m in last.items():
-        assert int(m[2]) + int(m[12]) >= 1, f"{name} reached no goal and took no weapon: {m}"
+        items = _reports(_log(tmp_path, "server")).get(name, {}).get("items taken", 0)
+        assert int(m[2]) + int(m[12]) + items >= 1, f"{name} reached no goal and took no weapon nor powerup: {m}"
         assert int(m[6]) >= 60, f"{name} went only {m[6]} world units: {m}"
         # (Boarding Action's ladders and lips: 9 to 21 seconds stuck in 80 before
         # the climb counted as getting somewhere, 0 to 3 since)
@@ -450,8 +451,10 @@ def test_bots_slayer(tmp_path):
     """Four bots (normal) play a two-minute Slayer on Hang 'Em High's
     dedicated server, alone: they find each other, shoot (only at what they
     see: bots_combat.c) and kill each other: the game ends with each bot
-    having killed and died, and between them they took weapons lying about.
-    About three minutes."""
+    having killed and died, and between them they took weapons lying about,
+    a power weapon or a powerup among them; they fell back to cover when
+    their shields were gone, and hardly ever killed themselves. About three
+    minutes."""
     maps, paths = _needs("HALO_TEST_SERVER")
     server = paths["HALO_TEST_SERVER"]
     games = {"server": _start(tmp_path, "server", server, maps, {
@@ -475,6 +478,20 @@ def test_bots_slayer(tmp_path):
     assert sum(int(kills) for _, _, kills, _ in scores) >= 8, scores
     assert all(int(kills) >= 1 and int(deaths) >= 1 for _, _, kills, deaths in scores), scores
     assert sum(int(m[4]) for m in reports.values()) >= 1, f"no bot took a weapon: {reports}"
+    # (fighting as people do: falling back to cover with its shields gone,
+    # going for the power weapons, killing itself hardly ever: bots_cover.c,
+    # bots_items.c)
+    counts = _reports(log)
+    print({name: {what: c.get(what) for what in ("retreats", "covers reached", "powerups taken", "weapon switches",
+                                                  "power weapons taken", "suicides")} for name, c in counts.items()})
+
+    def total(what):
+        return sum(c.get(what, 0) for c in counts.values())
+
+    assert total("retreats") >= 2 and total("covers reached") >= 1, f"the bots did not fall back to cover: {counts}"
+    assert total("power weapons taken") + total("powerups taken") >= 1, f"no power weapon nor powerup taken: {counts}"
+    assert total("suicides") <= 1, "bots killed themselves:\n" + \
+        "\n".join(line for line in log.splitlines() if "killed itself" in line)
 
 
 def test_bots_peaceful(tmp_path):
