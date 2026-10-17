@@ -1156,7 +1156,12 @@ biped where the host says, for them to ride into. The skating machine logs
 what is near once a second (`skate test: 3 obstacles near (1 bipeds, 0 of
 skaters, 0 vehicles, 2 scenery and devices; 96 triangles), the nearest a biped 0.53 world
 units away`), and the engine each hit with what followed (above,
-"Obstacles").
+"Obstacles"). On foot, the watcher waits up to three seconds for a
+skater faster than 6.7 m/s before stepping in, and every other time it turns
+up right in a riding skater's way the skater's machine pushes them on to
+8.5 m/s first (`skate test: a person on foot in the way, the skater pushed on
+from 4.1 m/s to 8.5 m/s`, a blast's push), so that a run-over at Halo's
+lethal vehicle speed comes for certain whatever speed the scripted ride had.
 `debug.network_test_skate_duel` (`HALO_NETWORK_TEST_SKATE_DUEL`) puts this
 machine's player on a board that many seconds into the game, standing on it
 (Y stepping back on after a fall), after three ollies where it stands once

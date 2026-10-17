@@ -729,7 +729,13 @@ def _assert_run_over(decided, host, skater_log, skater, logs):
         f"a skater was run over: {decided}"
     assert gone_through, f"the skater's engine never went through the person:\n{skater_log[-4000:]}"
     killed = [d for d in dealt if d[7] and float(d[2]) == 1.0 and d[1] == skater]
-    assert killed, f"no run-over at speed killed with the whole of Halo's vehicle collision damage: {dealt}"
+    # (every other time the watcher steps in the scripted skater is pushed on
+    # to 8.5 m/s first, skate.c's skate_test_run_over_boost, so one at least
+    # is past Halo's lethal 6.1 m/s whatever speed the ride had)
+    boosted = re.findall(r"skate test: a person on foot in the way, the skater pushed on from ([\d.]+) m/s", skater_log)
+    speeds = {n: float(re.search(r"; at ([\d.]+) m/s", decided[n]).group(1)) for n in runs}
+    assert killed, f"no run-over at speed killed with the whole of Halo's vehicle collision damage: {dealt}; the " \
+        f"run-overs' speeds {speeds} m/s, the skater pushed on from {boosted} m/s"
     assert all(int(d[0]) in runs and d[1] == runs[int(d[0])][0] for d in dealt), \
         f"damage dealt not of the skater's run-overs: {dealt}"
     for name, seen in deaths.items():
