@@ -872,8 +872,8 @@ def _server_settings() -> list:
     whether the server browser lists it (PUBLIC or PRIVATE: an internet
     game's)"""
     base = f"{MT}/server_settings"
-    # (twelve rows: closer together, the help lower)
-    spec = {"screen": "server_settings_screen", "spacing": 24, "help_top": 366,
+    # (thirteen rows: closer together, the help lower)
+    spec = {"screen": "server_settings_screen", "spacing": 23, "help_top": 376,
             "header": ("header_server_settings", f"{base}/header_server_settings")}
     rows, extra = [], []
     extra += _value_row(base, "server_name", 0, "ss edit server name")
@@ -972,6 +972,22 @@ def _server_settings() -> list:
                                                  ("font", "ui\\small_ui"), ("color", "#FF2896FF"), ("align", "center"),
                                                  ("text_y", 5), ("text_flags", "no_focus_test")], [])
         rows.append((f"{base}/op_{key}", None, SETUP_OPTIONS_PLACE + index))
+    # BOTS (bots.c), a multiplayer game's (co-op has none: menu_functions.c's
+    # server_settings_update hides it), below the gametype's rows
+    key, _, _, _ = BOT_SETUP
+    target = f"{base}/{key}/{key}_screen"
+    extra += _widget(f"{base}/op_{key}", [("width", 512), ("height", 28),
+                                         ("flags", "pass_unhandled_to_focused_child"),
+                                         ("bitmap", "bitmaps/option_bkds"), ("color", "#FF2896FF")],
+                     [f'<on event="a" open="{target}"/>', f'<on event="start" open="{target}"/>',
+                      '<on event="left_mouse" run="mouse emit accept event"/>',
+                      f'<child widget="{base}/{key}_label"/>'])
+    extra += _widget(f"{base}/{key}_label", [("type", "text"), ("controller", 1), ("width", 300), ("height", 22),
+                                             ("string_list", f"{base}/labels"),
+                                             ("string_index", 12 + len(COOP_SETUP_SCREENS)),
+                                             ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("text_x", 13),
+                                             ("text_y", 4)], [])
+    rows.append((f"{base}/op_{key}", None, SETUP_OPTIONS_PLACE + len(SETUP_OPTION_SCREENS)))
     extra += _button(f"{base}/button_defaults", 3, [])
     extra += _widget(f"{base}/button_ok", [("type", "text"), ("width", 128), ("height", 24),
                                            ("bitmap", "bitmaps/text_button_background"), ("text", "START GAME"),
@@ -984,7 +1000,7 @@ def _server_settings() -> list:
                                          "PLAYER OPTIONS:", "ITEM OPTIONS:", "VEHICLE OPTIONS:", "INDICATOR OPTIONS:",
                                          "TEAMPLAY OPTIONS:", "LISTING:",
                                          *(f"{title}:" for _, title, _, _ in COOP_SETUP_SCREENS), "PASSWORD:",
-                                         f"{MAP_SHARE_SETUP[1]}:"])
+                                         f"{MAP_SHARE_SETUP[1]}:", f"{BOT_SETUP[1]}:"])
     extra += _strings(f"{base}/help_strings", [
         "",
         "The name the game shows in the lists of games.\\nEnter changes it.",
@@ -1005,11 +1021,13 @@ def _server_settings() -> list:
         "Players from the Server Browser must type it to\\njoin (an invite link needs none). Enter sets it.",
         # (MAP SHARING's)
         MAP_SHARE_SETUP[2],
+        # (BOTS')
+        BOT_SETUP[2],
     ])
     lines = _screen(base, spec, rows, ["server settings update"],
                     ['<on event="created" run="server settings init"/>'], extra)
     # (co-op's options' screens, and map sharing's)
-    for key, title, _, screen_rows in [*COOP_SETUP_SCREENS, MAP_SHARE_SETUP]:
+    for key, title, _, screen_rows in [*COOP_SETUP_SCREENS, MAP_SHARE_SETUP, BOT_SETUP]:
         lines += _setup_option_screen(f"{base}/{key}", key, screen_rows)
     # (no Defaults: the bar is START and CANCEL; B cancels the name's edit
     # first)
@@ -1069,12 +1087,33 @@ MAP_SHARE_SETUP = ("map_share_options", "MAP SHARING",
                                            for kb in MAP_SHARE_UPLOADS],
      ["The most you send of maps, so that the game\\nkeeps the rest of your upload."] * len(MAP_SHARE_UPLOADS)),
 ])
+# Server Setup's bots (port/linux/game/bots.c), a multiplayer game's, laid out
+# as co-op's options are (its key, its title, its row's help and its rows:
+# menu_functions.c's gametype_options give their settings' values), below the
+# gametype's rows
+BOT_COUNTS = list(range(16))
+BOT_SETUP = ("bot_options", "BOTS", "Players the game plays itself, and how well they\\nfight, for the games you host.", [
+    ("bots", "BOTS:", ["NONE" if count == 0 else str(count) for count in BOT_COUNTS],
+     ["No bots."] + ["Bots join the game, named [BOT] ...: they leave\\nfor the people who join a full game."] *
+     (len(BOT_COUNTS) - 1)),
+    ("bot_difficulty", "DIFFICULTY:", ["PEACEFUL", "EASY", "NORMAL", "HARD", "LEGENDARY"], [
+        "Bots roam and take weapons but never fight.",
+        "Bots are slow to react, aim poorly and see little.",
+        "Bots fight about as a fair player does.",
+        "Bots react fast and aim well.",
+        "Bots react at once, aim very well and see far.",
+    ]),
+    ("bots_fill", "FILL:", ["OFF", "ON"], [
+        "The game has as many bots as BOTS says.",
+        "BOTS is how many players the game has in all: a\\nbot leaves as a person joins, and comes back.",
+    ]),
+])
 # (Server Setup's place of its options' rows, co-op's or the gametype's: after
 # MAP SHARING's)
 SETUP_OPTIONS_PLACE = 6
 # (their screens' titles)
 TITLES.update({f"{MT}/server_settings/{key}/header_{key}": title
-               for key, title, _, _ in [*COOP_SETUP_SCREENS, MAP_SHARE_SETUP]})
+               for key, title, _, _ in [*COOP_SETUP_SCREENS, MAP_SHARE_SETUP, BOT_SETUP]})
 # (the rows of a co-op options screen in one place, the one shown: PER
 # PLAYER's and MULTIPLIER's, by EXTRA ENEMIES')
 SETUP_OPTION_SAME_PLACE = {"coop_enemies_multiplier"}

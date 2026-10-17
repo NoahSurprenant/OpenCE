@@ -1538,7 +1538,7 @@ static void network_game_server_list(
 	char gametype[NUMBEROF(game->variant.human_readable_game_description) + 1];
 	boolean in_progress = state != _network_game_server_state_pregame || network_game_server_game_is_loading(server);
 	boolean open = state == _network_game_server_state_ingame ? network_game_server_accepts_late_joins(server) :
-		network_game_server_game_is_open(server) && network_game_has_free_player_slot(game);
+		network_game_server_game_is_open(server) && network_game_server_port_room_for_person(game);
 
 	listing_text(name, sizeof(name), game->name, NUMBEROF(game->name));
 	listing_text(gametype, sizeof(gametype), game->variant.human_readable_game_description,
@@ -2504,6 +2504,13 @@ boolean network_game_server_add_player_to_game(
 
 	if (machine->machine_index == player->machine_index)
 	{
+		/* port: a person, the game full of players and bots: a bot leaves
+		at once to make room (port/linux/game/bots.c) */
+		if (!network_game_server_port_machine_is_bot(player->machine_index) &&
+			!network_game_has_free_player_slot(&server->game))
+		{
+			bots_make_room();
+		}
 		/* port: the smaller team (the Xbox game took turns with a counter of
 		its own, which a failed add or an earlier game moved on) */
 		{
@@ -2738,7 +2745,8 @@ boolean network_game_server_accepts_late_joins(
 	refused, network_game_server_refuse_late_joiner) */
 	return server->state == _network_game_server_state_ingame &&
 		network_game_server_game_is_open(server) &&
-		network_game_has_free_player_slot(&server->game);
+		/* (port: or a bot leaves for them) */
+		network_game_server_port_room_for_person(&server->game);
 }
 
 boolean network_game_server_client_machine_is_loaded(
@@ -4481,6 +4489,26 @@ static void network_game_server_release_bot_machine(
 	network_game_server_bot_machines[machine_index] = FALSE;
 }
 
+/* whether a person can join: a free player slot, or a bot that leaves for
+them (network_game_server_add_player_to_game) */
+boolean network_game_server_port_room_for_person(
+	struct network_game *game)
+{
+	long index;
+
+	if (network_game_has_free_player_slot(game))
+		return TRUE;
+	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+	{
+		if (network_player_is_valid(&game->players[index]) &&
+			network_game_server_port_machine_is_bot(game->players[index].machine_index))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 /* adds a bot of the name (made unique, as any player's is) to the lobby or
 to the game being played; FALSE when the server is between games, or full.
 added gets the player as the game has it (machine, controller, team, slot) */
@@ -5166,7 +5194,7 @@ static boolean network_game_server_idle_pregame_tasks(
 				!network_game_server_client_machine_is_local(server, client_machine) &&
 				!network_game_server_machine_has_players(server, client_machine->machine_index) &&
 				!map_share_machine_downloading(client_machine->machine_index) &&
-				(!network_game_has_free_player_slot(&server->game) ||
+				(!network_game_server_port_room_for_person(&server->game) ||
 					system_milliseconds() - network_game_server_client_machine_join_times[client_machine->machine_index] >
 						NETWORK_GAME_SERVER_PLAYERLESS_MACHINE_TIMEOUT))
 			{

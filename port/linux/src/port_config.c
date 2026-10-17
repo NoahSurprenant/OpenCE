@@ -525,12 +525,19 @@ static const struct config_setting config_settings[] =
 		"own limit (a built-in one's is none)." },
 	{ "server.score_limit", _config_integer, "0", "HALO_SERVER_SCORE_LIMIT", _environment_value, _platform_desktop,
 		"The score a dedicated server's games play to; 0 the game type's own." },
+	{ "server.max_players", _config_integer, "0", "HALO_SERVER_MAX_PLAYERS", _environment_value, _platform_desktop,
+		"The most players (people and bots) in a dedicated server's games, 2 to\n"
+		"the build's limit; 0 for the build's limit (128)." },
 	{ "server.bots", _config_integer, "0", "HALO_SERVER_BOTS", _environment_value, _platform_all,
 		"How many bots a game this machine hosts has (a dedicated server's, or\n"
 		"one the menus host): players the host plays itself, named \"[BOT] ...\",\n"
 		"which every machine sees as other players (port/linux/README.md's\n"
 		"\"Bots\"); 0 to 16. Not in co-op." },
 
+	{ "server.bots_fill", _config_boolean, "false", "HALO_SERVER_BOTS_FILL", _environment_value, _platform_all,
+		"server.bots is how many players a game has in all: a bot leaves as a\n"
+		"person joins, and comes back as one leaves. Either way a bot leaves at\n"
+		"once for a person who joins a full game." },
 	{ "server.bot_difficulty", _config_string, "\"normal\"", "HALO_SERVER_BOT_DIFFICULTY", _environment_value, _platform_all,
 		"How well the bots fight: \"peaceful\" (they never fight), \"easy\",\n"
 		"\"normal\", \"hard\" or \"legendary\" (their reaction time, how fast and how\n"

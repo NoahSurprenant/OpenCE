@@ -562,7 +562,8 @@ jobs:
     # listen host with bots, the bots' walking graph of every stock map
     # (test_bots_nav_on_every_map) and four bots roaming Boarding Action
     # (test_bots_roam), four bots playing Slayer (test_bots_slayer) and four
-    # peaceful ones (test_bots_peaceful). They
+    # peaceful ones (test_bots_peaceful), and a bot leaving a full server for a
+    # person (test_bots_leave_for_a_person). They
     # need the Halo maps, so on the owner's
     # runner, opence-k8s, only for this repository's own code, as
     # skate-assets. Not needed by release or notify.
@@ -625,8 +626,8 @@ jobs:
           clang -m32 -O1 -g -shared -fPIC -o "$HALO_TEST_STALL_BACKTRACE" tools/stall_backtrace.c
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots" tools/test_bots.py 2>&1 \
             | tee "$RUNNER_TEMP/bots.log"
-          if ! grep -q '7 passed' "$RUNNER_TEMP/bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/bots.log"; then
-            echo "::error::the seven tests of tools/test_bots.py did not all run and pass"
+          if ! grep -q '8 passed' "$RUNNER_TEMP/bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/bots.log"; then
+            echo "::error::the eight tests of tools/test_bots.py did not all run and pass"
             exit 1
           fi
 

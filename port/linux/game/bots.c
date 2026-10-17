@@ -28,6 +28,7 @@ and stay from game to game as the other players do. Co-op games have none. */
 #include "networking/network_game_manager.h"
 #include "networking/network_server_manager.h"
 #include "networking/network_server_manager_internal.h"
+#include "cseries/cseries_windows.h"
 #include "objects/objects.h"
 #include "text/unicode.h"
 #include "units/units.h"
@@ -40,6 +41,7 @@ and stay from game to game as the other players do. Co-op games have none. */
 
 /* the platform layer's (port_config.c, the port's log) */
 long config_integer(const char *name);
+int config_boolean(const char *name);
 const char *config_string(const char *name);
 void platform_log(const char *format, ...);
 /* console.c's */
@@ -69,6 +71,10 @@ static struct
 	unsigned long added_count;
 	/* the game tick the bots last told the log what they had done */
 	long reported_tick;
+	/* server.bots as last read, and when the settings were */
+	short setting;
+	short difficulty_setting;
+	unsigned long settings_read;
 } bots_globals;
 
 /* how often (ticks) the bots tell the log what they have done */
@@ -271,6 +277,73 @@ static void bots_report(
 	}
 }
 
+/* the players of the game who are people */
+static short bots_people(
+	struct network_game const *game)
+{
+	short count = 0;
+	long index;
+
+	for (index = 0; index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+	{
+		struct network_player const *player = &game->players[index];
+
+		if (network_player_is_valid((struct network_player *)player) &&
+			!network_game_server_port_machine_is_bot(player->machine_index))
+		{
+			count++;
+		}
+	}
+	return count;
+}
+
+void bots_make_room(
+	void)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	struct network_game *game = server ? network_game_server_get_game(server) : NULL;
+	long team_counts[2] = { 0, 0 };
+	short best = NONE;
+	short index;
+
+	if (!game)
+		return;
+	for (index = 0; index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+	{
+		struct network_player const *player = &game->players[index];
+
+		if (network_player_is_valid((struct network_player *)player) && player->team_index >= 0 && player->team_index < 2)
+			team_counts[player->team_index]++;
+	}
+	/* (a bot of the larger team, so that the person, who joins the smaller,
+	keeps the teams even) */
+	for (index = BOTS_MAXIMUM - 1; index >= 0; index--)
+	{
+		struct bot *bot = &bots_globals.bots[index];
+		struct network_player const *player = bot->used ?
+			network_game_server_port_bot_player(bot->machine_index, bot->controller_index) : NULL;
+
+		if (!player)
+			continue;
+		if (best == NONE || (player->team_index >= 0 && player->team_index < 2 &&
+			team_counts[player->team_index] > team_counts[1 - player->team_index]))
+		{
+			best = index;
+		}
+	}
+	if (best != NONE)
+	{
+		struct bot *bot = &bots_globals.bots[best];
+
+		if (network_game_server_port_remove_bot(bot->machine_index, bot->controller_index))
+		{
+			bot->used = FALSE;
+			platform_log("bots: the bot of machine %ld, controller %ld left to make room for a person", bot->machine_index,
+				bot->controller_index);
+		}
+	}
+}
+
 /* the roster kept to the host's game: bots no longer in it forgotten (the
 host gone, a new one begun), and as many as are wanted */
 void bots_update(
@@ -279,6 +352,7 @@ void bots_update(
 	struct network_game_server *server = global_network_game_server_get();
 	struct network_game *game = server ? network_game_server_get_game(server) : NULL;
 	short count;
+	short wanted;
 	short index;
 
 	if (!game)
@@ -290,7 +364,29 @@ void bots_update(
 	if (!bots_globals.hosting)
 	{
 		bots_globals.hosting = TRUE;
-		bots_globals.wanted = (short)PIN(config_integer("server.bots"), 0, BOTS_MAXIMUM);
+		bots_globals.setting = (short)PIN(config_integer("server.bots"), 0, BOTS_MAXIMUM);
+		bots_globals.wanted = bots_globals.setting;
+		bots_globals.difficulty_setting = bots_difficulty_setting();
+	}
+	/* (the settings changed while hosting, Server Setup's BOTS: the count
+	and the difficulty taken at once) */
+	if (system_milliseconds() - bots_globals.settings_read >= 1000)
+	{
+		short setting = (short)PIN(config_integer("server.bots"), 0, BOTS_MAXIMUM);
+		short difficulty = bots_difficulty_setting();
+
+		bots_globals.settings_read = system_milliseconds();
+		if (setting != bots_globals.setting)
+		{
+			bots_globals.setting = setting;
+			bots_globals.wanted = setting;
+		}
+		if (difficulty != bots_globals.difficulty_setting)
+		{
+			bots_globals.difficulty_setting = difficulty;
+			for (index = 0; index < BOTS_MAXIMUM; index++)
+				bots_globals.bots[index].difficulty = difficulty;
+		}
 	}
 	for (index = 0; index < BOTS_MAXIMUM; index++)
 	{
@@ -306,12 +402,16 @@ void bots_update(
 	/* (the walking graph of the map being played, once there are bots) */
 	bots_nav_update(count > 0);
 	bots_report();
+	wanted = bots_globals.wanted;
+	/* (server.bots_fill: as many as make the players server.bots) */
+	if (config_boolean("server.bots_fill"))
+		wanted = (short)MAX(0, wanted - bots_people(game));
 	/* (one a frame) */
-	if (count < bots_globals.wanted)
+	if (count < wanted)
 	{
 		bots_add(bots_difficulty_setting());
 	}
-	else if (count > bots_globals.wanted)
+	else if (count > wanted)
 	{
 		for (index = BOTS_MAXIMUM - 1; index >= 0; index--)
 		{

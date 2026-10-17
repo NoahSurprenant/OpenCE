@@ -48,6 +48,10 @@ boolean bots_remove(
 <name|all>", "difficulty <level> [name]", "list" */
 boolean bots_console_command(
 	char const *text);
+/* (network_server_manager.c) a person joins a game full of players and
+bots: a bot leaves at once */
+void bots_make_room(
+	void);
 /* whether the player is one of the host's bots */
 boolean bots_player_is_bot(
 	struct player_datum const *player);
