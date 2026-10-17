@@ -534,6 +534,14 @@ static const struct config_setting config_settings[] =
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
 		"The bots' random numbers start from this, so that a test's bots do the\n"
 		"same each run." },
+	{ "debug.bot_nav_check", _config_boolean, "false", "HALO_BOT_NAV_CHECK", _environment_value, _platform_all,
+		"A host builds (or reads from its cache) the bots' walking graph of each\n"
+		"map it plays, logs how many of the map's spawns and weapons it reaches,\n"
+		"and ends the game at once: a dedicated server goes through its map\n"
+		"list a map at a time (tools/test_bots.py)." },
+	{ "debug.bot_trace", _config_boolean, "false", "HALO_BOT_TRACE", _environment_value, _platform_all,
+		"Each bot's way (where it is, the edge of the walking graph it is on,\n"
+		"where it heads) in the log every second, for working on the bots." },
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>[:<variant>,<variant>...]\" hosts a game on that map with those\n"

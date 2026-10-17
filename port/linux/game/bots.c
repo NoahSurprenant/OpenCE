@@ -66,7 +66,12 @@ static struct
 	boolean hosting;
 	/* the bots added since the host began (each one's random numbers) */
 	unsigned long added_count;
+	/* the game tick the bots last told the log what they had done */
+	long reported_tick;
 } bots_globals;
+
+/* how often (ticks) the bots tell the log what they have done */
+#define BOTS_REPORT_TICKS (20 * TICKS_PER_SECOND)
 
 /* ---------- the roster */
 
@@ -199,6 +204,42 @@ boolean bots_player_is_bot(
 		network_game_server_port_machine_is_bot(player->network_player_data.machine_index);
 }
 
+/* every BOTS_REPORT_TICKS of a game, what each bot has done (the tests
+read it) */
+static void bots_report(
+	void)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	long now;
+	short index;
+
+	if (!game_in_progress() || !server)
+		return;
+	now = game_time_get();
+	if (now < bots_globals.reported_tick)
+		bots_globals.reported_tick = now;
+	if (now - bots_globals.reported_tick < BOTS_REPORT_TICKS)
+		return;
+	bots_globals.reported_tick = now;
+	for (index = 0; index < BOTS_MAXIMUM; index++)
+	{
+		struct bot *bot = &bots_globals.bots[index];
+		struct network_player const *player = bot->used ?
+			network_game_server_port_bot_player(bot->machine_index, bot->controller_index) : NULL;
+		struct bot_statistics const *statistics = &bot->brain.statistics;
+		char name[BOT_NAME_LENGTH];
+
+		if (!player)
+			continue;
+		bots_name_text(player->name, name, (int)sizeof(name));
+		platform_log("bots: %s at tick %ld: %ld goals reached, %ld paths (%ld failed), stuck %ld times, went %.0f world units"
+			" (%ld drops, %ld jumps, %ld teleporters, %ld ladders up, %ld down)",
+			name, now, statistics->goals_reached, statistics->paths_planned, statistics->paths_failed, statistics->stuck,
+			statistics->travelled, statistics->moves[_bots_nav_drop], statistics->moves[_bots_nav_jump],
+			statistics->moves[_bots_nav_teleport], statistics->moves[_bots_nav_climb], statistics->moves[_bots_nav_descend]);
+	}
+}
+
 /* the roster kept to the host's game: bots no longer in it forgotten (the
 host gone, a new one begun), and as many as are wanted */
 void bots_update(
@@ -231,6 +272,9 @@ void bots_update(
 	if (!game->variant.game_engine_index)
 		return;
 	count = bots_count();
+	/* (the walking graph of the map being played, once there are bots) */
+	bots_nav_update(count > 0);
+	bots_report();
 	/* (one a frame) */
 	if (count < bots_globals.wanted)
 	{
