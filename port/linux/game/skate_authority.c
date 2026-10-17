@@ -749,7 +749,18 @@ static void skate_authority_run_over(struct skate_verdict const *verdict, boolea
 	too: its death is told at once) */
 	if (!object || object->object.type != _object_type_biped)
 		return;
-	watch =&skate_run_over_watches[skate_authority_globals.next_run_over_watch];
+	/* (a later run-over of the same person stands for the earlier still watched:
+	one death, told once, of the run-over that came last) */
+	{
+		short index;
+
+		for (index = 0; index < SKATE_AUTHORITY_MEASURES; index++)
+		{
+			if (skate_run_over_watches[index].object_index == object_index)
+				skate_run_over_watches[index].object_index = NONE;
+		}
+	}
+	watch = &skate_run_over_watches[skate_authority_globals.next_run_over_watch];
 	skate_authority_globals.next_run_over_watch = (short)((skate_authority_globals.next_run_over_watch + 1) %
 		SKATE_AUTHORITY_MEASURES);
 	watch->object_index = object_index;

@@ -1162,6 +1162,10 @@ up right in a riding skater's way the skater's machine pushes them on to
 8.5 m/s first (`skate test: a person on foot in the way, the skater pushed on
 from 4.1 m/s to 8.5 m/s`, a blast's push), so that a run-over at Halo's
 lethal vehicle speed comes for certain whatever speed the scripted ride had.
+A scripted skater riding slower than 0.5 m/s for three seconds (pushing into a
+wall, which the slow carve does not turn them off) is put back on the board
+where they are, turned round and rolling away (`skate test: stuck riding at
+...`), so that the watcher's turns on foot are not lost to it.
 `debug.network_test_skate_duel` (`HALO_NETWORK_TEST_SKATE_DUEL`) puts this
 machine's player on a board that many seconds into the game, standing on it
 (Y stepping back on after a fall), after three ollies where it stands once

@@ -606,11 +606,50 @@ def _game_env(env):
     return dict(env, LD_PRELOAD=preload) if preload and Path(preload).is_file() else env
 
 
+def _elf_function_names(executable, addresses):
+    """each of addresses (hex strings) in the 32-bit ELF executable as the
+    function it falls in, "name+0x12", from the file's own symbol table (a
+    runner without addr2line still says where a hung game is); none for an
+    address outside its functions, or a file that is not one"""
+    import bisect
+    import struct
+    try:
+        data = Path(executable).read_bytes()
+    except OSError:
+        return {}
+    if data[:5] != b"\x7fELF\x01":
+        return {}
+    shoff, = struct.unpack_from("<I", data, 0x20)
+    shentsize, shnum = struct.unpack_from("<HH", data, 0x2E)
+    sections = [struct.unpack_from("<IIIIIIIIII", data, shoff + i * shentsize) for i in range(shnum)]
+    functions = []
+    for section in sections:
+        # (SHT_SYMTAB, its strings in the section it links to)
+        if section[1] != 2:
+            continue
+        strings = sections[section[6]][4]
+        for offset in range(section[4], section[4] + section[5], 16):
+            name, value, size, info = struct.unpack_from("<IIIB", data, offset)
+            if info & 0xF == 2 and value:
+                end = data.index(b"\0", strings + name)
+                functions.append((value, size, data[strings + name:end].decode(errors="replace")))
+    functions.sort()
+    starts = [f[0] for f in functions]
+    names = {}
+    for address in addresses:
+        value = int(address, 16)
+        index = bisect.bisect_right(starts, value) - 1
+        if index >= 0 and value < functions[index][0] + max(functions[index][1], 1):
+            names[address] = f"{functions[index][2]}+{value - functions[index][0]:#x}"
+    return names
+
+
 def _stall_backtraces(name, process, executable, log_path):
     """every thread of a game that is still running where it should not be
     (it hung, or the test fails with it) writes its backtrace to its log
     (tools/stall_backtrace.c, preloaded by _game_env; nothing without it),
-    printed for the test's output, through addr2line where it has one"""
+    printed for the test's output, through addr2line where it has one, else by the
+    executable's own symbol table (_elf_function_names)"""
     if "LD_PRELOAD" not in _game_env({}) or process.poll() is not None or os.uname().machine != "x86_64":
         return
     import ctypes
@@ -638,6 +677,8 @@ def _stall_backtraces(name, process, executable, log_path):
         found = subprocess.run(["addr2line", "-f", "-C", "-p", "-e", executable, *addresses], capture_output=True,
                                text=True).stdout.splitlines()
         names = dict(zip(addresses, found))
+    elif addresses:
+        names = _elf_function_names(executable, addresses)
     print(f"== the {name} game (pid {process.pid}), still running: its threads' states {states}, backtraces:")
     for line in lines:
         print(f"   {line} {names.get(line, '')}" if line.startswith("0x") else f"  {line}")
