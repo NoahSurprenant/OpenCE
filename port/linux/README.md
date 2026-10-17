@@ -1145,10 +1145,9 @@ Co-op games have no bots.
   (BOTS, DIFFICULTY and FILL, which write these settings); a change in the
   lobby takes effect at once.
 - A bot plays Slayer: it roams the map along the walking graph (below),
-  takes weapons lying about that it has none of and grenades that it can
-  carry, and fights the players of the other team (anyone, without teams)
-  that it sees or hears. In the other game types it does the same, for
-  now.
+  takes better weapons, powerups and grenades lying about, and fights the
+  players of the other team (anyone, without teams) that it sees or hears.
+  In the other game types it does the same, for now.
 
 ### Fighting
 
@@ -1200,6 +1199,27 @@ fights:
 - It carries the grenades that the game gives at spawn and those that it
   takes on the map. It goes for grenades lying about when it lacks them.
 
+A bot moves in a fight as a person does (`game/bots_cover.c`,
+`game/bots_items.c`):
+
+- With its shields nearly gone (under a quarter; and, if it sees its target
+  no longer, its body hurt), it falls back to cover: a node of the walking
+  graph 2.5 to 12 world units away that its target cannot see from where it
+  stands, not toward the target, the nearest such. It keeps shooting at a
+  target it sees on the way. It waits there while its shields come back,
+  and fights again when they are back, when the target comes within 3.5
+  world units, or after 8 seconds. Easy bots stand and fight.
+- It goes for powerups: an overshield and active camouflage always, a
+  health pack when it is hurt. It goes for power weapons from further off:
+  a rocket launcher, a sniper rifle, a fuel rod gun, a shotgun. With both
+  hands full, it takes only a weapon better than the worse of its two (the
+  one it drops), and ammunition for a weapon that runs low.
+- It fights with the weapon that suits the range: a shotgun near, a sniper
+  rifle far, a rocket launcher or fuel rod gun at middle range but never
+  within its own blast (it does not fire one at a target within 4 world
+  units), and the pistol over the assault rifle beyond 15. Between fights,
+  the weapon for a middling range is in its hand.
+
 `server.bot_difficulty` sets how well the bots fight:
 
 | Difficulty | Reaction | Aim turns | Aim error | Sees | Field of view | Hears | Grenades |
@@ -1210,8 +1230,7 @@ fights:
 | `hard` | 250 ms | 290 degrees/s | small | 45 world units | 120 degrees | 32 world units | often, 5 s apart |
 | `legendary` | 170 ms | 410 degrees/s | very small | 55 world units | 130 degrees | 38 world units | very often, 3.5 s apart |
 
-Choosing a weapon by the range, objectives (CTF, King of the Hill, Oddball)
-and vehicles are for later.
+Objectives (CTF, King of the Hill, Oddball) and vehicles are for later.
 
 Peaceful bots roam, take weapons and play as the others do, but never fight:
 they never aim at a player, shoot, throw a grenade or strike. They can still

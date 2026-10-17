@@ -23,8 +23,10 @@ Fighting, a person's way:
 - It reloads when its magazine is empty, or low with no target in view.
 - It holds its fire while a team mate is in the line of fire.
 - Now and then it throws a grenade (bots_grenades.c).
-All of it set by the difficulty (bot_skills). Choosing a weapon by the
-range is for later. */
+- It fights with the weapon that suits the range (bots_items.c), never
+  one whose blast would reach it, and falls back to cover when its
+  shields are gone (bots_cover.c).
+All of it set by the difficulty (bot_skills). */
 
 #include "cseries.h"
 #include "math/real_math.h"
@@ -429,6 +431,7 @@ void bot_combat_reset(
 	combat->heard_tick = -BOT_INVESTIGATE_FORGET_TICKS;
 	combat->heard_player = NONE;
 	combat->grenade_object = NONE;
+	combat->weapon_slot = NONE;
 }
 
 boolean bot_combat_engaged(
@@ -459,6 +462,8 @@ boolean bot_combat_engaged(
 			combat->target_visible = FALSE;
 		}
 	}
+	/* (cover, when its shields are gone) */
+	bot_cover_update(bot, unit_index);
 	return combat->target_player != NONE;
 }
 
@@ -473,6 +478,9 @@ struct bots_nav_point const *bot_combat_goal(
 	real dx = combat->last_seen_position.x - position->x;
 	real dy = combat->last_seen_position.y - position->y;
 
+	/* (falling back: to cover, and there it holds) */
+	if (bot_cover_goal(bot, position, goal))
+		return combat->in_cover ? NULL : goal;
 	/* (in view and near enough, or its grenade about to go off: it holds) */
 	if ((combat->target_visible && dx * dx + dy * dy < BOT_FAR_RANGE * BOT_FAR_RANGE) ||
 		game_time_get() < combat->hold_until_tick)
@@ -583,6 +591,9 @@ void bot_combat_act(
 			along = 0.0f;
 		if (now < combat->back_off_until_tick)
 			along = -1.0f;
+		/* (in cover: it stays there) */
+		if (combat->in_cover)
+			along = 0.0f;
 		/* (only onto floor: the walking graph beside it) */
 		if (nav)
 		{
@@ -602,6 +613,8 @@ void bot_combat_act(
 				}
 			}
 		}
+		if (combat->in_cover)
+			side = 0.0f;
 		move_yaw = yaw + (real)atan2(side, along);
 		move_amount = side != 0.0f || along != 0.0f ? 1.0f : 0.0f;
 	}
@@ -613,6 +626,19 @@ void bot_combat_act(
 	action->throttle.i = (real)cos(move_yaw - combat->aim_yaw) * move_amount;
 	action->throttle.j = (real)sin(move_yaw - combat->aim_yaw) * move_amount;
 
+	/* the weapon for the range: thought of every half second, changed when
+	another suits it better */
+	if (now >= combat->weapon_look_tick)
+	{
+		short slot = bot_weapon_choose(unit_index, distance);
+
+		combat->weapon_look_tick = now + TICKS_PER_SECOND / 2;
+		if (slot != NONE && slot != unit->unit.current_weapon_index && slot != combat->weapon_slot)
+			brain->statistics.weapon_switches++;
+		combat->weapon_slot = slot;
+	}
+	if (combat->weapon_slot != NONE && combat->weapon_slot != unit->unit.current_weapon_index)
+		action->desired_weapon_index = combat->weapon_slot;
 	/* firing: in view, past its reaction, its aim near enough, in bursts */
 	weapon_index = unit->unit.current_weapon_index != NONE ?
 		unit->unit.weapon_object_indices[unit->unit.current_weapon_index] : NONE;
@@ -620,6 +646,7 @@ void bot_combat_act(
 	aim_off = (real)fabs(bot_angle_difference(combat->aim_yaw, (real)atan2(dy, dx))) +
 		(real)fabs(combat->aim_pitch - (real)atan2(dz, MAX(horizontal, 0.01f)));
 	if (combat->target_visible && now >= combat->fire_after_tick && aim_off < cone && weapon_index != NONE &&
+		!bot_weapon_blasts_near(weapon_index, distance) &&
 		!bot_team_mate_in_the_way(unit->unit.player_index, unit_index, &eye, &aim_point))
 	{
 		if (combat->burst_ticks < BOT_BURST_TICKS)
@@ -670,6 +697,19 @@ void bot_combat_idle(
 	long now = game_time_get();
 
 	combat->aim_set = FALSE;
+	combat->cover_until_tick = 0;
+	combat->in_cover = FALSE;
+	/* (between fights, the weapon for a middling range in hand, unless
+	another is wanted in hand now, one to drop for a weapon on the ground) */
+	if (action->desired_weapon_index != NONE)
+		return;
+	if (now >= combat->weapon_look_tick)
+	{
+		combat->weapon_look_tick = now + 2 * TICKS_PER_SECOND;
+		combat->weapon_slot = bot_weapon_choose(unit_index, 15.0f);
+	}
+	if (combat->weapon_slot != NONE && combat->weapon_slot != unit->unit.current_weapon_index)
+		action->desired_weapon_index = combat->weapon_slot;
 	if (weapon_index != NONE && now >= combat->reload_after_tick)
 	{
 		struct weapon_datum *weapon = weapon_get(weapon_index);

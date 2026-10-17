@@ -45,6 +45,16 @@ struct bot_statistics
 	from */
 	long noises_heard;
 	long grenades_dodged;
+	/* its falling back to cover (bots_cover.c): begun, and cover reached;
+	the powerups it took (overshield, camouflage, health); the times it
+	changed weapons for the range (bots_items.c) */
+	long retreats;
+	long covers_reached;
+	long powerups_taken;
+	long weapon_switches;
+	long power_weapons_taken;
+	/* the times it killed itself, by any means */
+	long suicides;
 };
 
 /* a bot's fighting (bots_combat.c) */
@@ -100,6 +110,16 @@ struct bot_combat
 	long grenade_object;
 	real_point3d grenade_last;
 	real_point3d grenade_aimed;
+	/* falling back (bots_cover.c): until when, the cover it goes to,
+	whether it is there, and when it looks for cover next */
+	long cover_until_tick;
+	struct bots_nav_point cover_point;
+	boolean in_cover;
+	long cover_look_tick;
+	/* the weapon it wants in hand for the range (a slot, NONE for none),
+	and when it thinks of it next */
+	short weapon_slot;
+	long weapon_look_tick;
 };
 
 /* a bot's thinking, from one tick to the next */
@@ -157,6 +177,7 @@ struct bot_brain
 	/* the tick before which it swaps no weapon of its own for one on the
 	ground (one swap, then a while) */
 	long pickup_swap_tick;
+	boolean pickup_is_powerup;
 	real_point3d pickup_position;
 	long pickup_until_tick;
 	long pickup_look_tick;
@@ -247,6 +268,33 @@ real bot_item_value(
 /* (bots_grenades.c, debug.bot_trace) where the bot's grenade went off */
 void bot_grenade_follow(
 	struct bot *bot);
+/* (bots_items.c) a weapon's worth (0: a flag or a ball); whether an item is
+a powerup; the slot of the weapon a bot drops for the item (NONE: none, a
+free hand or not a weapon); the slot of the weapon it fights with at the
+distance (NONE: none with ammunition); whether the weapon's blast would hurt
+its holder at the distance */
+real bot_weapon_power(
+	long weapon_index);
+boolean bot_item_is_powerup(
+	long object_index);
+short bot_pickup_swap(
+	long unit_index,
+	long object_index);
+short bot_weapon_choose(
+	long unit_index,
+	real distance);
+boolean bot_weapon_blasts_near(
+	long weapon_index,
+	real distance);
+/* (bots_cover.c) falling back to cover, or no longer, a fighting bot; the
+goal it falls back to (FALSE: none) */
+void bot_cover_update(
+	struct bot *bot,
+	long unit_index);
+boolean bot_cover_goal(
+	struct bot *bot,
+	real_point3d const *position,
+	struct bots_nav_point *goal);
 /* (bots_grenades.c) how near a grenade of the kind going off hurts */
 real bot_grenade_danger_radius(
 	short type);

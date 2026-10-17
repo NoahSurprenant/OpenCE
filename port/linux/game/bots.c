@@ -272,7 +272,8 @@ static void bots_report(
 		platform_log("bots: %s at tick %ld: %ld goals reached, %ld paths (%ld failed), stuck %ld times (%ld seconds), went %.0f world units"
 			" (%ld drops, %ld jumps, %ld teleporters, %ld ladders up, %ld down); %ld targets seen, fired %ld ticks, "
 			"%ld weapons taken, %ld items taken; %ld grenades thrown, %ld grenade hits, %ld grenade kills, %ld grenade suicides, %ld team kills; "
-			"%ld noises heard, %ld grenades dodged",
+			"%ld noises heard, %ld grenades dodged; %ld retreats, %ld covers reached, %ld powerups taken, %ld weapon switches, "
+			"%ld power weapons taken, %ld suicides",
 			name, now, statistics->goals_reached, statistics->paths_planned, statistics->paths_failed, statistics->stuck,
 			statistics->stuck_ticks / TICKS_PER_SECOND,
 			statistics->travelled, statistics->moves[_bots_nav_drop], statistics->moves[_bots_nav_jump],
@@ -280,7 +281,8 @@ static void bots_report(
 			statistics->targets_seen, statistics->ticks_fired, statistics->weapons_taken, statistics->items_taken,
 			statistics->grenades_thrown, statistics->grenade_hits,
 			statistics->grenade_kills, statistics->grenade_suicides, statistics->team_kills, statistics->noises_heard,
-			statistics->grenades_dodged);
+			statistics->grenades_dodged, statistics->retreats, statistics->covers_reached, statistics->powerups_taken,
+			statistics->weapon_switches, statistics->power_weapons_taken, statistics->suicides);
 	}
 }
 
@@ -339,6 +341,9 @@ void bots_note_damage(
 		return;
 	if (dead_player_index == damage->owner_player_index)
 	{
+		bot->brain.statistics.suicides++;
+		if (!grenade)
+			platform_log("bots: %p killed itself with %s", (void *)&bot->brain, name ? name : "?");
 		if (grenade)
 		{
 			bot->brain.statistics.grenade_suicides++;
