@@ -740,6 +740,7 @@ static void bot_pickup_goal(
 	long best = NONE;
 	long best_node = NONE;
 	real best_score = 1.0e30f;
+	real best_value = 1.0f;
 
 	if (brain->pickup_object != NONE)
 	{
@@ -818,6 +819,7 @@ static void bot_pickup_goal(
 		best = iterator.index;
 		best_node = node;
 		best_score = distance / value;
+		best_value = value;
 	}
 	if (best == NONE)
 		return;
@@ -825,7 +827,9 @@ static void bot_pickup_goal(
 	brain->pickup_at_ticks = 0;
 	brain->pickup_is_powerup = bot_item_is_powerup(best);
 	brain->pickup_position = object_get(best)->object.position;
-	brain->pickup_until_tick = now + 10 * TICKS_PER_SECOND;
+	/* (time to get there: ten seconds, and half a second more for each world
+	unit off - a weapon across ladders is a long way round) */
+	brain->pickup_until_tick = now + 10 * TICKS_PER_SECOND + (long)(best_score * best_value * TICKS_PER_SECOND / 2);
 	brain->goal_node = best_node;
 	brain->path_next = NONE;
 }
@@ -1112,6 +1116,7 @@ void bot_brain_think(
 		brain->check_position = position;
 		brain->check_ticks = BOT_CHECK_TICKS;
 		brain->last_position = position;
+		brain->spawn_position = position;
 		brain->path_next = NONE;
 		brain->goal_node = NONE;
 		brain->stuck_count = 0;
@@ -1120,10 +1125,15 @@ void bot_brain_think(
 		real dx = position.x - brain->last_position.x, dy = position.y - brain->last_position.y;
 		real step = (real)sqrt(dx * dx + dy * dy);
 
+		real sx = position.x - brain->spawn_position.x, sy = position.y - brain->spawn_position.y;
+
 		/* (a teleporter's move is no walk) */
 		if (step < 2.0f)
 			brain->statistics.travelled += step;
 		brain->last_position = position;
+		/* (the furthest it got from where it spawned, this life) */
+		if (sx * sx + sy * sy > brain->statistics.farthest * brain->statistics.farthest)
+			brain->statistics.farthest = (real)sqrt(sx * sx + sy * sy);
 		brain->last_step = step;
 	}
 	bot_check_progress(brain, nav, &position);

@@ -26,6 +26,8 @@ struct bot_statistics
 	/* the ticks it spent getting nowhere on its way (each look at how far
 	it had come that found it had not) */
 	long stuck_ticks;
+	/* the furthest it got from a spawn of its (world units) */
+	real farthest;
 	real travelled;
 	/* the drops, jumps, teleporters and ladders it went by (bots_nav.h's edge types) */
 	long moves[NUMBER_OF_BOTS_NAV_EDGE_TYPES];
@@ -168,6 +170,8 @@ struct bot_brain
 	long avoided_edge;
 	long avoided_ticks;
 	real_point3d last_position;
+	/* where this life began */
+	real_point3d spawn_position;
 	struct bot_statistics statistics;
 	struct bot_combat combat;
 	/* a weapon it goes to take (NONE for none), until when it tries, and

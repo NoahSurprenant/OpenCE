@@ -5118,6 +5118,15 @@ static boolean network_game_server_have_all_machines_have_precached(
 		}
 	}
 
+	/* port: and the host's own map. A host whose machines have no players (a
+	dedicated server alone, or with bots only, whose machines are not
+	joined ones) counts none of them, and its countdown (debug.network_test_start)
+	may end before it has precached the next map of its rotation itself: it
+	waits for that too, instead of starting without the map (the assertion
+	below) */
+	if (all_machines_have_precached && !cache_files_precache_map_loaded(main_get_multiplayer_map_name()))
+		all_machines_have_precached = FALSE;
+
 	match_assert(
 		NETWORK_SERVER_MANAGER_FILE,
 		0x8C8,
