@@ -531,6 +531,10 @@ static const struct config_setting config_settings[] =
 		"which every machine sees as other players (port/linux/README.md's\n"
 		"\"Bots\"); 0 to 16. Not in co-op." },
 
+	{ "server.bot_difficulty", _config_string, "\"normal\"", "HALO_SERVER_BOT_DIFFICULTY", _environment_value, _platform_all,
+		"How well the bots fight: \"easy\", \"normal\", \"hard\" or \"legendary\"\n"
+		"(their reaction time, how fast and how well they aim, how far and how\n"
+		"wide they see)." },
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
 		"The bots' random numbers start from this, so that a test's bots do the\n"
 		"same each run." },
@@ -539,6 +543,8 @@ static const struct config_setting config_settings[] =
 		"map it plays, logs how many of the map's spawns and weapons it reaches,\n"
 		"and ends the game at once: a dedicated server goes through its map\n"
 		"list a map at a time (tools/test_bots.py)." },
+	{ "debug.bot_peaceful", _config_boolean, "false", "HALO_BOT_PEACEFUL", _environment_value, _platform_all,
+		"Bots that only roam, and never fight (for testing how they get about)." },
 	{ "debug.bot_trace", _config_boolean, "false", "HALO_BOT_TRACE", _environment_value, _platform_all,
 		"Each bot's way (where it is, the edge of the walking graph it is on,\n"
 		"where it heads) in the log every second, for working on the bots." },

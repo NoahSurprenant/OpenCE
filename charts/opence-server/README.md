@@ -166,7 +166,7 @@ The chart maps its values to the server's environment variables (port/linux/READ
 | `server.maps` (list) | `HALO_SERVER_MAPS` |
 | `server.gameTypes` (list) | `HALO_SERVER_GAME_TYPES` |
 | `server.timeLimit`, `server.scoreLimit` | `HALO_SERVER_TIME_LIMIT`, `HALO_SERVER_SCORE_LIMIT` |
-| `server.bots` | `HALO_SERVER_BOTS` |
+| `server.bots`, `server.botDifficulty` | `HALO_SERVER_BOTS`, `HALO_SERVER_BOT_DIFFICULTY` |
 | `network.tunnelPort` | `HALO_NET_TUNNEL_PORT` |
 | `network.publicAddress` | `HALO_NET_PUBLIC_ADDRESS` |
 | `network.hostPublic`, `network.serverName` | `HALO_NET_HOST_PUBLIC`, `HALO_NET_SERVER_NAME` |

@@ -17,6 +17,7 @@
 {{- $env = append $env (dict "name" "HALO_SERVER_TIME_LIMIT" "value" (toString (int .Values.server.timeLimit))) }}
 {{- $env = append $env (dict "name" "HALO_SERVER_SCORE_LIMIT" "value" (toString (int .Values.server.scoreLimit))) }}
 {{- $env = append $env (dict "name" "HALO_SERVER_BOTS" "value" (toString (int .Values.server.bots))) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_BOT_DIFFICULTY" "value" .Values.server.botDifficulty) }}
 {{- $env = append $env (dict "name" "HALO_NET_ONLINE" "value" (toString .Values.network.online)) }}
 {{- $env = append $env (dict "name" "HALO_NET_TUNNEL_PORT" "value" (toString (int .Values.network.tunnelPort))) }}
 {{- $env = append $env (dict "name" "HALO_NET_HOST_PUBLIC" "value" (toString .Values.network.hostPublic)) }}

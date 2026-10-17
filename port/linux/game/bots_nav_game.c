@@ -570,11 +570,11 @@ static void bots_nav_make(
 		struct bots_nav_statistics const *statistics = &bots_nav_game.nav.statistics;
 
 		platform_log("bots: walking graph of %s %s in %lu ms: %ld nodes, %ld edges (%ld walks, %ld drops, %ld jumps, "
-			"%ld teleporters, %ld ladders, %ld given), %ld triangles with %ld pieces of scenery; spawns %ld/%ld reach the main part, weapons "
+			"%ld teleporters, %ld ladders, %ld given; %ld refused), %ld triangles with %ld pieces of scenery; spawns %ld/%ld reach the main part, weapons "
 			"%ld/%ld are reached from it",
 			bots_nav_game.map, cached ? "read from the cache" : "built", system_milliseconds() - started,
 			bots_nav_game.nav.node_count, bots_nav_game.nav.edge_count, statistics->walk_edges, statistics->drop_edges,
-			statistics->jump_edges, statistics->teleport_edges, statistics->climb_edges, statistics->link_edges, statistics->triangles, pieces,
+			statistics->jump_edges, statistics->teleport_edges, statistics->climb_edges, statistics->link_edges, statistics->rejected_links, statistics->triangles, pieces,
 			bots_nav_reached(seeds, seed_count, "spawn", _bots_nav_reaches_bit), seed_count,
 			bots_nav_reached(weapons, weapon_count, "weapon", _bots_nav_reached_bit),
 			weapon_count);
