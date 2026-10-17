@@ -1401,6 +1401,53 @@ static void skate_test_scenery(void)
 	}
 }
 
+/* debug.network_test_skate: a scripted skater riding into a wall pushes into
+it for good (the carve is too slow to turn them off it), as one on Blood
+Gulch's red base did for forty seconds, the whole of a test's time on foot
+for the watcher. Riding slower than SKATE_TEST_STUCK_SPEED for
+SKATE_TEST_STUCK_TICKS, the skater is put back on the board where they are,
+turned SKATE_TEST_STUCK_TURN radians and rolling away at
+SKATE_TEST_STUCK_ROLL (halo_skate_teleport, as a teleporter puts them) */
+#define SKATE_TEST_STUCK_SPEED (0.5f / 3.048f)
+#define SKATE_TEST_STUCK_TICKS (3 * TICKS_PER_SECOND)
+#define SKATE_TEST_STUCK_TURN (0.8f * _pi)
+#define SKATE_TEST_STUCK_ROLL (3.f / 3.048f)
+
+static void skate_test_unstick(long tick)
+{
+	static long slow_since = NONE;
+	long unit_index = skate_globals.unit_index;
+	float const *v = skate_globals.frame.velocity;
+	struct object_datum *object;
+	real_point3d ground;
+	float velocity[3];
+	real yaw;
+
+	if (!skate_local_skater_riding() || unit_index == NONE || !(v[0] * v[0] + v[1] * v[1] <
+		SKATE_TEST_STUCK_SPEED * SKATE_TEST_STUCK_SPEED))
+	{
+		slow_since = NONE;
+		return;
+	}
+	if (slow_since == NONE || slow_since > tick)
+		slow_since = tick;
+	if (tick - slow_since < SKATE_TEST_STUCK_TICKS)
+		return;
+	slow_since = NONE;
+	object = object_get(unit_index);
+	ground = skate_ground_under(unit_index, &object->object.position);
+	yaw = (real)atan2(skate_globals.frame.forward[1], skate_globals.frame.forward[0]) + SKATE_TEST_STUCK_TURN;
+	velocity[0] = (float)(cos(yaw) * SKATE_TEST_STUCK_ROLL);
+	velocity[1] = (float)(sin(yaw) * SKATE_TEST_STUCK_ROLL);
+	velocity[2] = 0.f;
+	if (halo_skate_teleport(&ground.x, yaw, velocity, &skate_globals.frame) != 0)
+		return;
+	platform_log("skate test: stuck riding at (%.2f %.2f %.2f) for %d seconds, turned round", ground.x, ground.y,
+		ground.z, SKATE_TEST_STUCK_TICKS / TICKS_PER_SECOND);
+	skate_board_forget();
+	skate_apply_frame(unit_index, TRUE);
+}
+
 static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
 {
 	static real start = -1.f;
@@ -1431,6 +1478,7 @@ static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
 	}
 	if (!skate_globals.skating)
 		return;
+	skate_test_unstick(tick);
 	/* (pushes, A held half a second and let go as long, then the right
 	stick pulled down and flicked up: real_assets.rs's push and ollie) */
 	cycle = tick % SKATE_TEST_CYCLE_TICKS;
