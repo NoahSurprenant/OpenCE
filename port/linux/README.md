@@ -417,6 +417,8 @@ the setting for one start of the game. It has priority over the file.
 | `server.score_limit` | `0` | `HALO_SERVER_SCORE_LIMIT` | The score to win a game of a dedicated server. `0`: the score of the game type. |
 | `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 16. Refer to "Bots". |
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
+| `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays, logs how much of the map it reaches, and ends the game. Refer to "Bots". |
+| `debug.bot_trace` | `false` | `HALO_BOT_TRACE` | Each bot's way in the log every second. |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds (without a window, as on SIGTERM). `0`: never. |
 | `debug.screenshot_directory`, `debug.screenshot_every` | `""`, `0` | `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | The game writes each Nth frame to this folder as a BMP file. |
@@ -1129,8 +1131,55 @@ Co-op games have no bots.
   as the host's own players do.
 - The bots are on machine slots of their own, from the last slot (127)
   down, four bots to a slot. No connection uses these slots.
-- For now a bot walks about: it turns now and then, and it turns away and
-  jumps when it is stuck.
+- For now a bot roams: it picks a place on the map, goes there along the
+  walking graph (below), and picks another. It does not fight yet.
+
+### The walking graph
+
+The host builds a walking graph of each map that it plays with bots
+(`game/bots_nav.c`, `game/bots_nav_game.c`), when the game starts:
+
+- From the collision of the level and of its static scenery (teleporter
+  pads, crates, rocks), in the way of Recast: the level is cut into columns
+  of 0.1 world units; a floor that slopes 45 degrees or less, with 0.7
+  world units of room above it, is walkable; walkable floor nearer than
+  0.25 world units to an edge or a wall is dropped; and each tile of 1 by 1
+  world units gives one node for each connected piece of floor in it.
+- Edges join the nodes: walks between pieces that touch (with steps of up
+  to 0.3), drops of up to 2.9 world units (falling damage starts at 3),
+  jumps of up to 0.65 (a jump rises about 0.69; a bot crouches in the air
+  for a high one), the teleporters (netgame flags 6 and 7, paired by their
+  team index), and the ladders: Boarding Action's, and Sidewinder's poles
+  (the climbable collision surfaces: a biped that faces one walks up it). A
+  drop or a jump must be clear of walls (the game's collision test), and
+  none goes past a ladder, which would catch a biped: a bot goes down beside
+  a ladder with its back to it.
+- Only what the spawns can reach, and what can reach the spawns, is kept.
+  The "main part" below is the part of the map that the most spawns can go
+  to and come back from.
+- Building takes 0.1 to 6 seconds for a map. The graph is cached in the save
+  root (`z:\bots_nav_<map>_<key>.nav`; the browser's private storage in
+  the web build), keyed by the map's checksum, so a machine builds the graph
+  of a map once. It is made from the player's own map files, and is never in
+  the repository or in a build.
+- A bot plans its way with A* and follows it: it cuts across between nodes
+  that lie along a line, hops up steps, jumps, drops, steps onto a
+  teleporter (off it and on again if it came out on it), and climbs
+  ladders. When it gets nowhere, it jumps, then plans again, then keeps off
+  the edge it was on and picks another place.
+
+`debug.bot_nav_check` builds the graph of each map the host plays, logs
+how much of the map it serves, and ends the game, so that a dedicated
+server with `server.maps` set to the thirteen stock maps goes through them
+a map at a time (about three and a half minutes). Every spawn of the 13
+stock maps reaches the main part, and the main part reaches 514 of their 534
+multiplayer weapons: all of them on 7 maps; the rest are on Beaver Creek (34
+of 35), Chillout (32 of 33), Damnation (35 of 46: most of its upper tier),
+Hang 'Em High (44 of 45), Longest (36 of 40), Rat Race (29 of 30) and Wizard
+(42 of 44). The check logs each one that is not reached and why. A table of
+hand-checked extra links for a map (`bots_nav_overrides` in
+`game/bots_nav_game.c`, points only) is for those; it is empty for now.
+`debug.bot_trace` logs each bot's way every second.
 
 The host's console has a `bot` command:
 
@@ -1152,8 +1201,13 @@ bots of a test do the same each run.
 `tools/test_bots.py` tests the bots in real games on one machine: a
 dedicated server with bots and a client, which sees them play, and the
 console's `bot`, `kick` commands in the game; a client built from before
-bots (`HALO_TEST_OLD_CLIENT`) on a server with bots; and a listen host with
-bots and a client. CI runs them in the `bots` job on `opence-k8s`.
+bots (`HALO_TEST_OLD_CLIENT`) on a server with bots; a listen host with
+bots and a client; the walking graph of every stock map
+(`test_bots_nav_on_every_map`: each map's reach, and the cache); and four
+bots roaming Boarding Action (`test_bots_roam`: goals reached, ladders
+taken). CI runs them in the `bots` job on `opence-k8s`, in about 12
+minutes. `tools/harness/tests/test_bots_nav.py` tests the graph's builder on
+made-up levels, without the game.
 
 ## Map checks
 

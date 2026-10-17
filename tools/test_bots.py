@@ -272,3 +272,123 @@ def test_bots_on_a_listen_host(tmp_path):
         assert local and local[-1] != "-1" and local[-1] not in _bots_seen(host, 2), host[-3000:]
     finally:
         _stop(games, tmp_path, {"host": game, "join": game})
+
+
+STOCK_MAPS = ("beavercreek", "bloodgulch", "boardingaction", "carousel", "chillout", "damnation", "hangemhigh",
+              "longest", "prisoner", "putput", "ratrace", "sidewinder", "wizard")
+# the multiplayer weapons the walking graph reaches on each stock map, at
+# least (the rest of each map's are all of them): those it does not, a few,
+# need a map's own links checked in the game (bots_nav_game.c's overrides)
+WEAPONS_REACHED_AT_LEAST = {"beavercreek": 34, "chillout": 32, "damnation": 35, "hangemhigh": 44, "longest": 36,
+                            "ratrace": 29, "wizard": 42}
+GRAPH = re.compile(r"bots: walking graph of (\w+) (built|read from the cache) in (\d+) ms: (\d+) nodes, .*? spawns "
+                   r"(\d+)/(\d+) reach the main part, weapons (\d+)/(\d+) are reached from it")
+
+
+def _nav_check(tmp_path, name, server, maps, map_names):
+    """a dedicated server through the maps (debug.bot_nav_check ends each
+    game once its graph is made); each map's graph line"""
+    games = {name: _start(tmp_path, name, server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_BOT_NAV_CHECK": "1",
+        "HALO_SERVER_MAPS": ",".join(map_names), "HALO_NET_ADDRESS": _test_address(227),
+        "HALO_NET_BROADCAST": _test_address(228)})}
+    try:
+        _wait(lambda: {m[0] for m in GRAPH.findall(_log(tmp_path, name))} >= set(map_names), 60 + 30 * len(map_names),
+              games, tmp_path, f"not every map's walking graph was made ({', '.join(map_names)})")
+    finally:
+        _stop(games, tmp_path, {name: server})
+        # (the game's own caches of the maps, a gigabyte: not the graphs')
+        for cache in (tmp_path / name / "saves").rglob("cache*.map"):
+            cache.unlink()
+    return {m[0]: m for m in GRAPH.findall(_log(tmp_path, name))}
+
+
+def test_bots_nav_on_every_map(tmp_path):
+    """The bots' walking graph (port/linux/game/bots_nav.c) of each stock
+    multiplayer map, built by a dedicated server going through all thirteen
+    (debug.bot_nav_check): every spawn reaches the spawns' main part (a bot
+    spawned anywhere joins the game), and the main part reaches every
+    multiplayer weapon but the few WEAPONS_REACHED_AT_LEAST leaves out. The
+    graphs go to the save root's cache: a second server, on two of the maps,
+    reads them from it, the same. Skips the maps the maps folder lacks.
+    About four minutes."""
+    maps, paths = _needs("HALO_TEST_SERVER")
+    names = [name for name in STOCK_MAPS if Path(maps, f"{name}.map").is_file()]
+    built = _nav_check(tmp_path, "server", paths["HALO_TEST_SERVER"], maps, names)
+    for name in names:
+        _, how, milliseconds, nodes, spawns, spawn_count, weapons, weapon_count = built[name]
+        print(f"{name}: {how} in {milliseconds} ms, {nodes} nodes; spawns {spawns}/{spawn_count}, "
+              f"weapons {weapons}/{weapon_count}")
+        assert how == "built", built[name]
+        assert spawns == spawn_count, f"{name}: only {spawns} of {spawn_count} spawns reach the main part"
+        assert int(weapons) >= WEAPONS_REACHED_AT_LEAST.get(name, int(weapon_count)), \
+            f"{name}: only {weapons} of {weapon_count} weapons are reached:\n" + \
+            "\n".join(line for line in _log(tmp_path, "server").splitlines() if f"nav check: {name} " in line)
+    # the cache: the same graphs, read, not built (its save root moved over)
+    second = names[:2]
+    (tmp_path / "again").mkdir()
+    (tmp_path / "server" / "saves").rename(tmp_path / "again" / "saves")
+    (tmp_path / "server" / "data").rename(tmp_path / "again" / "data")
+    read = _nav_check_again(tmp_path, paths["HALO_TEST_SERVER"], maps, second)
+    for name in second:
+        assert read[name][1] == "read from the cache", read[name]
+        assert read[name][3:] == built[name][3:], (read[name], built[name])
+
+
+def _nav_check_again(tmp_path, server, maps, map_names):
+    """_nav_check in tmp_path/again, whose save root is there already"""
+    folder = tmp_path / "again"
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
+    env.update(HALO_DEDICATED="1", HALO_NETWORK_TEST_START="3", HALO_BOT_NAV_CHECK="1",
+               HALO_SERVER_MAPS=",".join(map_names), HALO_NET_ADDRESS=_test_address(229),
+               HALO_NET_BROADCAST=_test_address(230), HALO_NET_ONLINE="false", HALO_UPDATE_ANSWER="never",
+               HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
+    with open(folder / "run.log", "w") as log:
+        games = {"again": subprocess.Popen([server], cwd=folder, env=_game_env(env), stdout=log,
+                                           stderr=subprocess.STDOUT)}
+    try:
+        _wait(lambda: {m[0] for m in GRAPH.findall(_log(tmp_path, "again"))} >= set(map_names), 120, games, tmp_path,
+              "the cached graphs were not read")
+    finally:
+        _stop(games, tmp_path, {"again": server})
+        for cache in (folder / "saves").rglob("cache*.map"):
+            cache.unlink()
+    return {m[0]: m for m in GRAPH.findall(_log(tmp_path, "again"))}
+
+
+ROAMED = re.compile(r"bots: (\[BOT\] \w+) at tick (\d+): (\d+) goals reached, (\d+) paths \((\d+) failed\), stuck (\d+) "
+                    r"times, went (\d+) world units \((\d+) drops, (\d+) jumps, (\d+) teleporters, (\d+) ladders up, "
+                    r"(\d+) down\)")
+
+
+def test_bots_roam(tmp_path):
+    """Four bots on Boarding Action's dedicated server, alone, for 80
+    seconds of game: each goes from goal to goal along the walking graph
+    (bots_brain.c), going on a long way, and between them they take the
+    ladders up and down and the teleporters between the ships. About two
+    minutes."""
+    maps, paths = _needs("HALO_TEST_SERVER")
+    if not Path(maps, "boardingaction.map").is_file():
+        pytest.skip("needs boardingaction.map")
+    server = paths["HALO_TEST_SERVER"]
+    games = {"server": _start(tmp_path, "server", server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "3",
+        "HALO_SERVER_MAPS": "boardingaction", "HALO_NET_ADDRESS": _test_address(231),
+        "HALO_NET_BROADCAST": _test_address(232)})}
+    try:
+        _wait(lambda: len([m for m in ROAMED.findall(_log(tmp_path, "server")) if int(m[1]) >= 2400]) >= 4, 240, games,
+              tmp_path, "the bots did not roam 80 seconds")
+    finally:
+        _stop(games, tmp_path, {"server": server})
+        for cache in (tmp_path / "server" / "saves").rglob("cache*.map"):
+            cache.unlink()
+    last = {m[0]: m for m in ROAMED.findall(_log(tmp_path, "server")) if int(m[1]) == 2400}
+    for name, m in last.items():
+        print(f"{name}: {m[2]} goals, {m[3]} paths ({m[4]} failed), stuck {m[5]} times, went {m[6]} world units, "
+              f"{m[7]} drops, {m[8]} jumps, {m[9]} teleporters, {m[10]} ladders up, {m[11]} down")
+    assert len(last) == 4, last
+    for name, m in last.items():
+        assert int(m[2]) >= 1, f"{name} reached no goal: {m}"
+        assert int(m[6]) >= 60, f"{name} went only {m[6]} world units: {m}"
+    assert sum(int(m[10]) + int(m[11]) for m in last.values()) >= 1, f"no bot took a ladder: {last}"
