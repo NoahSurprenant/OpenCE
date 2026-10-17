@@ -1144,9 +1144,10 @@ Co-op games have no bots.
   (BOTS, DIFFICULTY and FILL, which write these settings); a change in the
   lobby takes effect at once.
 - A bot plays Slayer: it roams the map along the walking graph (below),
-  takes weapons lying about that it has none of, and fights the players of
-  the other team (anyone, without teams) that it sees. In the other game
-  types it does the same, for now.
+  takes weapons lying about that it has none of and grenades that it can
+  carry, and fights the players of the other team (anyone, without teams)
+  that it sees or hears. In the other game types it does the same, for
+  now.
 
 ### Fighting
 
@@ -1154,9 +1155,9 @@ A bot sees as a person does (`game/bots_combat.c`): a few times a second it
 looks for enemies in front of it (its field of view), near enough, with
 nothing of the level or its scenery between its eyes and their head or body
 (the game's line of sight test, which sees through fences and grates). It
-never sees through walls. It knows of a player who hurt it in the last
-second, and turns to them. It remembers where it last saw its target for 4
-seconds and goes there.
+never sees through walls. When it is hurt, it turns to where the shots came
+from (roughly, as a person who is hit from behind does). It remembers where
+it last saw its target for 4 seconds and goes there.
 
 - It waits its reaction time after it first sees a target before it fires.
 - Its aim turns at most so fast, and is off by an error that wanders, that
@@ -1166,19 +1167,50 @@ seconds and goes there.
 - While it fights it strafes (only onto floor that the walking graph has),
   closes on a far target, backs off a near one, and strikes one at hand.
 - It reloads an empty magazine, and one below a third when it fights nobody.
+- It does not fire when a team mate is in the line of fire, and does not
+  strike when a team mate is at hand in front of it.
+
+A bot hears as a person does (`game/bots_hearing.c`). When it sees nobody
+to fight, it hears an enemy who fires, and an enemy's grenade or rocket in
+the air, within its hearing range. Its ear is no better than a person's: it
+knows the direction and a rough place, less exact the further the noise,
+and it does not follow someone who has stopped making noise. It turns to
+look that way, and then it goes there along the walking graph to see. Any
+bot (a peaceful one too) runs from a live grenade that lies or flies near
+it.
+
+A bot throws grenades (`game/bots_grenades.c`), now and then while it
+fights:
+
+- At the enemy that it sees, where they will be when the grenade lands; or
+  where it last saw an enemy who went out of sight (around a corner, behind
+  a wall: in a lob over it). More often at a group, and at an enemy who
+  hides.
+- A plasma grenade at one enemy in view (it sticks; the bot then backs
+  away), a frag grenade at a group or at an enemy out of sight.
+- It aims as the game throws a person's grenade (the same hand, speed and
+  fall), and follows the flight through the level first. It throws only
+  when the grenade lands near the point and far enough from itself and from
+  each team mate (where they are and where they are going), and it comes no
+  nearer its target while the grenade goes off: it does not kill itself
+  with its grenades, and hardly ever a team mate (one who runs into the
+  blast). A frag grenade that would hit a wall near it is not thrown,
+  because it would bounce back.
+- It carries the grenades that the game gives at spawn and those that it
+  takes on the map. It goes for grenades lying about when it lacks them.
 
 `server.bot_difficulty` sets how well the bots fight:
 
-| Difficulty | Reaction | Aim turns | Aim error | Sees | Field of view |
-| --- | --- | --- | --- | --- | --- |
-| `peaceful` | never fights | - | - | - | - |
-| `easy` | 600 ms | 120 degrees/s | large | 25 world units | 90 degrees |
-| `normal` (default) | 400 ms | 205 degrees/s | medium | 35 world units | 110 degrees |
-| `hard` | 250 ms | 290 degrees/s | small | 45 world units | 120 degrees |
-| `legendary` | 170 ms | 410 degrees/s | very small | 55 world units | 130 degrees |
+| Difficulty | Reaction | Aim turns | Aim error | Sees | Field of view | Hears | Grenades |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `peaceful` | never fights | - | - | - | - | - | never |
+| `easy` | 600 ms | 120 degrees/s | large | 25 world units | 90 degrees | 18 world units | rarely, 12 s apart at least |
+| `normal` (default) | 400 ms | 205 degrees/s | medium | 35 world units | 110 degrees | 26 world units | sometimes, 7 s apart |
+| `hard` | 250 ms | 290 degrees/s | small | 45 world units | 120 degrees | 32 world units | often, 5 s apart |
+| `legendary` | 170 ms | 410 degrees/s | very small | 55 world units | 130 degrees | 38 world units | very often, 3.5 s apart |
 
-Grenades, choosing a weapon by the range, objectives (CTF, King of the
-Hill, Oddball) and vehicles are for later.
+Choosing a weapon by the range, objectives (CTF, King of the Hill, Oddball)
+and vehicles are for later.
 
 Peaceful bots roam, take weapons and play as the others do, but never fight:
 they never aim at a player, shoot, throw a grenade or strike. They can still

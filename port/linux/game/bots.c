@@ -29,7 +29,9 @@ and stay from game to game as the other players do. Co-op games have none. */
 #include "networking/network_server_manager.h"
 #include "networking/network_server_manager_internal.h"
 #include "cseries/cseries_windows.h"
+#include "objects/damage.h"
 #include "objects/objects.h"
+#include "tag_files/tag_files.h"
 #include "text/unicode.h"
 #include "units/units.h"
 
@@ -269,11 +271,95 @@ static void bots_report(
 		bots_name_text(player->name, name, (int)sizeof(name));
 		platform_log("bots: %s at tick %ld: %ld goals reached, %ld paths (%ld failed), stuck %ld times, went %.0f world units"
 			" (%ld drops, %ld jumps, %ld teleporters, %ld ladders up, %ld down); %ld targets seen, fired %ld ticks, "
-			"%ld weapons taken",
+			"%ld weapons taken, %ld items taken; %ld grenades thrown, %ld grenade hits, %ld grenade kills, %ld grenade suicides, %ld team kills; "
+			"%ld noises heard, %ld grenades dodged",
 			name, now, statistics->goals_reached, statistics->paths_planned, statistics->paths_failed, statistics->stuck,
 			statistics->travelled, statistics->moves[_bots_nav_drop], statistics->moves[_bots_nav_jump],
 			statistics->moves[_bots_nav_teleport], statistics->moves[_bots_nav_climb], statistics->moves[_bots_nav_descend],
-			statistics->targets_seen, statistics->ticks_fired, statistics->weapons_taken);
+			statistics->targets_seen, statistics->ticks_fired, statistics->weapons_taken, statistics->items_taken,
+			statistics->grenades_thrown, statistics->grenade_hits,
+			statistics->grenade_kills, statistics->grenade_suicides, statistics->team_kills, statistics->noises_heard,
+			statistics->grenades_dodged);
+	}
+}
+
+/* the bot of a player datum (NULL if none) */
+static struct bot *bots_of_player(
+	long player_index)
+{
+	struct player_datum *player = player_index != NONE ? player_try_and_get(player_index) : NULL;
+	short index;
+
+	for (index = 0; player && index < BOTS_MAXIMUM; index++)
+	{
+		struct bot *bot = &bots_globals.bots[index];
+
+		if (bot->used && player->network_player_data.machine_index == bot->machine_index &&
+			player->network_player_data.controller_index == bot->controller_index)
+		{
+			return bot;
+		}
+	}
+	return NULL;
+}
+
+void bots_note_damage(
+	long object_index,
+	struct damage_data const *damage,
+	real amount,
+	boolean killed)
+{
+	long dead_unit_index = object_index;
+	struct bot *bot;
+	long dead_player_index;
+	struct player_datum *dead;
+	char const *name;
+	boolean grenade;
+
+	if (!global_network_game_server_get() || !damage || damage->owner_player_index == NONE ||
+		(bot = bots_of_player(damage->owner_player_index)) == NULL)
+	{
+		return;
+	}
+	dead_player_index = player_index_from_unit_index(dead_unit_index);
+	dead = dead_player_index != NONE ? player_try_and_get(dead_player_index) : NULL;
+	if (!dead)
+		return;
+	/* (a grenade's damage: the stock grenades' damage effects are named so) */
+	name = damage->definition_index != NONE ? tag_get_name(damage->definition_index) : NULL;
+	grenade = name && strstr(name, "grenade") != NULL;
+	/* (a hit on an enemy by its grenade, the killing one too) */
+	if (grenade && (amount > 0.0f || killed) && dead_player_index != damage->owner_player_index &&
+		(!game_engine_has_teams() || dead->team_index != player_get(damage->owner_player_index)->team_index))
+	{
+		bot->brain.statistics.grenade_hits++;
+	}
+	if (!killed)
+		return;
+	if (dead_player_index == damage->owner_player_index)
+	{
+		if (grenade)
+		{
+			bot->brain.statistics.grenade_suicides++;
+			platform_log("bots: %p killed itself with %s at (%.1f %.1f %.1f), the blast at (%.1f %.1f %.1f)", (void *)&bot->brain,
+				name, object_get(dead_unit_index)->object.position.x, object_get(dead_unit_index)->object.position.y,
+				object_get(dead_unit_index)->object.position.z, damage->epicenter.x, damage->epicenter.y, damage->epicenter.z);
+		}
+	}
+	else if (game_engine_has_teams() && dead->team_index == player_get(damage->owner_player_index)->team_index)
+	{
+		bot->brain.statistics.team_kills++;
+		platform_log("bots: %p killed a team mate with %s at (%.1f %.1f %.1f), the damage from (%.1f %.1f %.1f); its last"
+			" throw %ld ticks ago at (%.1f %.1f %.1f), it %s", (void *)&bot->brain, name ? name : "?",
+			object_get(dead_unit_index)->object.position.x, object_get(dead_unit_index)->object.position.y,
+			object_get(dead_unit_index)->object.position.z, damage->epicenter.x, damage->epicenter.y, damage->epicenter.z,
+			game_time_get() - bot->brain.combat.throw_tick, bot->brain.combat.grenade_aimed.x,
+			bot->brain.combat.grenade_aimed.y, bot->brain.combat.grenade_aimed.z,
+			bot->brain.unit_index == NONE ? "dead" : "alive");
+	}
+	else if (grenade)
+	{
+		bot->brain.statistics.grenade_kills++;
 	}
 }
 

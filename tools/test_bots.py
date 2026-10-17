@@ -265,7 +265,9 @@ def test_bots_on_a_listen_host(tmp_path):
         "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
         "HALO_NET_ADDRESS": join_address, "HALO_NET_BROADCAST": host_address})
     try:
-        _wait(lambda: _bots_seen(_log(tmp_path, "join"), 2) and _bots_seen(_log(tmp_path, "host"), 2), 150, games,
+        # (a host's first start makes its map caches, a gigabyte, slow on a
+        # busy runner: the tests' other half beside it)
+        _wait(lambda: _bots_seen(_log(tmp_path, "join"), 2) and _bots_seen(_log(tmp_path, "host"), 2), 240, games,
               tmp_path, "the machines did not see two bots play")
         for name in ("host", "join"):
             _assert_bots_play(_log(tmp_path, name), _bots_seen(_log(tmp_path, name), 2), {127})
@@ -398,6 +400,41 @@ def test_bots_roam(tmp_path):
 
 
 SCORE = re.compile(r"server: score: (\[BOT\] \w+) (-?\d+), (\d+) kills, (\d+) deaths")
+# a bot's score in a game with teams, and the teams'
+TEAM_SCORE = re.compile(r"server: score: (\[BOT\] \w+) \((red|blue)\) (-?\d+), (\d+) kills, (\d+) deaths")
+TEAMS_SCORE = re.compile(r"server: score: red (-?\d+), blue (-?\d+)")
+REPORT = re.compile(r"bots: (\[BOT\] \w+) at tick (\d+): (.*)")
+
+
+def _reports(log):
+    """each bot's last report (bots.c's bots_report): {name: {what: count}},
+    the counts named as the report names them ("grenades thrown": 3)"""
+    reports = {}
+    for name, tick, text in REPORT.findall(log):
+        counts = {"tick": int(tick)}
+        for number, what in re.findall(r"(\d+) ([a-z][a-z ]*?)(?=[,;()]|$)", text):
+            counts.setdefault(what.strip(), int(number))
+        reports[name] = counts
+    return reports
+
+
+def _bots_game(tmp_path, name, settings, games_over=1, seconds=300):
+    """a dedicated server with bots alone (settings: its HALO_ settings)
+    until games_over of its games are over, each with its bots' scores; its
+    log"""
+    maps, paths = _needs("HALO_TEST_SERVER")
+    server = paths["HALO_TEST_SERVER"]
+    bots = int(settings.get("HALO_SERVER_BOTS", "1"))
+    games = {name: _start(tmp_path, name, server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", **settings})}
+    try:
+        _wait(lambda: len(re.findall(r"server: score: \[BOT\]", _log(tmp_path, name))) >= games_over * bots,
+              seconds, games, tmp_path, "the bots' game did not end with their scores")
+    finally:
+        _stop(games, tmp_path, {name: server})
+        for cache in (tmp_path / name / "saves").rglob("cache*.map"):
+            cache.unlink()
+    return _log(tmp_path, name)
 
 
 def test_bots_slayer(tmp_path):
@@ -461,6 +498,48 @@ def test_bots_peaceful(tmp_path):
     assert all(int(m[4]) == 0 and int(m[3]) == 0 for m in reports.values()), f"a peaceful bot aimed or fired: {reports}"
     assert all(int(m[2]) >= 60 for m in reports.values()), f"a peaceful bot hardly moved: {reports}"
     assert sum(int(m[5]) for m in reports.values()) >= 1, f"no peaceful bot took a weapon: {reports}"
+    thrown = {name: counts.get("grenades thrown") for name, counts in _reports(log).items()}
+    assert all(count == 0 for count in thrown.values()) and len(thrown) == 4, f"a peaceful bot threw a grenade: {thrown}"
+
+
+def test_bots_grenades(tmp_path):
+    """Six legendary bots play a two-minute Team Slayer on Beaver Creek, three
+    against three (everyone spawns with frag grenades there): they throw
+    grenades (bots_grenades.c) at enemies in view and where they last saw
+    them, and hit enemies with them, but never kill themselves and hardly
+    ever a team mate (at most one, who ran into the blast); each hears the fight
+    (bots_hearing.c), and they run from grenades. About two and a half
+    minutes."""
+    maps, _ = _needs("HALO_TEST_SERVER")
+    if not Path(maps, "beavercreek.map").is_file():
+        pytest.skip("needs beavercreek.map")
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "6", "HALO_BOT_SEED": "4", "HALO_SERVER_BOT_DIFFICULTY": "legendary",
+        "HALO_SERVER_MAPS": "beavercreek", "HALO_SERVER_GAME_TYPES": "team_slayer", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(239), "HALO_NET_BROADCAST": _test_address(240)})
+    reports = _reports(log)
+    scores = TEAM_SCORE.findall(log)[:6]
+    for name, counts in sorted(reports.items()):
+        print(f"{name}: {counts}")
+    print(f"scores: {scores}; teams {TEAMS_SCORE.findall(log)}")
+    assert len(reports) == 6 and len(scores) == 6, log[-4000:]
+
+    def total(what):
+        return sum(counts.get(what, 0) for counts in reports.values())
+
+    assert total("grenades thrown") >= 4, f"the bots threw only {total('grenades thrown')} grenades"
+    assert total("grenade hits") >= 1, "no bot's grenade hit an enemy"
+    print(f"grenades: {total('grenades thrown')} thrown, {total('grenade hits')} hits, {total('grenade kills')} kills")
+    assert total("grenade suicides") == 0, "a bot killed itself with its grenade:\n" + \
+        "\n".join(line for line in log.splitlines() if "killed itself" in line)
+    # (a team mate who runs into a grenade after it left the hand: rare, about
+    # one game in ten; more than one is the bots' fault)
+    assert total("team kills") <= 1, "bots killed team mates:\n" + \
+        "\n".join(line for line in log.splitlines() if "killed a team mate" in line)
+    assert all(counts.get("noises heard", 0) >= 1 for counts in reports.values()), "a bot heard nothing of the fight"
+    assert total("grenades dodged") >= 1, "no bot ran from a grenade"
+
+
 def test_bots_leave_for_a_person(tmp_path):
     """A dedicated server full of bots (server.max_players 3, server.bots 3)
     and a person who joins it: a bot leaves at once to make room, the person

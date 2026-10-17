@@ -139,6 +139,7 @@ symbols in this file:
 #include "units/units.h"
 #include "units/vehicles.h"
 #include "skate.h" /* port: port/linux/game/skate.c */
+#include "bots.h" /* port: port/linux/game/bots.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -1116,6 +1117,9 @@ static void object_damage_aftermath(
 			damage->owner_player_index,
 			damage->owner_object_index,
 			damage->owner_team_index);
+		/* port: a bot's hit or kill, for its statistics (bots.c) */
+		bots_note_damage(object_index, damage, shield_damage + body_damage,
+			TEST_FLAG(being_damaged_flags, _object_being_damaged_body_depleted_bit));
 		if (TEST_FLAG(
 				being_damaged_flags,
 				_object_being_damaged_body_depleted_bit))
