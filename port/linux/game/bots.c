@@ -241,6 +241,46 @@ boolean bots_player_is_bot(
 		network_game_server_port_machine_is_bot(player->network_player_data.machine_index);
 }
 
+static long bots_player_index(
+	struct bot const *bot);
+
+/* the game type's statistics of the bot's player (game.h's, the game's
+own), in the report: flags grabbed, returned and captured; seconds on the
+hill; seconds with the ball */
+static void bots_report_objective(
+	struct bot const *bot,
+	char const *name,
+	long now)
+{
+	struct player_datum *player = player_try_and_get(bots_player_index(bot));
+	struct game_variant *variant = game_engine_get_variant();
+	union multiplayer_statistics const *statistics;
+	long grabs = 0, returns = 0, captures = 0, hill = 0, ball = 0;
+
+	if (!player || !variant)
+		return;
+	statistics = &player->statistics.multiplayer_statistics;
+	switch (variant->game_engine_index)
+	{
+	case game_engine_ctf:
+		grabs = statistics->ctf_statistics.flag_grabs;
+		returns = statistics->ctf_statistics.flag_returns;
+		captures = statistics->ctf_statistics.flag_scores;
+		break;
+	case game_engine_king:
+		/* (ticks, short: they wrap after 18 minutes) */
+		hill = (unsigned short)statistics->king_statistics.time_on_hill / TICKS_PER_SECOND;
+		break;
+	case game_engine_oddball:
+		ball = (unsigned short)statistics->oddball_statistics.time_with_the_ball / TICKS_PER_SECOND;
+		break;
+	default:
+		return;
+	}
+	platform_log("bots: %s objective at tick %ld: %ld flag grabs, %ld flag returns, %ld flag captures, %ld hill seconds, "
+		"%ld ball seconds", name, now, grabs, returns, captures, hill, ball);
+}
+
 /* every BOTS_REPORT_TICKS of a game, what each bot has done (the tests
 read it) */
 static void bots_report(
@@ -283,7 +323,32 @@ static void bots_report(
 			statistics->grenade_kills, statistics->grenade_suicides, statistics->team_kills, statistics->noises_heard,
 			statistics->grenades_dodged, statistics->retreats, statistics->covers_reached, statistics->powerups_taken,
 			statistics->weapon_switches, statistics->power_weapons_taken, statistics->suicides);
+		bots_report_objective(bot, name, now);
 	}
+}
+
+short bots_team_rank(
+	struct bot const *bot,
+	short *count)
+{
+	struct network_player const *mine = network_game_server_port_bot_player(bot->machine_index, bot->controller_index);
+	short rank = 0;
+	short index;
+
+	*count = 0;
+	for (index = 0; mine && index < BOTS_MAXIMUM; index++)
+	{
+		struct bot const *other = &bots_globals.bots[index];
+		struct network_player const *player = other->used ?
+			network_game_server_port_bot_player(other->machine_index, other->controller_index) : NULL;
+
+		if (!player || player->team_index != mine->team_index)
+			continue;
+		(*count)++;
+		if (other->slot < bot->slot)
+			rank++;
+	}
+	return rank;
 }
 
 /* the bot of a player datum (NULL if none) */

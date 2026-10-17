@@ -18,6 +18,7 @@ machine takes it as it takes a person's. */
 #include "math/real_math.h"
 #include "memory/data.h"
 #include "game/game.h"
+#include "game/game_allegiance.h"
 #include "game/players.h"
 #include "items/weapons.h"
 #include "objects/objects.h"
@@ -902,6 +903,241 @@ static boolean bot_pickup_act(
 	return TRUE;
 }
 
+/* ---------- the game type's objective (bots_objectives.c) */
+
+static real bot_flat(
+	real_point3d const *position,
+	struct bots_nav_point const *point)
+{
+	real dx = point->x - position->x, dy = point->y - position->y;
+
+	return (real)sqrt(dx * dx + dy * dy);
+}
+
+/* a node within the radius of the point, at random, both ways reached (NONE:
+none found) */
+static long bot_node_within(
+	struct bot_brain *brain,
+	struct bots_nav const *nav,
+	struct bots_nav_point const *point,
+	real radius)
+{
+	short attempt;
+
+	for (attempt = 0; attempt < 12; attempt++)
+	{
+		real angle = bot_random_real(brain) * 2.0f * _pi;
+		real away = (real)sqrt(bot_random_real(brain)) * radius;
+		long node = bots_nav_locate(nav, point->x + (real)cos(angle) * away, point->y + (real)sin(angle) * away, point->z + 0.5f);
+
+		if (node != NONE && nav->nodes[node].reach == (_bots_nav_reached_bit | _bots_nav_reaches_bit) &&
+			fabs(nav->nodes[node].point.z - point->z) < 1.5f)
+		{
+			return node;
+		}
+	}
+	return NONE;
+}
+
+/* of a few nodes at random, the one furthest from the bot's enemies */
+static long bot_flee_node(
+	struct bot_brain *brain,
+	struct bots_nav const *nav,
+	long unit_index)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	long best = NONE;
+	real best_score = -1.0f;
+	short attempt;
+
+	for (attempt = 0; attempt < 8; attempt++)
+	{
+		long node = bot_random_goal(brain, nav);
+		struct data_iterator iterator;
+		struct player_datum *other;
+		real nearest = 1.0e30f;
+
+		if (node == NONE)
+			continue;
+		data_iterator_new(&iterator, player_data);
+		while ((other = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		{
+			struct object_datum *enemy;
+			real distance;
+
+			if (other->unit_index == NONE || other->unit_index == unit_index)
+				continue;
+			enemy = object_get(other->unit_index);
+			if (!game_team_is_enemy(unit->object.owner_team_index, enemy->object.owner_team_index))
+				continue;
+			distance = bot_flat(&enemy->object.position, &nav->nodes[node].point);
+			if (distance < nearest)
+				nearest = distance;
+		}
+		if (nearest > best_score)
+		{
+			best_score = nearest;
+			best = node;
+		}
+	}
+	return best;
+}
+
+/* the bot's goal on the graph the objective's point, planned again when the
+point has moved */
+static void bot_objective_head_for(
+	struct bot_brain *brain,
+	struct bots_nav *nav,
+	struct bots_nav_point const *point)
+{
+	long now = game_time_get();
+	real dx = point->x - brain->objective_planned.x, dy = point->y - brain->objective_planned.y;
+
+	if (brain->goal_node == NONE ||
+		(dx * dx + dy * dy > 1.5f * 1.5f && now - brain->objective_plan_tick >= TICKS_PER_SECOND / 2))
+	{
+		long node = bots_nav_locate(nav, point->x, point->y, point->z + 0.5f);
+
+		brain->objective_planned = *point;
+		brain->objective_plan_tick = now;
+		if (node != NONE && node != brain->goal_node)
+		{
+			brain->goal_node = node;
+			brain->path_next = NONE;
+		}
+	}
+}
+
+/* a fighting bot's goal, its objective's where that comes first: a flag
+carried home, a flag near to take, a hill or a flag's stand it does not
+leave, a carrier it hunts */
+static struct bots_nav_point const *bot_objective_combat_goal(
+	struct bot *bot,
+	long unit_index,
+	real_point3d const *position,
+	struct bots_nav_point const *goal)
+{
+	struct bot_brain *brain = &bot->brain;
+	struct bot_objective const *objective = &brain->objective;
+	struct bots_nav *nav = bots_nav_current();
+
+	switch (objective->kind)
+	{
+	case _bot_objective_carry:
+		if (objective->flee && nav)
+		{
+			if (game_time_get() >= brain->objective_wander_tick || brain->goal_node == NONE)
+			{
+				long node = bot_flee_node(brain, nav, unit_index);
+
+				brain->objective_wander_tick = game_time_get() + 3 * TICKS_PER_SECOND;
+				if (node != NONE)
+					brain->objective_planned = nav->nodes[node].point;
+			}
+			return &brain->objective_planned;
+		}
+		return &objective->point;
+	case _bot_objective_take:
+		return bot_flat(position, &objective->point) < 10.0f ? &objective->point : goal;
+	case _bot_objective_hold:
+		if (bot_flat(position, &objective->point) > objective->radius + 2.0f)
+			return &objective->point;
+		/* (no chase out of it) */
+		if (goal && bot_flat(position, goal) > 2.0f &&
+			(goal->x - objective->point.x) * (goal->x - objective->point.x) +
+			(goal->y - objective->point.y) * (goal->y - objective->point.y) >
+			(objective->radius + 4.0f) * (objective->radius + 4.0f))
+		{
+			return NULL;
+		}
+		return goal;
+	case _bot_objective_hunt:
+		return goal ? &objective->point : NULL;
+	default:
+		return goal;
+	}
+}
+
+/* the objective's moves when the bot fights nobody (FALSE: no objective) */
+static boolean bot_objective_move(
+	struct bot *bot,
+	struct bots_nav *nav,
+	long unit_index,
+	real_point3d const *position,
+	struct player_action *action)
+{
+	struct bot_brain *brain = &bot->brain;
+	struct bot_objective const *objective = &brain->objective;
+	long now = game_time_get();
+	real distance;
+
+	if (objective->kind == _bot_objective_none || !nav)
+		return FALSE;
+	distance = bot_flat(position, &objective->point);
+	if (objective->kind == _bot_objective_hold && distance <= objective->radius)
+	{
+		/* (within it: a spot within it now and then, and there it stands,
+		looking about) */
+		if (now >= brain->objective_wander_tick)
+		{
+			long node = bot_node_within(brain, nav, &objective->point, objective->radius);
+
+			brain->objective_wander_tick = now + (long)((2.0f + bot_random_real(brain) * 3.0f) * TICKS_PER_SECOND);
+			if (node != NONE)
+			{
+				brain->goal_node = node;
+				brain->path_next = NONE;
+			}
+		}
+		if (brain->goal_node == NONE)
+		{
+			bot_turn_to(brain, brain->yaw + 0.05f);
+			bot_action_idle(action, brain->yaw, brain->pitch);
+			brain->holding = TRUE;
+			return TRUE;
+		}
+		bot_roam(brain, nav, position, action);
+		return TRUE;
+	}
+	if (objective->kind == _bot_objective_carry && objective->flee)
+	{
+		/* (the ball: away from its enemies) */
+		if (now >= brain->objective_wander_tick || brain->goal_node == NONE)
+		{
+			long node = bot_flee_node(brain, nav, unit_index);
+
+			brain->objective_wander_tick = now + 4 * TICKS_PER_SECOND;
+			if (node != NONE)
+			{
+				brain->goal_node = node;
+				brain->path_next = NONE;
+			}
+		}
+		bot_roam(brain, nav, position, action);
+		return TRUE;
+	}
+	/* (there: straight onto it, a ball taken with a press) */
+	if (distance < 1.5f && fabs(position->z - objective->point.z) < 0.8f && objective->kind != _bot_objective_hunt)
+	{
+		bot_turn_to(brain, (real)atan2(objective->point.y - position->y, objective->point.x - position->x));
+		bot_action_idle(action, brain->yaw, brain->pitch);
+		if (distance > 0.2f)
+			bot_move_toward(action, brain, position, &objective->point);
+		if (objective->kind == _bot_objective_take && now % 8 < 2)
+		{
+			SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
+			SET_FLAG(action->control_flags, _unit_control_swap_weapons_bit, TRUE);
+		}
+		brain->check_position = *position;
+		brain->check_ticks = BOT_CHECK_TICKS;
+		brain->progress_ticks = 0;
+		return TRUE;
+	}
+	bot_objective_head_for(brain, nav, &objective->point);
+	bot_roam(brain, nav, position, action);
+	return TRUE;
+}
+
 /* ---------- noises */
 
 /* a noise it heard (bots_hearing.c), not long ago: it turns to look that
@@ -1132,12 +1368,16 @@ void bot_brain_think(
 	/* (a live grenade near: noticed, by any bot) */
 	if ((game_time_get() + bot->slot) % 3 == 0)
 		bot_sense_danger(bot, unit_index);
+	/* (the game type's objective, a few times a second) */
+	if ((game_time_get() + bot->slot) % 10 == 0)
+		bot_objective_update(bot, player_index, unit_index, &brain->objective);
 	if (bot_combat_engaged(bot, player_index, unit_index, bot->slot))
 	{
 		struct bots_nav_point goal_point;
 		struct bots_nav_point const *goal = bot_combat_goal(bot, &position, &goal_point);
 		boolean moving = FALSE;
 
+		goal = bot_objective_combat_goal(bot, unit_index, &position, goal);
 		brain->holding = !goal || !nav;
 		brain->pickup_object = NONE;
 		/* (to where it last saw its target, along the graph: the goal given
@@ -1167,13 +1407,28 @@ void bot_brain_think(
 	{
 		brain->combat_goal_node = NONE;
 		brain->holding = FALSE;
-		/* (an item it wants first, then a noise it heard, then roaming) */
-		if (nav)
+		/* (an objective that cannot wait - a flag to carry home or to take, a
+		ball, a carrier to hunt - first; then an item it wants; then the
+		objective's place to be; then a noise it heard; then roaming) */
+		boolean urgent = brain->objective.kind == _bot_objective_carry || brain->objective.kind == _bot_objective_take ||
+			brain->objective.kind == _bot_objective_hunt;
+
+		if (nav && !urgent)
 			bot_pickup_goal(bot, nav, unit_index, &position);
-		if (nav && brain->pickup_object != NONE)
+		else
+			brain->pickup_object = NONE;
+		if (urgent && bot_objective_move(bot, nav, unit_index, &position, action))
+		{
+			/* (playing the game type) */
+		}
+		else if (nav && brain->pickup_object != NONE)
 		{
 			if (!bot_pickup_act(brain, unit_index, &position, action))
 				bot_roam(brain, nav, &position, action);
+		}
+		else if (bot_objective_move(bot, nav, unit_index, &position, action))
+		{
+			/* (playing the game type) */
 		}
 		else if (bot_investigate(bot, nav, &position, action))
 		{

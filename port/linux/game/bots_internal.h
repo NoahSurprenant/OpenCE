@@ -57,6 +57,34 @@ struct bot_statistics
 	long suicides;
 };
 
+/* a game type's objective for a bot (bots_objectives.c) */
+enum
+{
+	_bot_objective_none,
+	/* go to the point (a race's flag) */
+	_bot_objective_go,
+	/* go and take the item there (a flag, a ball) */
+	_bot_objective_take,
+	/* go there and stay within the radius (a hill, a flag's stand, a team
+	mate to escort) */
+	_bot_objective_hold,
+	/* carry the flag there (home), or the ball away from enemies (flee) */
+	_bot_objective_carry,
+	/* hunt the player there (a carrier, the juggernaut) */
+	_bot_objective_hunt,
+	NUMBER_OF_BOT_OBJECTIVES
+};
+
+struct bot_objective
+{
+	short kind;
+	boolean flee;
+	struct bots_nav_point point;
+	real radius;
+	long object_index;
+	long hunted_player;
+};
+
 /* a bot's fighting (bots_combat.c) */
 struct bot_combat
 {
@@ -188,6 +216,18 @@ struct bot_brain
 	long combat_goal_tick;
 	/* standing its ground in a fight (last tick): not getting nowhere */
 	boolean holding;
+	/* its game type's objective (bots_objectives.c), looked at every few
+	ticks; the point it last planned its way to for it; when it last
+	picked a place to stand within a hold, or to flee to */
+	struct bot_objective objective;
+	struct bots_nav_point objective_planned;
+	long objective_plan_tick;
+	long objective_wander_tick;
+	/* a race's next flag; Team Slayer's team mate to go over to, and when
+	it chooses again */
+	long race_flag;
+	long buddy_player;
+	long buddy_tick;
 	/* its approach to the point it heads for (the step of its way, the
 	nearest it came, the ticks since it came nearer: bot_near_enough) */
 	long approach_step;
@@ -295,6 +335,17 @@ boolean bot_cover_goal(
 	struct bot *bot,
 	real_point3d const *position,
 	struct bots_nav_point *goal);
+/* (bots_objectives.c) the bot's objective in the game type being played */
+void bot_objective_update(
+	struct bot *bot,
+	long player_index,
+	long unit_index,
+	struct bot_objective *objective);
+/* (bots.c) the bot's place among the bots of its team (0 for the first),
+and how many there are */
+short bots_team_rank(
+	struct bot const *bot,
+	short *count);
 /* (bots_grenades.c) how near a grenade of the kind going off hurts */
 real bot_grenade_danger_radius(
 	short type);
