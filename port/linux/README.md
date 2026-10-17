@@ -421,6 +421,7 @@ the setting for one start of the game. It has priority over the file.
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays, logs how much of the map it reaches, and ends the game. Refer to "Bots". |
 | `debug.bot_trace` | `false` | `HALO_BOT_TRACE` | Each bot's way in the log every second. |
+| `debug.bot_goal` | `""` | `HALO_BOT_GOAL` | `"x y z"`: every bot goes again and again to the walking graph's node at this point, and logs each arrival. Use it to check a map's links. |
 | `server.bot_difficulty` | `normal` | `HALO_SERVER_BOT_DIFFICULTY` | How well the bots fight: `peaceful` (they never fight), `easy`, `normal`, `hard` or `legendary`. Refer to "Bots". |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds (without a window, as on SIGTERM). `0`: never. |
@@ -1144,9 +1145,10 @@ Co-op games have no bots.
   (BOTS, DIFFICULTY and FILL, which write these settings); a change in the
   lobby takes effect at once.
 - A bot plays Slayer: it roams the map along the walking graph (below),
-  takes weapons lying about that it has none of, and fights the players of
-  the other team (anyone, without teams) that it sees. In the other game
-  types it does the same, for now.
+  takes weapons lying about that it has none of and grenades that it can
+  carry, and fights the players of the other team (anyone, without teams)
+  that it sees or hears. In the other game types it does the same, for
+  now.
 
 ### Fighting
 
@@ -1154,9 +1156,9 @@ A bot sees as a person does (`game/bots_combat.c`): a few times a second it
 looks for enemies in front of it (its field of view), near enough, with
 nothing of the level or its scenery between its eyes and their head or body
 (the game's line of sight test, which sees through fences and grates). It
-never sees through walls. It knows of a player who hurt it in the last
-second, and turns to them. It remembers where it last saw its target for 4
-seconds and goes there.
+never sees through walls. When it is hurt, it turns to where the shots came
+from (roughly, as a person who is hit from behind does). It remembers where
+it last saw its target for 4 seconds and goes there.
 
 - It waits its reaction time after it first sees a target before it fires.
 - Its aim turns at most so fast, and is off by an error that wanders, that
@@ -1166,19 +1168,50 @@ seconds and goes there.
 - While it fights it strafes (only onto floor that the walking graph has),
   closes on a far target, backs off a near one, and strikes one at hand.
 - It reloads an empty magazine, and one below a third when it fights nobody.
+- It does not fire when a team mate is in the line of fire, and does not
+  strike when a team mate is at hand in front of it.
+
+A bot hears as a person does (`game/bots_hearing.c`). When it sees nobody
+to fight, it hears an enemy who fires, and an enemy's grenade or rocket in
+the air, within its hearing range. Its ear is no better than a person's: it
+knows the direction and a rough place, less exact the further the noise,
+and it does not follow someone who has stopped making noise. It turns to
+look that way, and then it goes there along the walking graph to see. Any
+bot (a peaceful one too) runs from a live grenade that lies or flies near
+it.
+
+A bot throws grenades (`game/bots_grenades.c`), now and then while it
+fights:
+
+- At the enemy that it sees, where they will be when the grenade lands; or
+  where it last saw an enemy who went out of sight (around a corner, behind
+  a wall: in a lob over it). More often at a group, and at an enemy who
+  hides.
+- A plasma grenade at one enemy in view (it sticks; the bot then backs
+  away), a frag grenade at a group or at an enemy out of sight.
+- It aims as the game throws a person's grenade (the same hand, speed and
+  fall), and follows the flight through the level first. It throws only
+  when the grenade lands near the point and far enough from itself and from
+  each team mate (where they are and where they are going), and it comes no
+  nearer its target while the grenade goes off: it does not kill itself
+  with its grenades, and hardly ever a team mate (one who runs into the
+  blast). A frag grenade that would hit a wall near it is not thrown,
+  because it would bounce back.
+- It carries the grenades that the game gives at spawn and those that it
+  takes on the map. It goes for grenades lying about when it lacks them.
 
 `server.bot_difficulty` sets how well the bots fight:
 
-| Difficulty | Reaction | Aim turns | Aim error | Sees | Field of view |
-| --- | --- | --- | --- | --- | --- |
-| `peaceful` | never fights | - | - | - | - |
-| `easy` | 600 ms | 120 degrees/s | large | 25 world units | 90 degrees |
-| `normal` (default) | 400 ms | 205 degrees/s | medium | 35 world units | 110 degrees |
-| `hard` | 250 ms | 290 degrees/s | small | 45 world units | 120 degrees |
-| `legendary` | 170 ms | 410 degrees/s | very small | 55 world units | 130 degrees |
+| Difficulty | Reaction | Aim turns | Aim error | Sees | Field of view | Hears | Grenades |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `peaceful` | never fights | - | - | - | - | - | never |
+| `easy` | 600 ms | 120 degrees/s | large | 25 world units | 90 degrees | 18 world units | rarely, 12 s apart at least |
+| `normal` (default) | 400 ms | 205 degrees/s | medium | 35 world units | 110 degrees | 26 world units | sometimes, 7 s apart |
+| `hard` | 250 ms | 290 degrees/s | small | 45 world units | 120 degrees | 32 world units | often, 5 s apart |
+| `legendary` | 170 ms | 410 degrees/s | very small | 55 world units | 130 degrees | 38 world units | very often, 3.5 s apart |
 
-Grenades, choosing a weapon by the range, objectives (CTF, King of the
-Hill, Oddball) and vehicles are for later.
+Choosing a weapon by the range, objectives (CTF, King of the Hill, Oddball)
+and vehicles are for later.
 
 Peaceful bots roam, take weapons and play as the others do, but never fight:
 they never aim at a player, shoot, throw a grenade or strike. They can still
@@ -1214,23 +1247,53 @@ The host builds a walking graph of each map that it plays with bots
   of a map once. It is made from the player's own map files, and is never in
   the repository or in a build.
 - A bot plans its way with A* and follows it: it cuts across between nodes
-  that lie along a line, hops up steps, jumps, drops, steps onto a
-  teleporter (off it and on again if it came out on it), and climbs
-  ladders. When it gets nowhere, it jumps, then plans again, then keeps off
-  the edge it was on and picks another place.
+  that lie along a line where nothing is in the way, hops up steps, jumps
+  (a long jump with a run-up), drops, steps onto a teleporter (off it and on
+  again if it came out on it), and climbs ladders (going up or down counts
+  as getting somewhere; near the top it steps off with a hop).
+- A point it comes no nearer for a moment (a wall, a railing or a player
+  between) is as near as it gets: it goes on. Pushing on and hardly moving
+  for a quarter of a second, it hops (a lip or a ridge the graph walks
+  over). When it still gets nowhere, it jumps and steps aside, then plans
+  again, then keeps off the edge it was on and picks another place. An edge
+  that a bot fails costs more for every bot on that map, and a second
+  failure removes it.
+- It takes a weapon from the ground with the swap button when its hands
+  are full (the weapon in hand is dropped), and swaps no other for 30
+  seconds after. It gives up on an item that it stood at for 2 seconds
+  without taking it.
+- Each bot's report in the log has the seconds it was stuck (each look at
+  how far it had come, a second and a half apart, that found it had not).
+  Four bots roaming each stock map for 80 seconds were stuck 0 to 10 seconds
+  each, under 3 on most (0 to 18 before these rules).
 
 `debug.bot_nav_check` builds the graph of each map the host plays, logs
 how much of the map it serves, and ends the game, so that a dedicated
 server with `server.maps` set to the thirteen stock maps goes through them
 a map at a time (about three and a half minutes). Every spawn of the 13
-stock maps reaches the main part, and the main part reaches 514 of their 534
-multiplayer weapons: all of them on 7 maps; the rest are on Beaver Creek (34
-of 35), Chillout (32 of 33), Damnation (35 of 46: most of its upper tier),
-Hang 'Em High (44 of 45), Longest (36 of 40), Rat Race (29 of 30) and Wizard
-(42 of 44). The check logs each one that is not reached and why. A table of
-hand-checked extra links for a map (`bots_nav_overrides` in
-`game/bots_nav_game.c`, points only) is for those; it is empty for now.
-`debug.bot_trace` logs each bot's way every second.
+stock maps reaches the main part, and the main part reaches 523 of their 534
+multiplayer weapons: all of them on 9 maps. The check logs each one that is
+not reached, why, and what is over it.
+
+A table of hand-checked links for a map (`bots_nav_overrides` in
+`game/bots_nav_game.c`, points only) adds what the generator does not
+find: Damnation's upper tier (its floor meets the main part's at a corner,
+across a little hole: a hop), Wizard's raised middle (a running jump across
+the moat from each corner of the walkway; bots make it about one try in
+five, and give up on a corner they fail twice), and the rock by Beaver
+Creek's blue base. Not reached, and why:
+
+- Damnation, 5 of 46: they lie in a duct behind a slit that no biped
+  passes.
+- Longest, 4 of 40: they are on platforms 2.1 world units high, with
+  nothing to climb from.
+- Chillout, Hang 'Em High and Rat Race, 1 each: on ledges or beams too
+  narrow for the graph.
+
+`debug.bot_goal` sends every bot again and again to one point, to check a
+map's links in the game (each arrival is logged). `debug.bot_trace` logs
+each bot's way every second, each time it gets stuck, and what is in its
+way.
 
 The host's console has a `bot` command:
 
@@ -1257,7 +1320,7 @@ bots (`HALO_TEST_OLD_CLIENT`) on a server with bots; a listen host with
 bots and a client; the walking graph of every stock map
 (`test_bots_nav_on_every_map`: each map's reach, and the cache); and four
 bots roaming Boarding Action (`test_bots_roam`: goals reached, ladders
-taken); and four bots playing a two-minute Slayer on Hang 'Em High
+taken, no bot stuck more than 12 seconds of 80); and four bots playing a two-minute Slayer on Hang 'Em High
 (`test_bots_slayer`: each kills and dies, weapons taken). CI runs them in the `bots` job on `opence-k8s`, in about 12
 minutes. `tools/harness/tests/test_bots_nav.py` tests the graph's builder on
 made-up levels, without the game.

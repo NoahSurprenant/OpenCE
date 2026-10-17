@@ -21,14 +21,18 @@ machine takes it as it takes a person's. */
 #include "game/players.h"
 #include "items/weapons.h"
 #include "objects/objects.h"
+#include "physics/collisions.h"
+#include "tag_files/tag_files.h"
 #include "units/units.h"
 
 #include "bots_internal.h"
 
 #include <math.h>
+#include <stdio.h>
 
 /* the platform layer's (port_config.c, the port's log) */
 int config_boolean(const char *name);
+const char *config_string(const char *name);
 void platform_log(const char *format, ...);
 /* (debug.bot_trace: each bot's way each second, in the log) */
 static boolean bot_trace_checked, bot_trace;
@@ -50,6 +54,21 @@ goes on; how far off its way it may be before it plans again */
 must be */
 #define BOT_LOOK_AHEAD 4
 #define BOT_CORRIDOR 0.45f
+/* how long a bot may come no nearer a point it heads for before as near as
+it gets is near enough (ticks), and how much nearer counts */
+#define BOT_APPROACH_STALL_TICKS 12
+#define BOT_APPROACH_GAIN 0.05f
+/* the ticks after a bot took a weapon before it swaps another for one */
+#define BOT_PICKUP_SWAP_TICKS (30 * TICKS_PER_SECOND)
+/* the ticks a bot stands at an item trying to take it before it gives up */
+#define BOT_PICKUP_AT_TICKS (2 * TICKS_PER_SECOND)
+/* a jump longer than this (world units) is taken with a run-up this long */
+#define BOT_RUN_UP_SPAN 1.3f
+#define BOT_RUN_UP 1.4f
+/* the ticks a bot pushes on along a walk hardly moving before it hops */
+#define BOT_STALL_TICKS 8
+/* a step aside when getting nowhere (ticks) */
+#define BOT_SIDESTEP_TICKS 12
 /* the ticks an edge a bot got stuck on is kept off */
 #define BOT_AVOID_TICKS (10 * TICKS_PER_SECOND)
 /* how far a weapon on the ground may be for a bot to go and take it */
@@ -186,13 +205,16 @@ static void bot_wander(
 /* ---------- roaming the graph */
 
 /* an edge a bot could not go along (a railing the graph did not see, a jump
-too high in fact): dearer for every bot from now on, for this map */
+too high in fact, a climbable surface no biped climbs): dearer for every bot
+from now on, for this map; failed again, as good as gone */
 static void bot_edge_failed(
 	struct bots_nav *nav,
 	long edge)
 {
 	if (edge >= 0 && edge < nav->edge_count && nav->edges[edge].cost < 500.0f)
-		nav->edges[edge].cost += 40.0f;
+		nav->edges[edge].cost += nav->edges[edge].failed ? 1000.0f : 40.0f;
+	if (edge >= 0 && edge < nav->edge_count)
+		nav->edges[edge].failed = 1;
 }
 
 static real bot_distance2d(
@@ -202,6 +224,71 @@ static real bot_distance2d(
 	real dx = point->x - position->x, dy = point->y - position->y;
 
 	return (real)sqrt(dx * dx + dy * dy);
+}
+
+/* whether the bot is near enough the point it heads for at this step of its
+way: within strict, or within loose and coming no nearer for a while (a
+wall, a railing or a player between: as near as it gets) */
+static boolean bot_near_enough(
+	struct bot_brain *brain,
+	real distance,
+	real strict,
+	real loose)
+{
+	long step = brain->path_next * 2 + (brain->edge_begun ? 0 : 1);
+
+	if (distance < strict)
+		return TRUE;
+	if (step != brain->approach_step)
+	{
+		brain->approach_step = step;
+		brain->approach_best = distance;
+		brain->approach_ticks = 0;
+		return FALSE;
+	}
+	if (distance < brain->approach_best - BOT_APPROACH_GAIN)
+	{
+		brain->approach_best = distance;
+		brain->approach_ticks = 0;
+		return FALSE;
+	}
+	return ++brain->approach_ticks > BOT_APPROACH_STALL_TICKS && distance < loose;
+}
+
+/* whether a biped walks straight from the bot's place to the point:
+nothing of the level or its scenery in the way at its knees, either side
+of its middle */
+static boolean bot_line_walkable(
+	real_point3d const *position,
+	struct bots_nav_point const *point)
+{
+	real dx = point->x - position->x, dy = point->y - position->y;
+	real length = (real)sqrt(dx * dx + dy * dy);
+	short side;
+
+	if (length < 0.01f)
+		return TRUE;
+	for (side = -1; side <= 1; side += 2)
+	{
+		struct collision_result collision;
+		real_point3d from;
+		real_vector3d vector;
+
+		/* (a biped's radius to either side) */
+		from.x = position->x - dy / length * 0.18f * side;
+		from.y = position->y + dx / length * 0.18f * side;
+		from.z = position->z + 0.35f;
+		vector.i = dx;
+		vector.j = dy;
+		vector.k = point->z - position->z;
+		if (collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_structure_bit) |
+			FLAG(_collision_test_objects_bit) | FLAG(_collision_test_objects_scenery_bit) |
+			FLAG(_collision_test_objects_machines_bit), &from, &vector, NONE, &collision))
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
 }
 
 /* a node the spawns' part reaches both ways, at random (NONE if none found) */
@@ -249,7 +336,23 @@ static boolean bot_plan(
 	if (++brain->plans_this_second > 4)
 		return FALSE;
 	if (new_goal || brain->goal_node == NONE || brain->goal_node == here)
+	{
+		/* (debug.bot_goal: there, every other goal) */
+		char const *debug_goal = config_string("debug.bot_goal");
+		float gx, gy, gz;
+
 		brain->goal_node = bot_random_goal(brain, nav);
+		if (debug_goal && debug_goal[0] && sscanf(debug_goal, "%f %f %f", &gx, &gy, &gz) == 3 &&
+			(brain->statistics.paths_planned % 2) == 0)
+		{
+			long node = bots_nav_locate(nav, gx, gy, gz);
+
+			if (node != NONE)
+				brain->goal_node = node;
+			if (node == here)
+				platform_log("bots: %p reached the debug goal (%.2f %.2f %.2f)", (void *)brain, gx, gy, gz);
+		}
+	}
 	if (brain->goal_node == NONE)
 		return FALSE;
 	count = bots_nav_find_path(nav, here, brain->goal_node, brain->path, BOT_PATH_MAXIMUM);
@@ -318,7 +421,8 @@ static struct bots_nav_point const *bot_walk_target(
 			if (px * px + py * py > BOT_CORRIDOR * BOT_CORRIDOR || fabs(node->z - candidate->z) > 0.4f)
 				along = FALSE;
 		}
-		if (!along)
+		/* (and nothing in the way: no corner cut into a wall) */
+		if (!along || !bot_line_walkable(position, candidate))
 			break;
 		target = candidate;
 	}
@@ -345,7 +449,7 @@ static void bot_roam(
 	if (edge->type == _bots_nav_walk)
 	{
 		target = &nav->nodes[edge->target].point;
-		if (bot_distance2d(position, target) < BOT_NODE_REACHED && fabs(position->z - target->z) < 1.0f)
+		if (fabs(position->z - target->z) < 1.0f && bot_near_enough(brain, bot_distance2d(position, target), BOT_NODE_REACHED, 0.9f))
 		{
 			brain->path_next--;
 			if (brain->path_next < 0)
@@ -403,12 +507,15 @@ static void bot_roam(
 	else if (edge->type == _bots_nav_climb)
 	{
 		/* a ladder: into its face until high enough, then off to the top */
-		if (!brain->edge_begun && bot_distance2d(position, &edge->from) < 0.6f)
+		if (!brain->edge_begun && bot_near_enough(brain, bot_distance2d(position, &edge->from), 0.6f, 0.95f))
 		{
 			brain->edge_begun = TRUE;
 			brain->climb_yaw = (real)atan2(edge->from.y - position->y, edge->from.x - position->x);
 		}
-		target = brain->edge_begun && position->z > edge->to.z - 0.05f ? &edge->to : &edge->from;
+		/* (near its top: off it, onto the top, with a hop over the lip) */
+		target = brain->edge_begun && position->z > edge->to.z - 0.4f ? &edge->to : &edge->from;
+		if (brain->edge_begun && target == &edge->to && position->z < edge->to.z - 0.1f && brain->crouch_ticks == 0)
+			jump = TRUE;
 		/* (on it: into its face, whatever the face's middle is from here) */
 		if (brain->edge_begun && target == &edge->from)
 		{
@@ -434,8 +541,41 @@ static void bot_roam(
 	}
 	else
 	{
-		/* a drop, a jump or a teleporter: to its start, then across */
-		if (!brain->edge_begun && bot_distance2d(position, &edge->from) < BOT_MOVE_BEGUN)
+		/* a drop, a jump or a teleporter: to its start, then across; a long
+		jump with a run-up first, back along its line, so that the bot takes
+		off running */
+		static struct bots_nav_point run_up_point;
+		boolean running_up = FALSE;
+
+		if (edge->type == _bots_nav_jump && !brain->edge_begun)
+		{
+			real span_x = edge->to.x - edge->from.x, span_y = edge->to.y - edge->from.y;
+			real span = (real)sqrt(span_x * span_x + span_y * span_y);
+
+			if (brain->run_up_step != brain->path_next)
+			{
+				brain->run_up_step = brain->path_next;
+				brain->run_up_done = span < BOT_RUN_UP_SPAN;
+			}
+			if (!brain->run_up_done)
+			{
+				run_up_point.x = edge->from.x - span_x / span * BOT_RUN_UP;
+				run_up_point.y = edge->from.y - span_y / span * BOT_RUN_UP;
+				run_up_point.z = edge->from.z;
+				/* (no floor for it, or there: on to the take-off) */
+				if (bots_nav_locate(nav, run_up_point.x, run_up_point.y, run_up_point.z) == NONE ||
+					bot_near_enough(brain, bot_distance2d(position, &run_up_point), 0.4f, 0.7f))
+				{
+					brain->run_up_done = TRUE;
+				}
+				else
+				{
+					running_up = TRUE;
+				}
+			}
+		}
+		if (!running_up && !brain->edge_begun && bot_near_enough(brain, bot_distance2d(position, &edge->from), BOT_MOVE_BEGUN,
+			edge->type == _bots_nav_teleport ? BOT_MOVE_BEGUN : edge->type == _bots_nav_jump ? 0.6f : 0.7f))
 		{
 			brain->edge_begun = TRUE;
 			brain->jump_ticks = 0;
@@ -446,7 +586,7 @@ static void bot_roam(
 			if (jump && edge->to.z - edge->from.z > 0.5f)
 				brain->crouch_ticks = 12;
 		}
-		target = brain->edge_begun ? &edge->to : &edge->from;
+		target = brain->edge_begun ? &edge->to : running_up ? &run_up_point : &edge->from;
 		if (edge->type == _bots_nav_teleport)
 		{
 			static struct bots_nav_point step_off_point;
@@ -538,6 +678,35 @@ static void bot_roam(
 		bot_turn_to(brain, (real)atan2(target->y - position->y, target->x - position->x));
 	bot_action_idle(action, brain->yaw, brain->pitch);
 	bot_move_toward(action, brain, position, target);
+	/* (getting nowhere on a walk: aside for a moment, round what is in the way) */
+	if (brain->sidestep_ticks > 0)
+	{
+		real turn = brain->sidestep_side * DEGREES_TO_RADIANS(70.0f);
+		real i = action->throttle.i, j = action->throttle.j;
+
+		brain->sidestep_ticks--;
+		action->throttle.i = i * (real)cos(turn) - j * (real)sin(turn);
+		action->throttle.j = i * (real)sin(turn) + j * (real)cos(turn);
+	}
+	/* (pushing on along a walk, hardly moving, a few ticks: a hop, over a
+	lip or a ridge the graph walks over; then not again for a little) */
+	if (edge->type == _bots_nav_walk && brain->last_step < 0.02f &&
+		action->throttle.i * action->throttle.i + action->throttle.j * action->throttle.j > 0.25f)
+	{
+		if (++brain->stall_ticks > BOT_STALL_TICKS)
+		{
+			jump = TRUE;
+			brain->stall_ticks = -BOT_STALL_TICKS * 2;
+		}
+	}
+	else if (brain->stall_ticks > 0)
+	{
+		brain->stall_ticks = 0;
+	}
+	else if (brain->stall_ticks < 0)
+	{
+		brain->stall_ticks++;
+	}
 	if (jump || brain->jump)
 	{
 		/* (a press: held one tick, as a button is) */
@@ -553,35 +722,47 @@ static void bot_roam(
 
 /* ---------- weapons lying about */
 
-/* a weapon on the ground (not held, in the level) whose kind the unit holds
-none of, within reach, nearest first, gone to: its node the bot's goal.
-Looked for every few seconds; one not reached in time is given up */
+/* an item on the ground (not held, in the level) the bot wants
+(bot_item_value: a weapon of a kind it has none of, grenades it lacks),
+within reach (further for one it wants more), best for its distance first,
+gone to: its node the bot's goal. Looked for every few seconds; one not
+reached in time is given up */
 static void bot_pickup_goal(
-	struct bot_brain *brain,
+	struct bot *bot,
 	struct bots_nav *nav,
 	long unit_index,
 	real_point3d const *position)
 {
-	struct unit_datum *unit = unit_get(unit_index);
+	struct bot_brain *brain = &bot->brain;
 	struct object_iterator iterator;
+	struct object_datum *item;
 	long now = game_time_get();
 	long best = NONE;
 	long best_node = NONE;
-	real best_distance = BOT_PICKUP_RANGE * BOT_PICKUP_RANGE;
+	real best_score = 1.0e30f;
 
 	if (brain->pickup_object != NONE)
 	{
-		struct object_datum *weapon = object_try_and_get(brain->pickup_object);
-
-		if (!weapon || weapon->object.parent_object_index != NONE || now > brain->pickup_until_tick)
+		item = object_try_and_get(brain->pickup_object);
+		if (!item || item->object.parent_object_index != NONE || now > brain->pickup_until_tick)
 		{
 			/* (taken, by it or another, or given up: not tried again, and no
 			other looked for a while) */
-			if (weapon && weapon->object.parent_object_index == unit_index)
+			if (item && item->object.parent_object_index == unit_index)
 			{
 				brain->statistics.weapons_taken++;
+				/* (no other swapped for it for a while: no back and forth) */
+				brain->pickup_swap_tick = now + BOT_PICKUP_SWAP_TICKS;
 			}
-			else if (weapon && weapon->object.parent_object_index == NONE)
+			else if (!item)
+			{
+				/* (equipment is gone once taken: by it, if it was there) */
+				real dx = brain->pickup_position.x - position->x, dy = brain->pickup_position.y - position->y;
+
+				if (dx * dx + dy * dy < 1.5f * 1.5f)
+					brain->statistics.items_taken++;
+			}
+			else if (item->object.parent_object_index == NONE)
 			{
 				brain->pickup_given_up = brain->pickup_object;
 				brain->pickup_look_tick = now + 20 * TICKS_PER_SECOND;
@@ -590,51 +771,53 @@ static void bot_pickup_goal(
 			brain->goal_node = NONE;
 			brain->path_next = NONE;
 		}
-		/* (its goal kept on the weapon: reaching the node is not taking it) */
+		/* (its goal kept on the item: reaching the node is not taking it) */
 		else if (brain->goal_node == NONE)
 		{
-			brain->goal_node = bots_nav_locate(nav, weapon->object.position.x, weapon->object.position.y,
-				weapon->object.position.z);
+			brain->goal_node = bots_nav_locate(nav, item->object.position.x, item->object.position.y,
+				item->object.position.z);
 		}
 		return;
 	}
 	if (now < brain->pickup_look_tick)
 		return;
 	brain->pickup_look_tick = now + 3 * TICKS_PER_SECOND;
-	object_iterator_new(&iterator, _object_mask_weapon, 0);
-	while (object_iterator_next(&iterator))
+	object_iterator_new(&iterator, _object_mask_weapon | _object_mask_equipment, 0);
+	while ((item = (struct object_datum *)object_iterator_next(&iterator)) != NULL)
 	{
-		struct weapon_datum *weapon = weapon_get(iterator.index);
-		real dx = weapon->object.position.x - position->x;
-		real dy = weapon->object.position.y - position->y;
-		real dz = weapon->object.position.z - position->z;
-		short slot;
-		boolean held = FALSE;
+		real dx = item->object.position.x - position->x;
+		real dy = item->object.position.y - position->y;
+		real dz = item->object.position.z - position->z;
+		real distance = (real)sqrt(dx * dx + dy * dy + dz * dz);
+		real value;
 		long node;
 
-		if (weapon->object.parent_object_index != NONE || !TEST_FLAG(weapon->object.flags, _object_connected_to_map_bit) ||
-			dx * dx + dy * dy + dz * dz > best_distance || iterator.index == brain->pickup_given_up)
+		if (item->object.parent_object_index != NONE || !TEST_FLAG(item->object.flags, _object_connected_to_map_bit) ||
+			iterator.index == brain->pickup_given_up)
 		{
 			continue;
 		}
-		for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+		/* (its hands full, not long after a swap: no weapon) */
+		if (item->object.type == _object_type_weapon && now < brain->pickup_swap_tick &&
+			unit_get_weapon_count(unit_index) >= 2)
 		{
-			long held_index = unit->unit.weapon_object_indices[slot];
-
-			if (held_index != NONE && weapon_get(held_index)->definition_index == weapon->definition_index)
-				held = TRUE;
+			continue;
 		}
-		node = held ? NONE : bots_nav_locate(nav, weapon->object.position.x, weapon->object.position.y,
-			weapon->object.position.z);
+		value = bot_item_value(bot, unit_index, iterator.index);
+		if (value <= 0.0f || distance > BOT_PICKUP_RANGE * value || distance / value >= best_score)
+			continue;
+		node = bots_nav_locate(nav, item->object.position.x, item->object.position.y, item->object.position.z);
 		if (node == NONE || !(nav->nodes[node].reach & _bots_nav_reached_bit))
 			continue;
 		best = iterator.index;
 		best_node = node;
-		best_distance = dx * dx + dy * dy + dz * dz;
+		best_score = distance / value;
 	}
 	if (best == NONE)
 		return;
 	brain->pickup_object = best;
+	brain->pickup_at_ticks = 0;
+	brain->pickup_position = object_get(best)->object.position;
 	brain->pickup_until_tick = now + 10 * TICKS_PER_SECOND;
 	brain->goal_node = best_node;
 	brain->path_next = NONE;
@@ -657,10 +840,10 @@ static boolean bot_pickup_act(
 	dy = weapon->object.position.y - position->y;
 	if (bot_trace && game_time_get() % TICKS_PER_SECOND == 0)
 	{
-		platform_log("bots: trace %p tick %ld pickup %lx at (%.2f %.2f %.2f), it at (%.2f %.2f %.2f) parent %lx",
+		platform_log("bots: trace %p tick %ld pickup %lx at (%.2f %.2f %.2f), it at (%.2f %.2f %.2f) parent %lx %s",
 			(void *)brain, game_time_get(), brain->pickup_object, position->x, position->y, position->z,
 			weapon->object.position.x, weapon->object.position.y, weapon->object.position.z,
-			weapon->object.parent_object_index);
+			weapon->object.parent_object_index, tag_get_name(weapon->definition_index));
 	}
 	if (dx * dx + dy * dy >= 1.5f * 1.5f || fabs(weapon->object.position.z - position->z) >= 0.6f)
 		return FALSE;
@@ -674,11 +857,86 @@ static boolean bot_pickup_act(
 	bot_action_idle(action, brain->yaw, brain->pitch);
 	if (dx * dx + dy * dy >= 0.3f * 0.3f)
 		bot_move_toward(action, brain, position, &at);
-	/* (a press, again and again: a button held takes nothing more) */
-	if (dx * dx + dy * dy < 0.7f * 0.7f && game_time_get() % 8 < 2)
-		SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
+	/* (a press, again and again: a button held takes nothing more; the
+	weapon swap button too, which takes a weapon in place of the one in hand
+	when both hands are full, players.c's player_handle_weapon_swap) */
+	if (dx * dx + dy * dy < 0.7f * 0.7f)
+	{
+		if (game_time_get() % 8 < 2)
+		{
+			SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
+			SET_FLAG(action->control_flags, _unit_control_swap_weapons_bit, TRUE);
+		}
+		/* (there a while, and not taken: given up) */
+		if (++brain->pickup_at_ticks > BOT_PICKUP_AT_TICKS)
+		{
+			brain->pickup_given_up = brain->pickup_object;
+			brain->pickup_object = NONE;
+			brain->pickup_at_ticks = 0;
+			brain->goal_node = NONE;
+			brain->path_next = NONE;
+		}
+	}
+	/* (standing at it is getting somewhere) */
 	brain->check_position = *position;
+	brain->check_ticks = BOT_CHECK_TICKS;
 	brain->progress_ticks = 0;
+	return TRUE;
+}
+
+/* ---------- noises */
+
+/* a noise it heard (bots_hearing.c), not long ago: it turns to look that
+way, then goes to see, along the graph, until it is there (FALSE: nothing
+to see to) */
+static boolean bot_investigate(
+	struct bot *bot,
+	struct bots_nav *nav,
+	real_point3d const *position,
+	struct player_action *action)
+{
+	struct bot_brain *brain = &bot->brain;
+	struct bot_combat *combat = &brain->combat;
+	long now = game_time_get();
+	real dx = combat->heard_position.x - position->x;
+	real dy = combat->heard_position.y - position->y;
+
+	if (bot->difficulty == _bot_difficulty_peaceful || now - combat->heard_tick > BOT_INVESTIGATE_FORGET_TICKS)
+		return FALSE;
+	if (now < combat->look_until_tick)
+	{
+		/* (a quick turn, as to a shot nearby; standing to look is getting
+		somewhere) */
+		bot_turn_to(brain, (real)atan2(dy, dx));
+		bot_turn_to(brain, (real)atan2(dy, dx));
+		bot_action_idle(action, brain->yaw, brain->pitch);
+		brain->check_position = *position;
+		brain->progress_ticks = 0;
+		return TRUE;
+	}
+	if (!nav)
+		return FALSE;
+	if (combat->heard_new)
+	{
+		long node = bots_nav_locate(nav, combat->heard_position.x, combat->heard_position.y, combat->heard_position.z);
+
+		combat->heard_new = FALSE;
+		if (node == NONE || !(nav->nodes[node].reach & _bots_nav_reached_bit))
+		{
+			combat->heard_tick = -BOT_INVESTIGATE_FORGET_TICKS;
+			return FALSE;
+		}
+		brain->goal_node = node;
+		brain->path_next = NONE;
+		brain->pickup_object = NONE;
+	}
+	/* (there, or its way lost: seen to) */
+	if (dx * dx + dy * dy < 2.0f * 2.0f || brain->goal_node == NONE)
+	{
+		combat->heard_tick = -BOT_INVESTIGATE_FORGET_TICKS;
+		return FALSE;
+	}
+	bot_roam(brain, nav, position, action);
 	return TRUE;
 }
 
@@ -695,9 +953,19 @@ static void bot_check_progress(
 {
 	real dx = position->x - brain->check_position.x;
 	real dy = position->y - brain->check_position.y;
+	/* (up or down counts: a ladder climbed is getting somewhere) */
+	real dz = position->z - brain->check_position.z;
 
 	if (brain->avoided_ticks > 0)
 		brain->avoided_ticks--;
+	/* (standing its ground in a fight: not stuck) */
+	if (brain->holding)
+	{
+		brain->check_position = *position;
+		brain->check_ticks = BOT_CHECK_TICKS;
+		brain->progress_ticks = 0;
+		return;
+	}
 	/* (a way it goes back and forth on, getting no further: stuck too) */
 	if (nav && brain->path_next != NONE)
 	{
@@ -719,11 +987,12 @@ static void bot_check_progress(
 	brain->check_ticks = BOT_CHECK_TICKS;
 	brain->check_position = *position;
 	/* (at its goal, or between goals, it is not stuck) */
-	if (dx * dx + dy * dy >= BOT_PROGRESS * BOT_PROGRESS || (nav && brain->path_next == NONE))
+	if (dx * dx + dy * dy + dz * dz >= BOT_PROGRESS * BOT_PROGRESS || (nav && brain->path_next == NONE))
 	{
 		brain->stuck_count = 0;
 		return;
 	}
+	brain->statistics.stuck_ticks += BOT_CHECK_TICKS;
 	bot_stuck(brain, nav);
 }
 
@@ -738,6 +1007,44 @@ static void bot_stuck(
 	brain->jump = TRUE;
 	if (!nav)
 		return;
+	/* (on a walk: a step aside too, one way, then the other) */
+	if (brain->path_next != NONE && nav->edges[brain->path[brain->path_next]].type == _bots_nav_walk)
+	{
+		brain->sidestep_side = brain->stuck_count % 2 ? (bot_random_real(brain) < 0.5f ? -1.0f : 1.0f) : -brain->sidestep_side;
+		brain->sidestep_ticks = BOT_SIDESTEP_TICKS;
+	}
+	if (bot_trace)
+	{
+		struct bots_nav_edge const *edge = brain->path_next != NONE ? &nav->edges[brain->path[brain->path_next]] : NULL;
+
+		struct collision_result collision;
+		real_point3d from = brain->last_position;
+		real_vector3d vector = { 0.0f, 0.0f, 0.0f };
+		boolean hit = FALSE;
+
+		if (edge)
+		{
+			struct bots_nav_point const *to = &nav->nodes[edge->target].point;
+
+			from.z += 0.35f;
+			vector.i = to->x - from.x;
+			vector.j = to->y - from.y;
+			vector.k = to->z + 0.35f - from.z;
+			hit = collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_back_facing_surfaces_bit) |
+				FLAG(_collision_test_structure_bit) | FLAG(_collision_test_objects_bit) |
+				_collision_test_objects_all_types_flags, &from, &vector, brain->unit_index, &collision);
+		}
+		platform_log("bots: stuck %p at (%.2f %.2f %.2f) count %ld edge %ld type %d begun %d from (%.2f %.2f %.2f) to (%.2f %.2f %.2f)"
+			" pickup %lx; line to node %s %d at (%.2f %.2f %.2f) object %s",
+			(void *)brain, brain->last_position.x, brain->last_position.y, brain->last_position.z, brain->stuck_count,
+			edge ? brain->path[brain->path_next] : -1L, edge ? (int)edge->type : -1, (int)brain->edge_begun,
+			edge ? edge->from.x : 0.0f, edge ? edge->from.y : 0.0f, edge ? edge->from.z : 0.0f,
+			edge ? edge->to.x : 0.0f, edge ? edge->to.y : 0.0f, edge ? edge->to.z : 0.0f, brain->pickup_object,
+			hit ? "hits" : "clear", hit ? (int)collision.type : -1, hit ? collision.point.x : 0.0f, hit ? collision.point.y : 0.0f,
+			hit ? collision.point.z : 0.0f,
+			hit && collision.type == _collision_result_object && object_try_and_get(collision.object_index) ?
+				tag_get_name(object_get(collision.object_index)->definition_index) : "-");
+	}
 	if (brain->stuck_count == 2)
 	{
 		/* (a new way to the same goal) */
@@ -799,14 +1106,21 @@ void bot_brain_think(
 		if (step < 2.0f)
 			brain->statistics.travelled += step;
 		brain->last_position = position;
+		brain->last_step = step;
 	}
 	bot_check_progress(brain, nav, &position);
+	if (bot_trace)
+		bot_grenade_follow(bot);
+	/* (a live grenade near: noticed, by any bot) */
+	if ((game_time_get() + bot->slot) % 3 == 0)
+		bot_sense_danger(bot, unit_index);
 	if (bot_combat_engaged(bot, player_index, unit_index, bot->slot))
 	{
 		struct bots_nav_point goal_point;
 		struct bots_nav_point const *goal = bot_combat_goal(bot, &position, &goal_point);
 		boolean moving = FALSE;
 
+		brain->holding = !goal || !nav;
 		brain->pickup_object = NONE;
 		/* (to where it last saw its target, along the graph: the goal given
 		again at most once a second, as the target moves) */
@@ -834,21 +1148,38 @@ void bot_brain_think(
 	else
 	{
 		brain->combat_goal_node = NONE;
+		brain->holding = FALSE;
+		/* (an item it wants first, then a noise it heard, then roaming) */
 		if (nav)
+			bot_pickup_goal(bot, nav, unit_index, &position);
+		if (nav && brain->pickup_object != NONE)
 		{
-			bot_pickup_goal(brain, nav, unit_index, &position);
 			if (!bot_pickup_act(brain, &position, action))
 				bot_roam(brain, nav, &position, action);
+		}
+		else if (bot_investigate(bot, nav, &position, action))
+		{
+			/* (going to see what it heard) */
+		}
+		else if (nav)
+		{
+			bot_roam(brain, nav, &position, action);
 		}
 		else
 		{
 			bot_wander(brain, &position, action);
 		}
 		bot_combat_idle(bot, unit_index, action);
+		/* (a grenade it began to throw at a target now gone: the throw
+		finished with the aim it had) */
+		if (brain->combat.throwing)
+			bot_grenade_act(bot, unit_index, action);
 	}
 	if (!nav && brain->jump)
 	{
 		SET_FLAG(action->control_flags, _unit_control_jump_bit, TRUE);
 		brain->jump = FALSE;
 	}
+	/* (and away from a grenade, whatever else it does) */
+	bot_dodge(bot, unit_index, action);
 }

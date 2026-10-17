@@ -147,8 +147,11 @@ try {
       HALO_NET_BROADCAST: '127.0.0.1',
       HALO_UPDATE_ANSWER: 'never', HALO_EXIT_AFTER: '600',
       // (two bots, which the browser must see as players of the server's bot
-      // machine: port/linux/game/bots.c)
-      HALO_SERVER_BOTS: '2',
+      // machine: port/linux/game/bots.c; with them the server has players
+      // and starts its game after debug.network_test_start, so it waits
+      // long enough for the browser to join in the lobby, not as the game
+      // starts, when a join is refused)
+      HALO_SERVER_BOTS: '2', HALO_NETWORK_TEST_START: '45',
     });
     const server = spawn(halo, [], { cwd: path.join(work, 'server'), env });
     server.stdout.on('data', lines('server', serverLines));

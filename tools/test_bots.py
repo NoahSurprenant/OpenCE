@@ -265,7 +265,9 @@ def test_bots_on_a_listen_host(tmp_path):
         "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
         "HALO_NET_ADDRESS": join_address, "HALO_NET_BROADCAST": host_address})
     try:
-        _wait(lambda: _bots_seen(_log(tmp_path, "join"), 2) and _bots_seen(_log(tmp_path, "host"), 2), 150, games,
+        # (a host's first start makes its map caches, a gigabyte, slow on a
+        # busy runner: the tests' other half beside it)
+        _wait(lambda: _bots_seen(_log(tmp_path, "join"), 2) and _bots_seen(_log(tmp_path, "host"), 2), 240, games,
               tmp_path, "the machines did not see two bots play")
         for name in ("host", "join"):
             _assert_bots_play(_log(tmp_path, name), _bots_seen(_log(tmp_path, name), 2), {127})
@@ -282,8 +284,11 @@ STOCK_MAPS = ("beavercreek", "bloodgulch", "boardingaction", "carousel", "chillo
 # the multiplayer weapons the walking graph reaches on each stock map, at
 # least (the rest of each map's are all of them): those it does not, a few,
 # need a map's own links checked in the game (bots_nav_game.c's overrides)
-WEAPONS_REACHED_AT_LEAST = {"beavercreek": 34, "chillout": 32, "damnation": 35, "hangemhigh": 44, "longest": 36,
-                            "ratrace": 29, "wizard": 42}
+# (Damnation's other five lie in a duct behind a slit no biped passes;
+# Longest's four are on platforms 2.1 high with nothing to climb from, and
+# Chillout's, Hang 'Em High's and Rat Race's one each on ledges too narrow
+# for the graph)
+WEAPONS_REACHED_AT_LEAST = {"chillout": 32, "damnation": 41, "hangemhigh": 44, "longest": 36, "ratrace": 29}
 GRAPH = re.compile(r"bots: walking graph of (\w+) (built|read from the cache) in (\d+) ms: (\d+) nodes, .*? spawns "
                    r"(\d+)/(\d+) reach the main part, weapons (\d+)/(\d+) are reached from it")
 
@@ -361,7 +366,7 @@ def _nav_check_again(tmp_path, server, maps, map_names):
 
 
 ROAMED = re.compile(r"bots: (\[BOT\] \w+) at tick (\d+): (\d+) goals reached, (\d+) paths \((\d+) failed\), stuck (\d+) "
-                    r"times, went (\d+) world units \((\d+) drops, (\d+) jumps, (\d+) teleporters, (\d+) ladders up, "
+                    r"times(?: \(\d+ seconds\))?, went (\d+) world units \((\d+) drops, (\d+) jumps, (\d+) teleporters, (\d+) ladders up, "
                     r"(\d+) down\); \d+ targets seen, fired \d+ ticks, (\d+) weapons taken")
 
 
@@ -391,13 +396,54 @@ def test_bots_roam(tmp_path):
         print(f"{name}: {m[2]} goals, {m[3]} paths ({m[4]} failed), stuck {m[5]} times, went {m[6]} world units, "
               f"{m[7]} drops, {m[8]} jumps, {m[9]} teleporters, {m[10]} ladders up, {m[11]} down, {m[12]} weapons taken")
     assert len(last) == 4, last
+    stuck = {name: counts.get("seconds", 0) for name, counts in _reports(_log(tmp_path, "server")).items()
+             if counts["tick"] == 2400}
+    print(f"seconds stuck in 80: {stuck}")
     for name, m in last.items():
         assert int(m[2]) + int(m[12]) >= 1, f"{name} reached no goal and took no weapon: {m}"
         assert int(m[6]) >= 60, f"{name} went only {m[6]} world units: {m}"
+        # (Boarding Action's ladders and lips: 9 to 21 seconds stuck in 80 before
+        # the climb counted as getting somewhere, 0 to 3 since)
+        assert stuck.get(name, 0) <= 12, f"{name} was stuck {stuck.get(name)} seconds of 80: {m}"
     assert sum(int(m[10]) + int(m[11]) for m in last.values()) >= 1, f"no bot took a ladder: {last}"
 
 
 SCORE = re.compile(r"server: score: (\[BOT\] \w+) (-?\d+), (\d+) kills, (\d+) deaths")
+# a bot's score in a game with teams, and the teams'
+TEAM_SCORE = re.compile(r"server: score: (\[BOT\] \w+) \((red|blue)\) (-?\d+), (\d+) kills, (\d+) deaths")
+TEAMS_SCORE = re.compile(r"server: score: red (-?\d+), blue (-?\d+)")
+REPORT = re.compile(r"bots: (\[BOT\] \w+) at tick (\d+): (.*)")
+
+
+def _reports(log):
+    """each bot's last report (bots.c's bots_report): {name: {what: count}},
+    the counts named as the report names them ("grenades thrown": 3)"""
+    reports = {}
+    for name, tick, text in REPORT.findall(log):
+        counts = {"tick": int(tick)}
+        for number, what in re.findall(r"(\d+) ([a-z][a-z ]*?)(?=[,;()]|$)", text):
+            counts.setdefault(what.strip(), int(number))
+        reports[name] = counts
+    return reports
+
+
+def _bots_game(tmp_path, name, settings, games_over=1, seconds=300):
+    """a dedicated server with bots alone (settings: its HALO_ settings)
+    until games_over of its games are over, each with its bots' scores; its
+    log"""
+    maps, paths = _needs("HALO_TEST_SERVER")
+    server = paths["HALO_TEST_SERVER"]
+    bots = int(settings.get("HALO_SERVER_BOTS", "1"))
+    games = {name: _start(tmp_path, name, server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", **settings})}
+    try:
+        _wait(lambda: len(re.findall(r"server: score: \[BOT\]", _log(tmp_path, name))) >= games_over * bots,
+              seconds, games, tmp_path, "the bots' game did not end with their scores")
+    finally:
+        _stop(games, tmp_path, {name: server})
+        for cache in (tmp_path / name / "saves").rglob("cache*.map"):
+            cache.unlink()
+    return _log(tmp_path, name)
 
 
 def test_bots_slayer(tmp_path):
@@ -461,6 +507,49 @@ def test_bots_peaceful(tmp_path):
     assert all(int(m[4]) == 0 and int(m[3]) == 0 for m in reports.values()), f"a peaceful bot aimed or fired: {reports}"
     assert all(int(m[2]) >= 60 for m in reports.values()), f"a peaceful bot hardly moved: {reports}"
     assert sum(int(m[5]) for m in reports.values()) >= 1, f"no peaceful bot took a weapon: {reports}"
+    thrown = {name: counts.get("grenades thrown") for name, counts in _reports(log).items()}
+    assert all(count == 0 for count in thrown.values()) and len(thrown) == 4, f"a peaceful bot threw a grenade: {thrown}"
+
+
+def test_bots_grenades(tmp_path):
+    """Six legendary bots play a two-minute Team Slayer on Beaver Creek, three
+    against three (everyone spawns with frag grenades there): they throw
+    grenades (bots_grenades.c) at enemies in view and where they last saw
+    them, and hit enemies with them, and hardly ever kill themselves or a
+    team mate (at most one each); each hears the fight
+    (bots_hearing.c), and they run from grenades. About two and a half
+    minutes."""
+    maps, _ = _needs("HALO_TEST_SERVER")
+    if not Path(maps, "beavercreek.map").is_file():
+        pytest.skip("needs beavercreek.map")
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "6", "HALO_BOT_SEED": "4", "HALO_SERVER_BOT_DIFFICULTY": "legendary",
+        "HALO_SERVER_MAPS": "beavercreek", "HALO_SERVER_GAME_TYPES": "team_slayer", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(239), "HALO_NET_BROADCAST": _test_address(240)})
+    reports = _reports(log)
+    scores = TEAM_SCORE.findall(log)[:6]
+    for name, counts in sorted(reports.items()):
+        print(f"{name}: {counts}")
+    print(f"scores: {scores}; teams {TEAMS_SCORE.findall(log)}")
+    assert len(reports) == 6 and len(scores) == 6, log[-4000:]
+
+    def total(what):
+        return sum(counts.get(what, 0) for counts in reports.values())
+
+    assert total("grenades thrown") >= 4, f"the bots threw only {total('grenades thrown')} grenades"
+    assert total("grenade hits") >= 1, "no bot's grenade hit an enemy"
+    print(f"grenades: {total('grenades thrown')} thrown, {total('grenade hits')} hits, {total('grenade kills')} kills")
+    # (a bot killed by its own grenade, or a team mate who ran into one after
+    # it left the hand: each about one game in ten of six legendary bots;
+    # more than one is the bots' fault)
+    assert total("grenade suicides") <= 1, "bots killed themselves with their grenades:\n" + \
+        "\n".join(line for line in log.splitlines() if "killed itself" in line)
+    assert total("team kills") <= 1, "bots killed team mates:\n" + \
+        "\n".join(line for line in log.splitlines() if "killed a team mate" in line)
+    assert all(counts.get("noises heard", 0) >= 1 for counts in reports.values()), "a bot heard nothing of the fight"
+    assert total("grenades dodged") >= 1, "no bot ran from a grenade"
+
+
 def test_bots_leave_for_a_person(tmp_path):
     """A dedicated server full of bots (server.max_players 3, server.bots 3)
     and a person who joins it: a bot leaves at once to make room, the person

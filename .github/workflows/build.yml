@@ -562,7 +562,8 @@ jobs:
     # listen host with bots, the bots' walking graph of every stock map
     # (test_bots_nav_on_every_map) and four bots roaming Boarding Action
     # (test_bots_roam), four bots playing Slayer (test_bots_slayer) and four
-    # peaceful ones (test_bots_peaceful), and a bot leaving a full server for a
+    # peaceful ones (test_bots_peaceful), four throwing grenades in Team
+    # Slayer (test_bots_grenades), and a bot leaving a full server for a
     # person (test_bots_leave_for_a_person). They
     # need the Halo maps, so on the owner's
     # runner, opence-k8s, only for this repository's own code, as
@@ -622,12 +623,24 @@ jobs:
           HALO_TEST_OLD_CLIENT: ${{ runner.temp }}/halo-old-client
           HALO_TEST_STALL_BACKTRACE: ${{ runner.temp }}/stall_backtrace.so
         run: |
-          set -o pipefail
           clang -m32 -O1 -g -shared -fPIC -o "$HALO_TEST_STALL_BACKTRACE" tools/stall_backtrace.c
-          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots" tools/test_bots.py 2>&1 \
-            | tee "$RUNNER_TEMP/bots.log"
-          if ! grep -q '8 passed' "$RUNNER_TEMP/bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/bots.log"; then
-            echo "::error::the eight tests of tools/test_bots.py did not all run and pass"
+          # (in two halves at once, each game in real time: the network and
+          # graph tests, and the bots' own games; their loopback addresses
+          # differ, so they go side by side)
+          mkdir -p "$RUNNER_TEMP/bots"
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/a" tools/test_bots.py \
+            -k "dedicated_server or older_client or listen_host or nav_on_every_map or leave_for" \
+            > "$RUNNER_TEMP/bots-a.log" 2>&1 &
+          first=$!
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/b" tools/test_bots.py \
+            -k "roam or slayer or peaceful or grenades" > "$RUNNER_TEMP/bots-b.log" 2>&1 &
+          second=$!
+          wait $first || true
+          wait $second || true
+          cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log"
+          if ! grep -q '5 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
+            grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log"; then
+            echo "::error::the nine tests of tools/test_bots.py did not all run and pass (5 + 4)"
             exit 1
           fi
 
@@ -637,7 +650,7 @@ jobs:
       - name: Game logs
         if: failure()
         run: |
-          for f in "$RUNNER_TEMP"/bots/*/*/run.log; do
+          for f in "$RUNNER_TEMP"/bots/*/*/*/run.log; do
             [ -f "$f" ] && { echo "== $f"; tail -n 60 "$f"; }
           done
           true
@@ -647,7 +660,7 @@ jobs:
         run: |
           pkill -KILL -f "$RUNNER_TEMP/halo-" || true
           git worktree remove --force "$RUNNER_TEMP/old-client" || true
-          rm -rf "$RUNNER_TEMP/bots" "$RUNNER_TEMP/bots.log" "$RUNNER_TEMP/halo-bots" "$RUNNER_TEMP/halo-old-client" \
+          rm -rf "$RUNNER_TEMP/bots" "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/halo-bots" "$RUNNER_TEMP/halo-old-client" \
             "$RUNNER_TEMP/stall_backtrace.so"
 
   web-dedicated:
