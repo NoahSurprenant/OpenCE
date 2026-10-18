@@ -2506,6 +2506,23 @@ boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, st
 	return TRUE;
 }
 
+int skate_bot_rails(float *points, int point_capacity, int *ends, int end_capacity)
+{
+	short index;
+
+	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		if (skate_skaters[index].player_index != NONE && skate_map_loaded(&skate_skaters[index]) &&
+			halo_skate_state_in(index) == 2)
+		{
+			int count = halo_skate_rails_in(index, points, point_capacity, ends, end_capacity);
+
+			return count > 0 ? count : 0;
+		}
+	}
+	return 0;
+}
+
 boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
 {
 	struct skate_skater *skater = skate_bot_skater(player_index);
@@ -3485,6 +3502,11 @@ boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
 {
 	memset(view, 0, sizeof(*view));
 	return FALSE;
+}
+
+int skate_bot_rails(float *points, int point_capacity, int *ends, int end_capacity)
+{
+	return 0;
 }
 
 boolean skate_host_skater_riding(long unit_index)

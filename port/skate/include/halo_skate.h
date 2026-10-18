@@ -266,5 +266,10 @@ int halo_skate_pose_nodes_in(int session, float *out, int capacity);
 int halo_skate_take_held_hit_in(int session, struct halo_skate_held_hit *out);
 int halo_skate_force_bail_in(int session, float closing);
 int halo_skate_board_placement_in(int session, float *out);
+/* the grind rails the engine found in the session's map (rails.rs), for the
+game's bots: each rail's points (3 floats each, world units) into points
+(room for point_capacity points), the count of points before each rail's end
+into ends (room for end_capacity rails); how many rails were written, or -1 */
+int halo_skate_rails_in(int session, float *points, int point_capacity, int *ends, int end_capacity);
 
 #endif

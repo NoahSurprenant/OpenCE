@@ -130,7 +130,7 @@ def test_skating_bots_ride_and_fight(tmp_path):
 
 def test_skating_bots_run_over(tmp_path):
     """A bot that rams (debug.bot_skate "ram": it stays on its board in a
-    fight) and a peaceful bot standing still on foot ('stand'), on Prisoner's dedicated
+    fight) and a peaceful bot standing still on foot ('stand'), on Blood Gulch's dedicated
     server (the server image's build, HALO_TEST_SERVER) with Skate 3 data: the first rides at the other on foot and runs
     them over, the host deciding it (skate_authority.c) and crediting the
     kill to the skater, as a vehicle's driver. Until the first such kill (at
@@ -138,7 +138,7 @@ def test_skating_bots_run_over(tmp_path):
     _, maps, assets = _needs_skate()
     log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
         "HALO_SERVER_BOTS": "2", "HALO_BOT_DIFFICULTIES": "hard,peaceful", "HALO_BOT_SKATE": "ram,stand",
-        "HALO_BOT_SEED": "1", "HALO_SERVER_MAPS": "prisoner", "HALO_SERVER_TIME_LIMIT": "5"},
+        "HALO_BOT_SEED": "1", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "5"},
         (_test_address(251), _test_address(252)), done=lambda log: RUN_OVER_KILLED.search(log))
     boards = _boards(log)
     killed = RUN_OVER_KILLED.findall(log)

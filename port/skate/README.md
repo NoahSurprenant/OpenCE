@@ -895,7 +895,7 @@ twice a second.
 `tools/test_skating_bots.py` (the skate-multiplayer job) plays them: a
 listen host whose own player skates beside three bots (two normal, one
 peaceful) with a client that sees the bots' skaters posed with their boards;
-a ramming bot running over a bot standing on foot on Prisoner, the kill its own; and
+a ramming bot running over a bot standing on foot on Blood Gulch, the kill its own; and
 two peaceful bots told to ram that ride and harm nobody.
 
 ## Multiplayer

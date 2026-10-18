@@ -71,6 +71,9 @@ struct bot_statistics
 	long skate_ollies;
 	long skate_bails;
 	long skate_rams;
+	/* ... the rails it lined up with, and its grinds */
+	long skate_grind_tries;
+	long skate_grinds;
 };
 
 /* a bot on a board (bots_skate.c) */
@@ -84,6 +87,11 @@ struct bot_skate
 	boolean riding;
 	boolean ramming;
 	boolean bailing;
+	/* it grinds; it lines up with a rail, and the tick before which it tries
+	no other */
+	boolean grinding;
+	boolean lining_up;
+	long grind_after_tick;
 	/* when it last got on or off, and the tick before which it stays off */
 	long changed_tick;
 	long off_until_tick;

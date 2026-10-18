@@ -362,7 +362,8 @@ static void bots_report(
 			"%ld weapons taken, %ld items taken; %ld grenades thrown, %ld grenade hits, %ld grenade kills, %ld grenade suicides, %ld team kills; "
 			"%ld noises heard, %ld grenades dodged; %ld retreats, %ld covers reached, %ld powerups taken, %ld weapon switches, "
 			"%ld power weapons taken, %ld suicides; %.0f world units from a spawn at most; "
-			"on a board %ld times, %ld seconds, %.0f world units, %ld ollies, %ld bails, %ld people ridden at",
+			"on a board %ld times, %ld seconds, %.0f world units, %ld ollies, %ld bails, %ld people ridden at, "
+			"%ld rails lined up with, %ld grinds",
 			name, now, statistics->goals_reached, statistics->paths_planned, statistics->paths_failed, statistics->stuck,
 			statistics->stuck_ticks / TICKS_PER_SECOND,
 			statistics->travelled, statistics->moves[_bots_nav_drop], statistics->moves[_bots_nav_jump],
@@ -373,7 +374,8 @@ static void bots_report(
 			statistics->grenades_dodged, statistics->retreats, statistics->covers_reached, statistics->powerups_taken,
 			statistics->weapon_switches, statistics->power_weapons_taken, statistics->suicides, statistics->farthest,
 			statistics->skate_boardings, statistics->skate_ticks / TICKS_PER_SECOND, statistics->skate_travelled,
-			statistics->skate_ollies, statistics->skate_bails, statistics->skate_rams);
+			statistics->skate_ollies, statistics->skate_bails, statistics->skate_rams, statistics->skate_grind_tries,
+			statistics->skate_grinds);
 		bots_report_objective(bot, name, now);
 	}
 }
