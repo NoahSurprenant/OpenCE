@@ -18,7 +18,7 @@ from tools.test_linux_port import _test_address
 BOARDED = re.compile(r"bots: player (\d+) gets on a board at tick (\d+)")
 STEPPED_OFF = re.compile(r"bots: player (\d+) steps off the board \(([^)]*)\)")
 ON_A_BOARD = re.compile(r"on a board (\d+) times, (\d+) seconds, (\d+) world units, (\d+) ollies, (\d+) bails, "
-                        r"(\d+) people ridden at")
+                        r"(\d+) people ridden at, (\d+) rails lined up with, (\d+) grinds")
 RUN_OVER_DECIDED = re.compile(r"skate verdict (\d+) decided: player (\d+)'s skater \w+ on; player (\d+) on foot run over")
 RUN_OVER_KILLED = re.compile(r"skate verdict \d+: the person run over died here, killed by player (\d+)")
 
@@ -42,7 +42,7 @@ def _needs_skate():
 
 def _boards(log):
     """each bot's last report of its boards: {name: (times, seconds, world
-    units, ollies, bails, people ridden at)}"""
+    units, ollies, bails, people ridden at, rails lined up with, grinds)}"""
     boards = {}
     for name, _, text in REPORT.findall(log):
         found = ON_A_BOARD.search(text)
@@ -152,9 +152,9 @@ def test_skating_bots_run_over(tmp_path):
 
 def test_skating_bots_harmless(tmp_path):
     """Two peaceful bots told to ram (debug.bot_skate "ram,ram") on Prisoner's
-    dedicated server with Skate 3 data: they get on boards and ride, but never
-    ride at anyone nor run anyone over, and nobody dies. About three and a
-    half minutes."""
+    dedicated server with Skate 3 data: they get on boards and ride, grind
+    the rails beside their way, but never ride at anyone nor run anyone over,
+    and nobody dies. About three and a half minutes."""
     _, maps, assets = _needs_skate()
     log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
         "HALO_SERVER_BOTS": "2", "HALO_SERVER_BOT_DIFFICULTY": "peaceful", "HALO_BOT_SKATE": "ram,ram",
@@ -166,6 +166,7 @@ def test_skating_bots_harmless(tmp_path):
     assert sum(b[0] for b in boards.values()) >= 2 and sum(b[2] for b in boards.values()) >= 30, \
         f"the peaceful bots hardly rode: {boards}"
     assert all(b[5] == 0 for b in boards.values()), f"a peaceful bot rode at someone: {boards}"
+    assert sum(b[7] for b in boards.values()) >= 1, f"no bot grinded a rail: {boards}"
     assert not RUN_OVER_DECIDED.findall(log), "a peaceful bot ran someone over"
     assert all(int(kills) == 0 and int(deaths) == 0 for _, _, kills, deaths in scores), f"someone died: {scores}"
 
