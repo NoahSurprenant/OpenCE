@@ -76,11 +76,19 @@ boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, st
 /* the bot's skater as its last step left it, into view; FALSE when it has
 none */
 boolean skate_bot_frame(long player_index, struct skate_bot_view *view);
+/* the grind rails the skate engine found in the level (a bot's session that
+has it): each rail's points (3 floats each, world units) into points (room
+for point_capacity), the count of points before each rail's end into ends
+(room for end_capacity); how many rails, 0 for none (yet) */
+int skate_bot_rails(float *points, int point_capacity, int *ends, int end_capacity);
 /* skate_authority.c: whether the unit is a skater the host's engine runs
 (its own player's or a bot's) on the board and not bailing; and whether it is
 such a skater at all (alive, on foot or riding) */
 boolean skate_host_skater_riding(long unit_index);
 boolean skate_host_skater(long unit_index);
+/* ... and whether it runs nobody over (a peaceful bot's: skate_bot_drive's
+run_over off), whose hits the host takes as bumps */
+boolean skate_host_skater_harmless(long unit_index);
 
 /* hs_compile_and_evaluate: a console command tuning Skate 3 mode, one of
 SKATE_CONSOLE_SETTINGS, with what follows its word: sets the value for the

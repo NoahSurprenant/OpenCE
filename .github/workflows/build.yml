@@ -442,6 +442,11 @@ jobs:
     # leaves the server's game and another joins it, a minute and a half).
     # test_skate_hitbox (a skater hit where their body is drawn, a minute and
     # a half: port/skate/README.md, "Where a skater is hit") too.
+    # tools/test_skating_bots.py (bots on boards: port/skate/README.md, "Bots
+    # on boards") runs beside them: a listen host whose bots and own player
+    # skate, with a client, and dedicated servers of this build with the
+    # data (a bot running another over; peaceful bots harming nobody) and
+    # without it (the bots on foot).
     #
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
     # --skate --lto=off --pgo=off), and the server of
@@ -526,10 +531,21 @@ jobs:
         run: |
           set -o pipefail
           clang -m32 -O1 -g -shared -fPIC -o "$HALO_TEST_STALL_BACKTRACE" tools/stall_backtrace.c
+          # (the bots on boards, tools/test_skating_bots.py, beside the rest:
+          # their loopback addresses differ)
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-bots" \
+            tools/test_skating_bots.py > "$RUNNER_TEMP/skate-bots.log" 2>&1 &
+          bots=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
-            tools/test_linux_port.py -k "test_skate_multiplayer or test_skate_hitbox or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log"
+            tools/test_linux_port.py -k "test_skate_multiplayer or test_skate_hitbox or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log" || true
+          wait $bots || true
+          cat "$RUNNER_TEMP/skate-bots.log"
           if ! grep -q '7 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
             echo "::error::test_skate_multiplayer, test_skate_hitbox and the five test_dedicated_server tests did not all run and pass"
+            exit 1
+          fi
+          if ! grep -q '4 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
+            echo "::error::the four tests of tools/test_skating_bots.py did not all run and pass"
             exit 1
           fi
 
@@ -541,7 +557,7 @@ jobs:
       - name: Game logs
         if: failure()
         run: |
-          for f in "$RUNNER_TEMP"/skate-mp/*/*/run.log; do
+          for f in "$RUNNER_TEMP"/skate-mp/*/*/run.log "$RUNNER_TEMP"/skate-bots/*/*/run.log; do
             [ -f "$f" ] && { echo "== $f"; tail -n 60 "$f"; }
           done
           true
@@ -550,7 +566,8 @@ jobs:
         if: always()
         run: |
           pkill -KILL -f "$RUNNER_TEMP/halo-" || true
-          rm -rf "$RUNNER_TEMP/skate-mp" "$RUNNER_TEMP/skate-mp.log" "$RUNNER_TEMP/halo-skate" "$RUNNER_TEMP/halo-server" \
+          rm -rf "$RUNNER_TEMP/skate-mp" "$RUNNER_TEMP/skate-mp.log" "$RUNNER_TEMP/skate-bots" "$RUNNER_TEMP/skate-bots.log" \
+            "$RUNNER_TEMP/halo-skate" "$RUNNER_TEMP/halo-server" \
             "$RUNNER_TEMP/stall_backtrace.so"
 
   bots:

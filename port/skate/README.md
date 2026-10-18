@@ -853,6 +853,51 @@ a step about 4.6 ms of a game tick for each skater, and three skaters side by
 side 9.6 ms. `server.bot_skaters` (4 at first, 8 at most) is how many bots
 may be on boards at once.
 
+### Bots on boards
+
+A host with Skate 3 mode and its data (a `--skate` build with
+`HALO_SKATE_ASSETS`, a listen host or a dedicated server) puts its bots on
+boards to travel (`port/linux/game/bots_skate.c`): each bot on a board rides
+a skate session of its own (above, "Several skaters"), at most
+`server.bot_skaters` of them at once (4 at first). Without the mode or the
+data the bots walk, as before.
+
+- **On:** the way ahead along its path (the walking graph) rolls - walks not
+  steeper than 0.45 up or 0.8 down, drops of 1 world unit or less - for 15
+  world units or more, it fights nobody, holds no flag or ball, and it has
+  not stepped off in the last 4 seconds. Its first skater is made then, in
+  the background (several seconds); it walks on meanwhile.
+- **Riding:** it steers for a point along its path a little ahead (2.5 world
+  units, or a second of its speed: pure pursuit; a node it passes within 1.5
+  is reached, as a board turns too wide to come to a node's middle), pushes
+  up to 9 m/s on a straight way and 3 m/s in a turn, ollies when it stalls
+  against a lip, and steps back on after a fall left it walking.
+- **Off:** a target in sight (a skater's weapon is holstered and the host
+  takes no shot from one: it steps off to fight), its goal near or a part
+  ahead that does not roll (a ladder, a jump, a teleporter, a slope), a flag
+  or ball in hand, or getting nowhere for 4 seconds.
+- **Ramming:** a bot that may fight, on its board, rides at a person on foot
+  it sees within 15 world units, a little ahead of where they go: riding into
+  them fast enough runs them over, the host deciding it as a vehicle's hit
+  and crediting the kill to the bot (above, "Multiplayer"). A **peaceful** bot
+  never rides at anyone, and its skater runs nobody over even by accident
+  (its obstacles are sent without `run_over`).
+- The other machines see a bot's skater as any skater (states 90/91, sounds
+  94/95, its player's index): nothing new on the wire.
+
+Each bot's report says how it rode: "on a board N times, S seconds, D world
+units, O ollies, B bails, R people ridden at". `debug.bot_skate`
+(`HALO_BOT_SKATE`) sets a bot's way with boards for the tests, one entry for
+each bot in the order they join: `ram` (it stays on its board in a fight, rides at people on foot, and
+seeing nobody heads for the nearest person on foot), `never`, or `stand` (it stands still on foot: a target). `debug.bot_trace` logs its steering
+twice a second.
+
+`tools/test_skating_bots.py` (the skate-multiplayer job) plays them: a
+listen host whose own player skates beside three bots (two normal, one
+peaceful) with a client that sees the bots' skaters posed with their boards;
+a ramming bot running over a bot standing on foot on Blood Gulch, the kill its own; and
+two peaceful bots told to ram that ride and harm nobody.
+
 ## Multiplayer
 
 In a network game (system link, internet play, co-op) everyone sees

@@ -63,6 +63,44 @@ struct bot_statistics
 	long race_flags;
 	/* the furthest it carried the enemy's flag from its stand (world units) */
 	real longest_carry;
+	/* on a board (bots_skate.c): the times it got on, the ticks it rode, how
+	far (world units), its ollies, its bails, and the people it rode at */
+	long skate_boardings;
+	long skate_ticks;
+	real skate_travelled;
+	long skate_ollies;
+	long skate_bails;
+	long skate_rams;
+	/* ... the rails it lined up with, and its grinds */
+	long skate_grind_tries;
+	long skate_grinds;
+};
+
+/* a bot on a board (bots_skate.c) */
+struct bot_skate
+{
+	/* the unit it rides as (another: a new life, afresh) */
+	long unit_index;
+	/* it wants to be on a board; it is (its skater got on); it rides at a
+	person; it bails */
+	boolean on;
+	boolean riding;
+	boolean ramming;
+	boolean bailing;
+	/* it grinds; it lines up with a rail, and the tick before which it tries
+	no other */
+	boolean grinding;
+	boolean lining_up;
+	long grind_after_tick;
+	/* when it last got on or off, and the tick before which it stays off */
+	long changed_tick;
+	long off_until_tick;
+	/* the ticks it got nowhere on the board, stalled pushing, has left of an
+	ollie, and walked off the board */
+	long stuck_ticks;
+	long stall_ticks;
+	long ollie_ticks;
+	long walking_ticks;
 };
 
 /* a game type's objective for a bot (bots_objectives.c) */
@@ -256,6 +294,8 @@ struct bot_brain
 	/* a long jump's run-up: the step of its way it is for, and whether done */
 	long run_up_step;
 	boolean run_up_done;
+	/* on a board (bots_skate.c) */
+	struct bot_skate skate;
 };
 
 /* a bot of the host's (bots.c) */
@@ -277,6 +317,13 @@ void bot_brain_reset(
 /* (bots_brain.c) the bot's input for this tick, its player and unit
 alive: an action fit for update_server_take_bot_action */
 void bot_brain_think(
+	struct bot *bot,
+	long player_index,
+	long unit_index,
+	struct player_action *action);
+/* (bots_skate.c, last in bot_brain_think) the bot on a board or off it, and
+on one its pad, its action made what a skater does (no fire, no move) */
+void bot_skate_think(
 	struct bot *bot,
 	long player_index,
 	long unit_index,
