@@ -27,6 +27,7 @@ skate_bot_drive runs the skate engine for it):
 #include "game/game.h"
 #include "game/players.h"
 #include "game/player_queues_new.h"
+#include "memory/data.h"
 #include "objects/objects.h"
 #include "units/units.h"
 
@@ -48,7 +49,9 @@ enum
 	/* it stays on its board in a fight, and rides at people on foot */
 	_bot_skate_ram,
 	/* it never gets on one */
-	_bot_skate_never
+	_bot_skate_never,
+	/* it stands still on foot (a target for one that rams) */
+	_bot_skate_stand
 };
 
 /* how far along its path the way must roll for a bot to get on (world
@@ -80,6 +83,10 @@ slow one in a turn (world units a second: 9 m/s and 3 m/s) */
 /* pushes: the button held this many ticks of each cycle */
 #define BOT_SKATE_PUSH_TICKS 15
 #define BOT_SKATE_PUSH_CYCLE 30
+/* it pushes while the way to go is within this of its course (radians): a
+board too slow turns no better; riding at a person, nearly whatever the turn */
+#define BOT_SKATE_PUSH_TURN 1.6f
+#define BOT_SKATE_RAM_PUSH_TURN 2.6f
 /* stalled pushing (slower than this, world units a second) this many ticks:
 an ollie (a lip in the way); stalled this many: off, stuck */
 #define BOT_SKATE_STALL_SPEED 0.15f
@@ -124,6 +131,8 @@ static short bot_skate_mode(
 				return _bot_skate_ram;
 			if (!strcmp(name, "never"))
 				return _bot_skate_never;
+			if (!strcmp(name, "stand"))
+				return _bot_skate_stand;
 			return _bot_skate_normal;
 		}
 	}
@@ -282,6 +291,57 @@ static long bot_skate_ram_target(
 	return player->unit_index;
 }
 
+/* (debug.bot_skate "ram") a bot that rams, seeing nobody, heads for the
+nearest other player on foot, wherever they are (a test's bot finds its
+target without searching the map for it) */
+static void bot_skate_ram_seek(
+	struct bot *bot,
+	long player_index,
+	struct bots_nav *nav,
+	real_point3d const *position)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	real best = 0.0f;
+	long node = NONE;
+
+	if (!nav || bot->difficulty == _bot_difficulty_peaceful || (game_time_get() + bot->slot) % TICKS_PER_SECOND != 0)
+		return;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct object_datum *object;
+		real dx, dy, dz, distance;
+
+		if (iterator.datum_index == player_index || player->unit_index == NONE ||
+			!bot_skate_unit_able(player->unit_index) || skate_unit_is_skating(player->unit_index))
+		{
+			continue;
+		}
+		object = object_get(player->unit_index);
+		dx = object->object.position.x - position->x;
+		dy = object->object.position.y - position->y;
+		dz = object->object.position.z - position->z;
+		distance = dx * dx + dy * dy + dz * dz;
+		if (node == NONE || distance < best)
+		{
+			long found = bots_nav_locate(nav, object->object.position.x, object->object.position.y,
+				object->object.position.z);
+
+			if (found != NONE)
+			{
+				node = found;
+				best = distance;
+			}
+		}
+	}
+	if (node != NONE && node != bot->brain.goal_node)
+	{
+		bot->brain.goal_node = node;
+		bot->brain.path_next = NONE;
+	}
+}
+
 /* the pad that rides toward heading (radians) at up to speed (world units a
 second) */
 static void bot_skate_pad(
@@ -332,7 +392,7 @@ static void bot_skate_pad(
 		return;
 	}
 	/* pushing, while slower than wanted and facing about the way to go */
-	if (speed < speed_wanted && fabs(error) < 0.8f)
+	if (speed < speed_wanted && fabs(error) < (skate->ramming ? BOT_SKATE_RAM_PUSH_TURN : BOT_SKATE_PUSH_TURN))
 	{
 		if (game_time_get() % BOT_SKATE_PUSH_CYCLE < BOT_SKATE_PUSH_TICKS)
 			pad->buttons |= BOT_SKATE_A;
@@ -377,6 +437,12 @@ void bot_skate_think(
 
 	short mode = bot_skate_mode(bot);
 
+	if (mode == _bot_skate_stand)
+	{
+		bot_action_idle(action, brain->yaw, brain->pitch);
+		skate->on = FALSE;
+		return;
+	}
 	if (!skate_bots_available() || !bot_skate_unit_able(unit_index) || mode == _bot_skate_never)
 	{
 		skate->on = FALSE;
@@ -386,11 +452,14 @@ void bot_skate_think(
 	rolling = bot_skate_rolling_distance(brain, nav, &position, &to_goal);
 	fighting = brain->combat.target_player != NONE && brain->combat.target_visible;
 	ram_unit = view.skating ? bot_skate_ram_target(bot, &position) : NONE;
-	/* (a bot that rams fights from its board, and gets on one for less) */
+	/* (a bot that rams fights from its board, gets on one for less, and
+	seeing nobody heads for the nearest person on foot) */
 	if (mode == _bot_skate_ram && bot->difficulty != _bot_difficulty_peaceful)
 	{
 		fighting = FALSE;
 		board_distance = BOT_SKATE_RAM_BOARD_DISTANCE;
+		if (!brain->combat.target_visible)
+			bot_skate_ram_seek(bot, player_index, nav, &position);
 	}
 	/* (a life, a game: afresh) */
 	if (skate->unit_index != unit_index || now < skate->changed_tick)
@@ -473,8 +542,11 @@ void bot_skate_think(
 		{
 			/* at the person, a little ahead of where they go */
 			struct object_datum *target = object_get(ram_unit);
-			real tx = target->object.position.x + target->object.translational_velocity.i * 6.0f;
-			real ty = target->object.position.y + target->object.translational_velocity.j * 6.0f;
+			real dx = target->object.position.x - position.x, dy = target->object.position.y - position.y;
+			/* (near, straight at them) */
+			real lead = dx * dx + dy * dy < 9.0f ? 0.0f : 6.0f;
+			real tx = target->object.position.x + target->object.translational_velocity.i * lead;
+			real ty = target->object.position.y + target->object.translational_velocity.j * lead;
 
 			heading = (real)atan2(ty - position.y, tx - position.x);
 			if (!skate->ramming)

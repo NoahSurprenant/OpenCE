@@ -550,8 +550,9 @@ static const struct config_setting config_settings[] =
 	{ "debug.bot_skate", _config_string, "\"\"", "HALO_BOT_SKATE", _environment_value, _platform_all,
 		"How each bot goes about boards (Skate 3 mode), with commas between, one\n"
 		"for each bot in the order they join: \"ram\" (it stays on its board in a\n"
-		"fight and rides at people on foot), \"never\" (it stays on foot) or\n"
-		"anything else (as it sees fit), for the tests. Empty: all as they see fit." },
+		"fight and rides at people on foot), \"never\" (it stays on foot),\n"
+		"\"stand\" (it stands still on foot) or anything else (as it sees fit), for\n"
+		"the tests. Empty: all as they see fit." },
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
 		"The bots' random numbers start from this, so that a test's bots do the\n"
 		"same each run." },

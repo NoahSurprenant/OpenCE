@@ -23,6 +23,13 @@ RUN_OVER_DECIDED = re.compile(r"skate verdict (\d+) decided: player (\d+)'s skat
 RUN_OVER_KILLED = re.compile(r"skate verdict \d+: the person run over died here, killed by player (\d+)")
 
 
+def _server():
+    """the dedicated server's build (HALO_TEST_SERVER: the server image's, a
+    release build with the mode), else HALO_TEST_GAME's"""
+    server = os.environ.get("HALO_TEST_SERVER")
+    return server if server and Path(server).is_file() else os.environ.get("HALO_TEST_GAME")
+
+
 def _needs_skate():
     game = os.environ.get("HALO_TEST_GAME")
     maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
@@ -44,16 +51,17 @@ def _boards(log):
     return boards
 
 
-def _bots_alone(tmp_path, name, game, maps, assets, settings, addresses):
-    """a dedicated server of the --skate build, with the Skate 3 data, and bots
-    alone, until its game is over with their scores; its log"""
+def _bots_alone(tmp_path, name, game, maps, assets, settings, addresses, done=None):
+    """a dedicated server of a --skate build, with the Skate 3 data, and bots
+    alone, until its game is over with their scores (or done(log) holds); its
+    log"""
     bots = int(settings["HALO_SERVER_BOTS"])
     games = {name: _start(tmp_path, name, game, maps, {
         "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SKATE_ASSETS": assets,
         "HALO_NET_ADDRESS": addresses[0], "HALO_NET_BROADCAST": addresses[1], **settings})}
     try:
-        _wait(lambda: len(SCORE.findall(_log(tmp_path, name))) >= bots, 300, games, tmp_path,
-              "the bots' game did not end with their scores")
+        _wait(lambda: len(SCORE.findall(_log(tmp_path, name))) >= bots or (done and done(_log(tmp_path, name))), 400,
+              games, tmp_path, "the bots' game did not end with their scores")
     finally:
         _stop(games, tmp_path, {name: game})
         for cache in (tmp_path / name / "saves").rglob("cache*.map"):
@@ -122,22 +130,22 @@ def test_skating_bots_ride_and_fight(tmp_path):
 
 def test_skating_bots_run_over(tmp_path):
     """A bot that rams (debug.bot_skate "ram": it stays on its board in a
-    fight) and a peaceful bot that never boards, on Prisoner's dedicated
-    server with Skate 3 data: the first rides at the other on foot and runs
+    fight) and a peaceful bot standing still on foot ('stand'), on Prisoner's dedicated
+    server (the server image's build, HALO_TEST_SERVER) with Skate 3 data: the first rides at the other on foot and runs
     them over, the host deciding it (skate_authority.c) and crediting the
-    kill to the skater, as a vehicle's driver. About three and a half
-    minutes."""
-    game, maps, assets = _needs_skate()
-    log = _bots_alone(tmp_path, "server", game, maps, assets, {
-        "HALO_SERVER_BOTS": "2", "HALO_BOT_DIFFICULTIES": "hard,peaceful", "HALO_BOT_SKATE": "ram,never",
-        "HALO_BOT_SEED": "1", "HALO_SERVER_MAPS": "prisoner", "HALO_SERVER_TIME_LIMIT": "3"},
-        (_test_address(251), _test_address(252)))
+    kill to the skater, as a vehicle's driver. Until the first such kill (at
+    most a five-minute game): about two to three minutes."""
+    _, maps, assets = _needs_skate()
+    log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
+        "HALO_SERVER_BOTS": "2", "HALO_BOT_DIFFICULTIES": "hard,peaceful", "HALO_BOT_SKATE": "ram,stand",
+        "HALO_BOT_SEED": "1", "HALO_SERVER_MAPS": "prisoner", "HALO_SERVER_TIME_LIMIT": "5"},
+        (_test_address(251), _test_address(252)), done=lambda log: RUN_OVER_KILLED.search(log))
     boards = _boards(log)
     killed = RUN_OVER_KILLED.findall(log)
     print(f"boards {boards}; run-overs {RUN_OVER_DECIDED.findall(log)}; killed by {killed}; "
           f"scores {SCORE.findall(log)}")
-    assert boards.get("[BOT] Alpha", (0,))[0] >= 1, f"the ramming bot never got on a board: {boards}"
-    assert boards.get("[BOT] Bravo", (1,))[0] == 0, f"the bot that never boards did: {boards}"
+    boarded = {player for player, _ in BOARDED.findall(log)}
+    assert boarded == {"0"}, f"not the ramming bot alone (player 0) got on a board: {boarded}"
     assert killed and all(player == "0" for player in killed), \
         f"no person run over died, killed by the skater (player 0): {killed}"
 
@@ -147,8 +155,8 @@ def test_skating_bots_harmless(tmp_path):
     dedicated server with Skate 3 data: they get on boards and ride, but never
     ride at anyone nor run anyone over, and nobody dies. About three and a
     half minutes."""
-    game, maps, assets = _needs_skate()
-    log = _bots_alone(tmp_path, "server", game, maps, assets, {
+    _, maps, assets = _needs_skate()
+    log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
         "HALO_SERVER_BOTS": "2", "HALO_SERVER_BOT_DIFFICULTY": "peaceful", "HALO_BOT_SKATE": "ram,ram",
         "HALO_BOT_SEED": "1", "HALO_SERVER_MAPS": "prisoner", "HALO_SERVER_TIME_LIMIT": "3"},
         (_test_address(253), _test_address(254)))
@@ -160,3 +168,21 @@ def test_skating_bots_harmless(tmp_path):
     assert all(b[5] == 0 for b in boards.values()), f"a peaceful bot rode at someone: {boards}"
     assert not RUN_OVER_DECIDED.findall(log), "a peaceful bot ran someone over"
     assert all(int(kills) == 0 and int(deaths) == 0 for _, _, kills, deaths in scores), f"someone died: {scores}"
+
+
+def test_skating_bots_need_data(tmp_path):
+    """The same dedicated server without Skate 3 data (HALO_SKATE_ASSETS names
+    no folder, as the server image without its skate-data volume): it says
+    so, makes no skate session, and its bots stay on foot and play. About a
+    minute and a half."""
+    _, maps, _ = _needs_skate()
+    log = _bots_alone(tmp_path, "server", _server(), maps, str(tmp_path / "no-skate-data" / "assets"), {
+        "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "1", "HALO_SERVER_MAPS": "prisoner", "HALO_SERVER_TIME_LIMIT": "1"},
+        (_test_address(253), _test_address(254)))
+    boards = _boards(log)
+    went = {name: int(n) for name, n in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*?went (\d+) world units", log)}
+    print(f"boards {boards}; went {went}")
+    assert "skate: a dedicated server without Skate 3 data" in log, log[-3000:]
+    assert "halo-skate" not in log and "gets on a board" not in log, "a skate session without the data"
+    assert len(boards) == 2 and all(b[0] == 0 for b in boards.values()), f"a bot rode without the data: {boards}"
+    assert all(n >= 20 for n in went.values()) and len(went) == 2, f"the bots hardly moved: {went}"

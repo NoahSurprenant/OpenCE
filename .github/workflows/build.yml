@@ -427,7 +427,8 @@ jobs:
     # test_skate_multiplayer (port/skate/README.md, "Testing multiplayer"),
     # a dedicated server with a client joining it and SIGTERM stopping it
     # (test_dedicated_server, port/linux/README.md's "Dedicated server"), and
-    # a dedicated server built without --skate, as the server image is, with
+    # a dedicated server built as the server image is (--release --skate),
+    # without the Skate 3 data, with
     # two skating clients (test_dedicated_server_skaters: it relays their
     # states and decides their hits with no Skate 3 data of its own), and
     # that server through two turns of its map list with one-minute games
@@ -450,7 +451,7 @@ jobs:
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
     # --skate --lto=off --pgo=off), and the server of
     # test_dedicated_server_skaters the image's (docker/server/Dockerfile:
-    # --release --lto=off --pgo=off), both without --portable (below), 32-bit, headless: the runner
+    # --release --skate --lto=off --pgo=off), both without --portable (below), 32-bit, headless: the runner
     # has no display or sound, so SDL's dummy drivers and the null renderer
     # (HALO_NULL_RENDERER, which the test sets). Not needed by release or
     # notify, as skate-assets.
@@ -510,10 +511,11 @@ jobs:
           ninja linux
           cp build/linux/halo "$RUNNER_TEMP/halo-skate"
 
-      # the dedicated server as the server image builds it: no Skate 3 mode
+      # the dedicated server as the server image builds it: a release build with
+      # Skate 3 mode, which uses Skate 3 data only when given it
       - name: Build the server
         run: |
-          python3 configure.py --release --lto=off --pgo=off --compiler-launcher ccache
+          python3 configure.py --release --skate --lto=off --pgo=off --compiler-launcher ccache
           ninja linux
           cp build/linux/halo "$RUNNER_TEMP/halo-server"
 
@@ -543,8 +545,8 @@ jobs:
             echo "::error::test_skate_multiplayer, test_skate_hitbox and the five test_dedicated_server tests did not all run and pass"
             exit 1
           fi
-          if ! grep -q '3 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
-            echo "::error::the three tests of tools/test_skating_bots.py did not all run and pass"
+          if ! grep -q '4 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
+            echo "::error::the four tests of tools/test_skating_bots.py did not all run and pass"
             exit 1
           fi
 

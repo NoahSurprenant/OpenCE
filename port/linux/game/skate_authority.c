@@ -191,6 +191,8 @@ struct skate_verdict_input
 	real_vector3d normal;
 	/* the skater's engine went through the second (they told so) */
 	boolean run_over_told;
+	/* the skater runs nobody over (a peaceful bot's: skate.c): a bump */
+	boolean harmless;
 };
 
 struct skate_verdict_outcome
@@ -254,7 +256,8 @@ static void skate_verdict_decide(struct skate_verdict_input const *input, struct
 	/* a person on foot hit at the run-over speed or faster (or gone through
 	on the skater's machine) is run over, as by a vehicle, which goes on:
 	the skater rides on */
-	if (input->parties[1].pushable && (input->run_over_told || out->closing >= SKATE_RUN_OVER_SPEED))
+	if (input->parties[1].pushable && !input->harmless &&
+		(input->run_over_told || out->closing >= SKATE_RUN_OVER_SPEED))
 	{
 		out->run_over = TRUE;
 		out->share = skate_run_over_share(out->closing);
@@ -977,6 +980,7 @@ static void skate_authority_decide(long machine_index, struct skate_report const
 	input.bail_speed = skate_obstacle_bail_speed();
 	input.normal = report->normal;
 	input.run_over_told = TEST_FLAG(report->flags, _skate_report_run_over_bit);
+	input.harmless = skate_host_skater_harmless(skater_index);
 	skate_verdict_decide(&input, &outcome);
 	if (!outcome.believed)
 	{

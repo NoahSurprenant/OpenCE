@@ -236,6 +236,9 @@ skater, pose and hits; the animation banks, the board and the settings above
 are shared. A number that is no session fails as the call does with nothing
 loaded. */
 
+/* whether assets is a folder the converter wrote (1, else 0), loading
+nothing: a dedicated server makes no skater of its own, only its bots' */
+int halo_skate_assets_present(const char *assets);
 /* how many sessions there may be at once, 0 with them */
 int halo_skate_sessions(void);
 /* the session ended: its worker, skater and memory gone (made again by

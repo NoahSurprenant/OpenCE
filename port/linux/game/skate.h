@@ -81,6 +81,9 @@ boolean skate_bot_frame(long player_index, struct skate_bot_view *view);
 such a skater at all (alive, on foot or riding) */
 boolean skate_host_skater_riding(long unit_index);
 boolean skate_host_skater(long unit_index);
+/* ... and whether it runs nobody over (a peaceful bot's: skate_bot_drive's
+run_over off), whose hits the host takes as bumps */
+boolean skate_host_skater_harmless(long unit_index);
 
 /* hs_compile_and_evaluate: a console command tuning Skate 3 mode, one of
 SKATE_CONSOLE_SETTINGS, with what follows its word: sets the value for the

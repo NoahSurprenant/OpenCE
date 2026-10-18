@@ -888,14 +888,14 @@ data the bots walk, as before.
 Each bot's report says how it rode: "on a board N times, S seconds, D world
 units, O ollies, B bails, R people ridden at". `debug.bot_skate`
 (`HALO_BOT_SKATE`) sets a bot's way with boards for the tests, one entry for
-each bot in the order they join: `ram` (it stays on its board in a fight and
-rides at people on foot) or `never`. `debug.bot_trace` logs its steering
+each bot in the order they join: `ram` (it stays on its board in a fight, rides at people on foot, and
+seeing nobody heads for the nearest person on foot), `never`, or `stand` (it stands still on foot: a target). `debug.bot_trace` logs its steering
 twice a second.
 
 `tools/test_skating_bots.py` (the skate-multiplayer job) plays them: a
 listen host whose own player skates beside three bots (two normal, one
 peaceful) with a client that sees the bots' skaters posed with their boards;
-a ramming bot running a bot on foot over on Prisoner, the kill its own; and
+a ramming bot running over a bot standing on foot on Prisoner, the kill its own; and
 two peaceful bots told to ram that ride and harm nobody.
 
 ## Multiplayer

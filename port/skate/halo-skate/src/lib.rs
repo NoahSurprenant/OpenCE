@@ -1939,6 +1939,21 @@ pub unsafe extern "C" fn halo_skate_board_obstacle(placement: *const f32, out: *
 // pose and hits; what never changes is shared. A session number that is not
 // one fails as the call does with nothing loaded.
 
+/// Whether `assets` is a folder the converter wrote (it has `private/`):
+/// 1, else 0. Nothing is loaded (a dedicated server, which makes no skater of
+/// its own, looks before its bots ride).
+///
+/// # Safety
+/// `assets` is NULL or a C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_assets_present(assets: *const c_char) -> i32 {
+    if assets.is_null() {
+        return 0;
+    }
+    let root = PathBuf::from(unsafe { CStr::from_ptr(assets) }.to_string_lossy().into_owned());
+    i32::from(root.join("private").is_dir())
+}
+
 /// How many sessions there may be at once, this machine's player's (0) with
 /// them.
 #[unsafe(no_mangle)]
