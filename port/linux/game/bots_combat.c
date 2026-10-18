@@ -77,10 +77,10 @@ static struct bot_skill const bot_skills[NUMBER_OF_BOT_DIFFICULTIES] =
 {
 	/* peaceful (it never fights: bot_combat_engaged; it throws nothing) */
 	{ 18.0f, 4.5f, 0.07f, 0.10f, 1.57f, 25.0f, 1.6f, 0.0f, 0.0f, 0.10f, 1000.0f },
-	/* easy */ { 18.0f, 4.5f, 0.07f, 0.10f, 1.57f, 25.0f, 1.6f, 18.0f, 0.02f, 0.09f, 12.0f },
-	/* normal */ { 12.0f, 3.0f, 0.12f, 0.06f, 1.92f, 35.0f, 1.3f, 26.0f, 0.05f, 0.05f, 7.0f },
-	/* hard */ { 7.5f, 1.8f, 0.17f, 0.035f, 2.09f, 45.0f, 1.0f, 32.0f, 0.08f, 0.03f, 5.0f },
-	/* legendary */ { 5.0f, 1.2f, 0.24f, 0.018f, 2.27f, 55.0f, 0.8f, 38.0f, 0.12f, 0.015f, 3.5f },
+	/* easy */ { 21.0f, 5.0f, 0.07f, 0.12f, 1.57f, 25.0f, 1.6f, 18.0f, 0.02f, 0.09f, 12.0f },
+	/* normal */ { 14.0f, 3.5f, 0.12f, 0.07f, 1.92f, 35.0f, 1.3f, 26.0f, 0.05f, 0.05f, 7.0f },
+	/* hard */ { 6.5f, 1.5f, 0.20f, 0.028f, 2.09f, 45.0f, 1.0f, 32.0f, 0.08f, 0.03f, 5.0f },
+	/* legendary */ { 3.5f, 0.9f, 0.30f, 0.012f, 2.27f, 55.0f, 0.8f, 38.0f, 0.12f, 0.015f, 3.5f },
 };
 
 /* the ticks between looks, how long a target is remembered, and how long one

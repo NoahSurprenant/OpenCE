@@ -556,6 +556,11 @@ static const struct config_setting config_settings[] =
 	{ "debug.bot_trace", _config_boolean, "false", "HALO_BOT_TRACE", _environment_value, _platform_all,
 		"Each bot's way (where it is, the edge of the walking graph it is on,\n"
 		"where it heads) in the log every second, for working on the bots." },
+	{ "debug.bot_difficulties", _config_string, "\"\"", "HALO_BOT_DIFFICULTIES", _environment_value, _platform_all,
+		"The difficulty of each bot server.bots adds, in the order they join,\n"
+		"with commas between (\"easy,normal,hard,legendary\"), for games of bots\n"
+		"of each difficulty against each other; past the list's end, and empty,\n"
+		"server.bot_difficulty." },
 	{ "debug.bot_goal", _config_string, "\"\"", "HALO_BOT_GOAL", _environment_value, _platform_all,
 		"\"x y z\": every bot goes to the walking graph's node at this point, and\n"
 		"logs when it gets there (then roams a while and goes again), to check a\n"

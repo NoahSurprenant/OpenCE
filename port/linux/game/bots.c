@@ -113,6 +113,38 @@ static short bots_difficulty_setting(
 	return difficulty == NONE ? _bot_difficulty_normal : difficulty;
 }
 
+/* the difficulty of the next bot added by the settings: the next of
+debug.bot_difficulties ("easy,normal,hard,legendary": one for each bot in
+the order they join, for games of bots of each difficulty against each
+other), else server.bot_difficulty */
+static short bots_difficulty_for_next(
+	void)
+{
+	char const *list = config_string("debug.bot_difficulties");
+	char name[16];
+	short wanted = (short)(bots_globals.added_count % 64);
+	short index = 0;
+
+	while (list && *list)
+	{
+		short length = 0;
+
+		while (*list == ',' || *list == ' ')
+			list++;
+		while (*list && *list != ',' && length < (short)sizeof(name) - 1)
+			name[length++] = *list++;
+		name[length] = 0;
+		if (length > 0 && index++ == wanted)
+		{
+			short difficulty = bots_difficulty_named(name);
+
+			if (difficulty != NONE)
+				return difficulty;
+		}
+	}
+	return bots_difficulty_setting();
+}
+
 /* ---------- the roster */
 
 static void bots_name_text(
@@ -208,8 +240,8 @@ boolean bots_add(
 	bot_brain_reset(&bots_globals.bots[index].brain,
 		(unsigned long)config_integer("debug.bot_seed") * 7919UL + ++bots_globals.added_count);
 	bots_name_text(added.name, text, (int)sizeof(text));
-	platform_log("bots: %s joined (machine %d, controller %d, team %d)", text, (int)added.machine_index,
-		(int)added.controller_index, (int)added.team_index);
+	platform_log("bots: %s joined (machine %d, controller %d, team %d, %s)", text, (int)added.machine_index,
+		(int)added.controller_index, (int)added.team_index, bots_difficulty_names[bots_globals.bots[index].difficulty]);
 	return TRUE;
 }
 
@@ -582,7 +614,7 @@ void bots_update(
 	/* (one a frame) */
 	if (count < wanted)
 	{
-		bots_add(bots_difficulty_setting());
+		bots_add(bots_difficulty_for_next());
 	}
 	else if (count > wanted)
 	{

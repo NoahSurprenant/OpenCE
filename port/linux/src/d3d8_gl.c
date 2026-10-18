@@ -6397,6 +6397,11 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	}
 	platform_pump_events();
 
+	/* (the vertical blanks begun here too: the frames waited on below only
+	ever leave the queue at a blank, and a game that presents three frames
+	before anything else starts them - a dedicated server precaching the
+	menus' map slowly, with no window and no throttle yet - waited forever) */
+	vertical_blank_start();
 	pthread_mutex_lock(&vertical_blank_lock);
 	/* the Xbox keeps at most two frames queued behind its 60 Hz display;
 	with interpolation, frames come at the real display's rate instead,

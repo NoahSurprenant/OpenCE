@@ -422,6 +422,7 @@ the setting for one start of the game. It has priority over the file.
 | `debug.game_seed` | `0` | `HALO_GAME_SEED` | The start of the game's random numbers instead of the time (0: the time), so that a test's games go the same way each run. |
 | `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays, logs how much of the map it reaches, and ends the game. Refer to "Bots". |
 | `debug.bot_trace` | `false` | `HALO_BOT_TRACE` | Each bot's way in the log every second. |
+| `debug.bot_difficulties` | `""` | `HALO_BOT_DIFFICULTIES` | The difficulty of each bot that `server.bots` adds, in the order they join, with commas between them (`"easy,normal,hard,legendary"`), for games of bots of each difficulty against each other. Past the end of the list: `server.bot_difficulty`. |
 | `debug.bot_goal` | `""` | `HALO_BOT_GOAL` | `"x y z"`: every bot goes again and again to the walking graph's node at this point, and logs each arrival. Use it to check a map's links. |
 | `server.bot_difficulty` | `normal` | `HALO_SERVER_BOT_DIFFICULTY` | How well the bots fight: `peaceful` (they never fight), `easy`, `normal`, `hard` or `legendary`. Refer to "Bots". |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
@@ -1226,10 +1227,36 @@ A bot moves in a fight as a person does (`game/bots_cover.c`,
 | Difficulty | Reaction | Aim turns | Aim error | Sees | Field of view | Hears | Grenades |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `peaceful` | never fights | - | - | - | - | - | never |
-| `easy` | 600 ms | 120 degrees/s | large | 25 world units | 90 degrees | 18 world units | rarely, 12 s apart at least |
-| `normal` (default) | 400 ms | 205 degrees/s | medium | 35 world units | 110 degrees | 26 world units | sometimes, 7 s apart |
-| `hard` | 250 ms | 290 degrees/s | small | 45 world units | 120 degrees | 32 world units | often, 5 s apart |
-| `legendary` | 170 ms | 410 degrees/s | very small | 55 world units | 130 degrees | 38 world units | very often, 3.5 s apart |
+| `easy` | 700 ms | 120 degrees/s | large | 25 world units | 90 degrees | 18 world units | rarely, 12 s apart at least |
+| `normal` (default) | 470 ms | 205 degrees/s | medium | 35 world units | 110 degrees | 26 world units | sometimes, 7 s apart |
+| `hard` | 220 ms | 345 degrees/s | small | 45 world units | 120 degrees | 32 world units | often, 5 s apart |
+| `legendary` | 120 ms | 520 degrees/s | very small | 55 world units | 130 degrees | 38 world units | very often, 3.5 s apart |
+
+An easy bot does not fall back to cover when its shields are gone; the
+others do.
+
+How the difficulties do against each other, from bots alone (four bots, one
+of each, three-minute Slayer games, every game seeded with
+`debug.game_seed`; the order the difficulties join in turned round from
+game to game, four games of each order). Each cell is kills/deaths:
+
+| Map | `easy` | `normal` | `hard` | `legendary` |
+| --- | --- | --- | --- | --- |
+| Hang 'Em High | 30/36 | 33/44 | 43/37 | 46/35 |
+| Chill Out | 15/35 | 20/27 | 28/27 | 46/20 |
+| Beaver Creek | 10/18 | 13/13 | 18/15 | 18/13 |
+| Prisoner | 7/16 | 10/13 | 17/9 | 14/11 |
+| **all 16 games** | **62/105 (0.59)** | **76/97 (0.78)** | **106/88 (1.20)** | **124/79 (1.57)** |
+
+Before tuning, the same games came out 0.46, 1.10, 1.23 and 1.44: easy
+was weak, but normal was nearly as strong as hard. Tuned: easy reacts in
+700 ms (was 600) with more aim error; normal in 470 ms (was 400) with a
+little more aim error; hard in 220 ms (was 250), turning its aim at 345
+degrees/s (was 290) with less aim error; legendary in 120 ms (was 170),
+turning at 520 degrees/s (was 410) with less aim error. A single map's few
+games still go either way (Beaver Creek and Prisoner have few kills in
+three minutes); the order holds over all of them.
+`tools/test_bots.py`'s `test_bots_difficulties` keeps the order.
 
 ### Game types
 

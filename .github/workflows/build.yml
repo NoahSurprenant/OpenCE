@@ -628,8 +628,8 @@ jobs:
           clang -m32 -O1 -g -shared -fPIC -o "$HALO_TEST_STALL_BACKTRACE" tools/stall_backtrace.c
           # (in four groups at once, each game in real time: the network and
           # graph tests, the bots' Slayer games, the other game types'
-          # rotation, and Capture the Flag; their loopback addresses differ, so
-          # they go side by side)
+          # rotation, and Capture the Flag with the difficulties' games; their
+          # loopback addresses differ, so they go side by side)
           mkdir -p "$RUNNER_TEMP/bots"
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/a" tools/test_bots.py \
             -k "dedicated_server or older_client or listen_host or nav_on_every_map or leave_for or rotation" \
@@ -642,7 +642,7 @@ jobs:
             -k "game_types" > "$RUNNER_TEMP/bots-c.log" 2>&1 &
           third=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/d" tools/test_bots.py \
-            -k "ctf" > "$RUNNER_TEMP/bots-d.log" 2>&1 &
+            -k "ctf or difficulties" > "$RUNNER_TEMP/bots-d.log" 2>&1 &
           fourth=$!
           wait $first || true
           wait $second || true
@@ -650,9 +650,9 @@ jobs:
           wait $fourth || true
           cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log"
           if ! grep -q '6 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
-            ! grep -q '1 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '1 passed' "$RUNNER_TEMP/bots-d.log" ||
+            ! grep -q '1 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" ||
             grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log"; then
-            echo "::error::the twelve tests of tools/test_bots.py did not all run and pass (6 + 4 + 1 + 1)"
+            echo "::error::the thirteen tests of tools/test_bots.py did not all run and pass (6 + 4 + 1 + 2)"
             exit 1
           fi
 
@@ -739,12 +739,23 @@ jobs:
             exit 1
           fi
 
+      # (and a browser hosting a game with bots of its own: port/web/tests/hostbots.mjs)
+      - name: Test a browser host with bots
+        run: |
+          set -o pipefail
+          node port/web/tests/hostbots.mjs "$RUNNER_TEMP/halo-web-release" "$HALO_MAPS" 2>&1 |
+            tee "$RUNNER_TEMP/web-hostbots.log"
+          if ! grep -q '^a browser hosting bots: ok$' "$RUNNER_TEMP/web-hostbots.log"; then
+            echo "::error::the browser's own game did not have its bots play"
+            exit 1
+          fi
+
       - name: Stop the server
         if: always()
         run: |
           pkill -KILL -f "$GITHUB_WORKSPACE/build/linux/halo" || true
           pkill -KILL -x mosquitto || true
-          rm -f "$RUNNER_TEMP/web-dedicated.log"
+          rm -f "$RUNNER_TEMP/web-dedicated.log" "$RUNNER_TEMP/web-hostbots.log"
 
   web-skate:
     # Skate 3 mode in a browser (port/web/tests/skate.mjs; port/skate/README.md,
