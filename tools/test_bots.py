@@ -19,7 +19,7 @@ import pytest
 from tools.test_linux_port import _game_env, _stall_backtraces, _test_address
 
 BOT_NAMED = re.compile(r"network test: player (\d+) is named (\[BOT\] \w+)")
-BOT_JOINED = re.compile(r"bots: (\[BOT\] \w+) joined \(machine (\d+), controller (\d+), team (-?\d+)\)")
+BOT_JOINED = re.compile(r"bots: (\[BOT\] \w+) joined \(machine (\d+), controller (\d+), team (-?\d+)(?:, \w+)?\)")
 
 
 def _needs(*names):
@@ -640,6 +640,34 @@ def _objectives(text):
 def _moved(text):
     """each bot's last distance walked in a game's text: {name: world units}"""
     return {m[0]: int(m[2]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick (\d+): .*?went (\d+) world units", text)}
+
+
+def test_bots_difficulties(tmp_path):
+    """Two bots, easy against legendary (debug.bot_difficulties), one
+    against the other in two three-minute Slayer games (Hang 'Em High, then
+    Chill Out; their games seeded): legendary kills twice as many as easy
+    over both (the bots_combat.c table; README "Bots"). In eight such games
+    locally legendary won every one, 59 kills to 12 (the closest 5 to 3). (Four bots, one of each difficulty, are too noisy for a test of
+    two games: the order shows over 16 games, the README's table. Peaceful,
+    which never fights, is test_bots_peaceful.) About seven minutes."""
+    maps, _ = _needs("HALO_TEST_SERVER")
+    if not all(Path(maps, f"{name}.map").is_file() for name in ("hangemhigh", "chillout")):
+        pytest.skip("needs hangemhigh and chillout")
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "40", "HALO_BOT_DIFFICULTIES": "easy,legendary",
+        "HALO_SERVER_MAPS": "hangemhigh,chillout", "HALO_SERVER_TIME_LIMIT": "3",
+        "HALO_NET_ADDRESS": _test_address(247), "HALO_NET_BROADCAST": _test_address(248)}, games_over=2, seconds=540)
+    difficulty = {name: level for name, _, _, _, level in
+                  re.findall(r"bots: (\[BOT\] \w+) joined \(machine (\d+), controller (\d+), team (-?\d+), (\w+)\)", log)}
+    assert sorted(difficulty.values()) == ["easy", "legendary"], f"the bots' difficulties: {difficulty}"
+    games = []
+    for game in log.split("server: the game starts: ")[1:3]:
+        kills = {difficulty[name]: (int(k), int(d)) for name, _, k, d in SCORE.findall(game)}
+        print(f"{game.splitlines()[0]}: kills, deaths {kills}")
+        games.append(kills)
+    assert len(games) == 2 and all(len(kills) == 2 for kills in games), log[-4000:]
+    assert sum(kills["legendary"][0] for kills in games) >= 2 * sum(kills["easy"][0] for kills in games), \
+        f"legendary did not kill twice as many as easy: {games}"
 
 
 def test_bots_ctf(tmp_path):
