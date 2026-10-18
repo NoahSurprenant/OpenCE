@@ -412,13 +412,14 @@ the setting for one start of the game. It has priority over the file.
 | `crash_reports.upload` | `"ask"` | `HALO_CRASH_REPORTS` | Windows only. `"yes"`: the game sends a report of each crash to the developers. `"no"`: the game sends no reports. `"ask"`: the game asks at the next crash and writes the answer here. Refer to "Crash reports" in [port/windows/README.md](../windows/README.md#crash-reports). |
 | `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: the game is a dedicated server, without a window, sound or player. Refer to "Dedicated server". |
 | `server.maps` | `"bloodgulch"` | `HALO_SERVER_MAPS` | The maps of a dedicated server, with commas between them, in turn. `"<map>:<game type>"` gives a map its own game type. |
-| `server.game_types` | `"slayer"` | `HALO_SERVER_GAME_TYPES` | The game types (with commas between them) of each map of `server.maps` that has no game type of its own, in turn: `slayer`, `team_slayer`, `ctf`, `king`, `oddball`, `race` and the other built-in game types. |
+| `server.game_types` | `"slayer"` | `HALO_SERVER_GAME_TYPES` | The game types (with commas between them) of each map of `server.maps` that has no game type of its own, in turn: `slayer`, `team_slayer`, `ctf`, `king`, `oddball`, `juggernaut`, `race` and the other built-in game types. |
 | `server.time_limit` | `15` | `HALO_SERVER_TIME_LIMIT` | The longest time of a game of a dedicated server, in minutes. `0`: the limit of the game type (the built-in game types have none). |
 | `server.score_limit` | `0` | `HALO_SERVER_SCORE_LIMIT` | The score to win a game of a dedicated server. `0`: the score of the game type. |
 | `server.bots_fill` | `false` | `HALO_SERVER_BOTS_FILL` | `server.bots` is how many players the game has in all: a bot leaves as a person joins, and comes back as one leaves. Refer to "Bots". |
 | `server.max_players` | `0` | `HALO_SERVER_MAX_PLAYERS` | The most players (people and bots) in a dedicated server's games; 0 for the build's 128. |
 | `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 16. Refer to "Bots". |
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
+| `debug.game_seed` | `0` | `HALO_GAME_SEED` | The start of the game's random numbers instead of the time (0: the time), so that a test's games go the same way each run. |
 | `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays, logs how much of the map it reaches, and ends the game. Refer to "Bots". |
 | `debug.bot_trace` | `false` | `HALO_BOT_TRACE` | Each bot's way in the log every second. |
 | `debug.bot_goal` | `""` | `HALO_BOT_GOAL` | `"x y z"`: every bot goes again and again to the walking graph's node at this point, and logs each arrival. Use it to check a map's links. |
@@ -1147,7 +1148,7 @@ Co-op games have no bots.
 - A bot plays Slayer: it roams the map along the walking graph (below),
   takes better weapons, powerups and grenades lying about, and fights the
   players of the other team (anyone, without teams) that it sees or hears.
-  In the other game types it does the same, for now.
+  It plays the other game types too ("Game types", below).
 
 ### Fighting
 
@@ -1230,7 +1231,39 @@ A bot moves in a fight as a person does (`game/bots_cover.c`,
 | `hard` | 250 ms | 290 degrees/s | small | 45 world units | 120 degrees | 32 world units | often, 5 s apart |
 | `legendary` | 170 ms | 410 degrees/s | very small | 55 world units | 130 degrees | 38 world units | very often, 3.5 s apart |
 
-Objectives (CTF, King of the Hill, Oddball) and vehicles are for later.
+### Game types
+
+A bot plays each game type's objective (`game/bots_objectives.c`), from what
+every machine sees: the flags and balls (weapons the game marks so), the
+places the game marks for the HUD's navigation points, and the map's
+netgame flags. It still fights what it meets on the way.
+
+- **Capture the Flag:** a bot that carries the enemy's flag runs home with
+  it; it does not shoot, change weapons or press the action or reload
+  button, which would drop the flag (it can still strike a blow), and
+  keeps off teleporters, which would lose it. A bot
+  whose own flag lies dropped returns it, if it is the nearest of its team.
+  When its flag is carried off, its team's defender, its nearest bot and any
+  bot within 12 world units hunt the carrier; the attackers go on (a
+  team's only bot goes for the other flag, unless the carrier is near). The
+  others share the roles: the first, third and so on of a team's bots
+  attack (they go for the enemy's flag wherever it is, or escort a team
+  mate who has it), and the second, fourth and so on defend (they stay
+  within 5 world units of their flag's stand). With one flag, its team
+  defends it and the other attacks.
+- **King of the Hill:** to the hill, and stays on it, moving about within
+  it, fighting from it and not chasing anyone off it; a moving hill is
+  followed.
+- **Oddball:** to a ball lying about, to take it; with it, away from its
+  enemies (to the place furthest from them of a few). An enemy who has it
+  is hunted, a team mate who has it escorted. In Juggernaut and reverse tag
+  the bot who is "it" fights, and the others hunt it.
+- **Race:** to the race's flags, each in turn (on foot: bots drive no
+  vehicles).
+- **Team Slayer:** a bot that sees nobody goes over to a team mate now and
+  then, so that team mates fight together.
+
+`server.game_types` takes `juggernaut` too. Vehicles are for later.
 
 Peaceful bots roam, take weapons and play as the others do, but never fight:
 they never aim at a player, shoot, throw a grenade or strike. They can still

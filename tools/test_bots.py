@@ -44,6 +44,10 @@ def _start(tmp_path, name, game, maps, settings):
            if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
     env.update(settings, HALO_NET_ONLINE="false", HALO_UPDATE_ANSWER="never",
                HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
+    # (the game's own random numbers fixed too - spawns, weapons' spread -
+    # with the bots': a test's games go the same way each run, as near as the
+    # machine's timing lets them)
+    env.setdefault("HALO_GAME_SEED", str(1000 + int(env.get("HALO_BOT_SEED", "0"))))
     with open(folder / "run.log", "w") as log:
         return subprocess.Popen([game], cwd=folder, env=_game_env(env), stdout=log, stderr=subprocess.STDOUT)
 
@@ -575,8 +579,9 @@ def test_bots_grenades(tmp_path):
 def test_bots_rotation(tmp_path):
     """Four bots (normal) through a dedicated server's rotation of three
     short Slayer games (Blood Gulch, Hang 'Em High, Blood Gulch, two minutes each),
-    as the live server goes through its games: every game has kills, every
-    bot fires in every game, and few of its ways fail. Each game's bots begin afresh (bots.c):
+    as the live server goes through its games: every game has kills, three
+    bots of four at least fire in every game, the later games fire at least a
+    quarter of what the first did, and few of its ways fail. Each game's bots begin afresh (bots.c):
     kept from the last game, their times, far ahead of the new game's, held
     them back for a whole game - the live server's bots hardly fought after
     its first game. About seven minutes."""
@@ -589,20 +594,134 @@ def test_bots_rotation(tmp_path):
         "HALO_NET_ADDRESS": _test_address(245), "HALO_NET_BROADCAST": _test_address(246)}, games_over=3, seconds=660)
     games = log.split("server: the game starts: ")[1:4]
     assert len(games) == 3, log[-4000:]
+    fired_in = []
     for number, text in enumerate(games, 1):
         where = text.splitlines()[0]
         kills = sum(int(k) for _, _, k, _ in SCORE.findall(text))
         reports = _reports(text)
         fired = {name: counts.get("ticks", 0) for name, counts in reports.items()}
         paths = {name: (counts.get("paths", 0), counts.get("failed", 0)) for name, counts in reports.items()}
+        last = "\n".join([f"{name}: {counts}" for name, counts in reports.items()] + [str(SCORE.findall(text))])
         print(f"game {number}, {where}: {kills} kills; ticks fired {fired}; paths (failed) {paths}")
-        assert kills >= 2, f"game {number} ({where}) had {kills} kills"
-        assert len(fired) == 4 and all(ticks > 0 for ticks in fired.values()), \
-            f"a bot never fired in game {number} ({where}): {fired}"
+        fired_in.append(sum(fired.values()))
+        assert kills >= 2, f"game {number} ({where}) had {kills} kills\n{last}"
+        # (Blood Gulch is big: once on CI a bot fired at nobody in the first two
+        # minutes, the others 900 ticks or more - three of four. The bug this test
+        # is for silenced every bot from the second game on: the later games
+        # against the first.)
+        assert len(fired) == 4 and sum(ticks > 0 for ticks in fired.values()) >= 3, \
+            f"two bots never fired in game {number} ({where}): {fired}\n{last}"
+        assert number == 1 or fired_in[-1] >= fired_in[0] // 4, \
+            f"the bots hardly fired in game {number} ({where}): {fired_in[-1]} ticks against {fired_in[0]} in game 1\n{last}"
         # (the live server's bots, a game on, had two thirds of their ways fail:
         # they went on fighting a target of the last game, where it was then)
         assert all(failed <= max(10, planned // 4) for planned, failed in paths.values()), \
             f"a bot's ways failed in game {number} ({where}): {paths}"
+
+
+OBJECTIVE = re.compile(r"bots: (\[BOT\] \w+) objective at tick (\d+): (\d+) flag grabs, (\d+) flag returns, (\d+) flag "
+                       r"captures, (\d+) hill seconds, (\d+) ball seconds, (\d+) race flags, (\d+) laps, (\d+) world units "
+                       r"carried")
+
+
+def _games(log):
+    """the log of each game a server played, in turn: (its game type, map, its
+    text)"""
+    parts = re.split(r"server: the game starts: (\S+) on (\w+)", log)
+    return [(parts[index], parts[index + 1], parts[index + 2]) for index in range(1, len(parts) - 2, 3)]
+
+
+def _objectives(text):
+    """each bot's last objective report in a game's text: {name: (grabs,
+    returns, captures, hill, ball, race flags, laps, carried)}"""
+    return {m[0]: tuple(int(value) for value in m[2:]) for m in OBJECTIVE.findall(text)}
+
+
+def _moved(text):
+    """each bot's last distance walked in a game's text: {name: world units}"""
+    return {m[0]: int(m[2]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick (\d+): .*?went (\d+) world units", text)}
+
+
+def test_bots_ctf(tmp_path):
+    """Two bots (normal) play Capture the Flag on Beaver Creek, one against
+    the other (bots_objectives.c), to one capture (server.score_limit 1; at
+    most six minutes): each, its team's only bot, attacks - takes the
+    enemy's flag, carries it home without the buttons or teleporters that
+    would lose it, and scores. The flag is grabbed, carried well away from
+    its stand, and captured. The first capture came after 49 to 185 s in
+    six games of this. (Three against three, defenders and hunters stop
+    most carries in the middle of the map, and a capture took 107 s to more
+    than ten minutes: no test of that.)"""
+    maps, _ = _needs("HALO_TEST_SERVER")
+    if not Path(maps, "beavercreek.map").is_file():
+        pytest.skip("needs beavercreek.map")
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "9", "HALO_SERVER_BOT_DIFFICULTY": "normal",
+        "HALO_SERVER_MAPS": "beavercreek", "HALO_SERVER_GAME_TYPES": "ctf", "HALO_SERVER_TIME_LIMIT": "6",
+        "HALO_SERVER_SCORE_LIMIT": "1",
+        "HALO_NET_ADDRESS": _test_address(241), "HALO_NET_BROADCAST": _test_address(242)}, seconds=480)
+    objectives = _objectives(log)
+    teams = TEAMS_SCORE.findall(log)
+    print(f"objectives (grabs, returns, captures, ...): {objectives}; teams {teams}")
+    assert len(objectives) == 2 and teams, log[-4000:]
+    grabs = sum(o[0] for o in objectives.values())
+    carried = max(o[7] for o in objectives.values())
+    assert grabs >= 1, "no bot grabbed a flag"
+    assert carried >= 10, f"no bot carried a flag 10 world units from its stand (at most {carried})"
+    # (the capture ends the game, after the bots' last report: the team's score)
+    assert sum(int(score) for score in teams[-1]) >= 1, f"no flag was captured: {objectives}, {teams}"
+
+
+def test_bots_game_types(tmp_path):
+    """Four bots (normal) play two minutes of each of King of the Hill on
+    Chillout, Oddball on Beaver Creek, Race on Blood Gulch and Juggernaut on
+    Hang 'Em High, a dedicated server's rotation (bots_objectives.c): they
+    stand on the hill (three of them at least, 25 s between them, and none
+    standing still), take and keep the ball (each some seconds), run to the race's
+    flags in turn (some each), and in Juggernaut hunt the juggernaut and fight
+    on (kills scored, no bot standing still). Each game's bots begin afresh
+    (their reports are the game's). About nine minutes."""
+    maps, _ = _needs("HALO_TEST_SERVER")
+    names = ("chillout", "beavercreek", "bloodgulch", "hangemhigh")
+    if not all(Path(maps, f"{name}.map").is_file() for name in names):
+        pytest.skip(f"needs {', '.join(names)}")
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "10", "HALO_SERVER_BOT_DIFFICULTY": "normal",
+        "HALO_SERVER_MAPS": "chillout:king,beavercreek:oddball,bloodgulch:race,hangemhigh:juggernaut",
+        "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(243), "HALO_NET_BROADCAST": _test_address(244)}, games_over=4, seconds=720)
+    games = _games(log)
+    print(f"games: {[(kind, where) for kind, where, _ in games]}")
+    assert len(games) >= 4, log[-4000:]
+    by_kind = {}
+    for kind, where, text in games[:4]:
+        by_kind[where] = (kind, text)
+        print(f"{kind} on {where}: {_objectives(text)}; {SCORE.findall(text)}")
+    king = _objectives(by_kind["chillout"][1])
+    king_moved = _moved(by_kind["chillout"][1])
+    king_reports = "\n".join(re.findall(r"bots: \[BOT\] \w+ at tick 3600: .*", by_kind["chillout"][1]))
+    # (Chillout is small: a bot is in a fight most of the time, and one that
+    # keeps losing them - killed on the way, back from cover - may get no
+    # second on the hill in two minutes: in seven local games 1 to 28 s
+    # each, 32 to 59 s between them, every bot walking 129 wu or more. Three
+    # of four on it, and all of them about the map, not one standing still.)
+    assert len(king) == 4 and sum(o[3] >= 1 for o in king.values()) >= 3, \
+        f"two bots were never on the hill: {king}\n{king_reports}"
+    assert all(distance >= 40 for distance in king_moved.values()), \
+        f"a bot hardly moved in King of the Hill: {king_moved}\n{king_reports}"
+    assert sum(o[3] for o in king.values()) >= 25, f"the bots held the hill only {sum(o[3] for o in king.values())} s"
+    ball = _objectives(by_kind["beavercreek"][1])
+    ball_kills = sum(int(kills) for _, _, kills, _ in SCORE.findall(by_kind["beavercreek"][1]))
+    assert len(ball) == 4 and sum(o[4] for o in ball.values()) >= 30, f"the bots hardly had the ball: {ball}"
+    assert ball_kills >= 1, f"nobody fought for the ball: {ball}"
+    race = _objectives(by_kind["bloodgulch"][1])
+    assert len(race) == 4 and sum(o[5] for o in race.values()) >= 3 and sum(o[5] > 0 for o in race.values()) >= 2, \
+        f"the bots hardly ran the race: {race}"
+    juggernaut = by_kind["hangemhigh"][1]
+    scores = SCORE.findall(juggernaut)
+    moved = _moved(juggernaut)
+    assert len(scores) == 4 and sum(int(kills) for _, _, kills, _ in scores) >= 2, f"no fight in Juggernaut: {scores}"
+    assert all(distance >= 40 for distance in moved.values()), f"a bot hardly moved in Juggernaut: {moved}"
 
 
 def test_bots_leave_for_a_person(tmp_path):

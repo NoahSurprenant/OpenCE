@@ -545,6 +545,9 @@ static const struct config_setting config_settings[] =
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
 		"The bots' random numbers start from this, so that a test's bots do the\n"
 		"same each run." },
+	{ "debug.game_seed", _config_integer, "0", "HALO_GAME_SEED", _environment_value, _platform_all,
+		"The game's random numbers start from this instead of the time (0: the\n"
+		"time), so that a test's games go the same way each run." },
 	{ "debug.bot_nav_check", _config_boolean, "false", "HALO_BOT_NAV_CHECK", _environment_value, _platform_all,
 		"A host builds (or reads from its cache) the bots' walking graph of each\n"
 		"map it plays, logs how many of the map's spawns and weapons it reaches,\n"
