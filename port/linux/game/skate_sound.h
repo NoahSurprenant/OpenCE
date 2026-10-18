@@ -40,8 +40,10 @@ struct skate_sound_event
 /* skate_network_note_local, each tick: this machine's skater's one-shots
 since the last tick (at most capacity, the newest), oldest first, into
 events, and its loops' state into loops: how many. Events NULL takes them to
-drop them (not skating). Without the mode, none */
-short skate_sound_take_local(struct skate_sound_event *events, short capacity, struct skate_sound_loops *loops);
+drop them (not skating). session: the skate session of the skater (0 this
+machine's player's, else a host's bot's: skate.c). Without the mode, none */
+short skate_sound_take_local(short session, struct skate_sound_event *events, short capacity,
+	struct skate_sound_loops *loops);
 /* skate_network_update_after_objects: another machine's skater's loops, each
 tick, at position (their board here, world units); a one-shot of theirs, once
 (TRUE: it had a sample); and their sounds fading out. None of it on a

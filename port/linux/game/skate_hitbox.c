@@ -76,7 +76,7 @@ boolean skate_object_posed(long object_index)
 	struct object_datum *object = object_try_and_get(object_index);
 
 	return object && object->object.type == _object_type_biped &&
-		(object_index == skate_local_skater_unit() || skate_network_unit_skating(object_index));
+		(skate_host_skater(object_index) || skate_network_unit_skating(object_index));
 }
 
 boolean skate_pose_object_nodes(long object_index)
@@ -606,6 +606,7 @@ void skate_hitbox_test(short when)
 	while ((object = (struct object_datum *)object_iterator_next(&iterator)) != NULL)
 	{
 		char const *who = iterator.index == skate_local_skater_unit() ? "this machine's" :
+			skate_host_skater(iterator.index) ? "this machine's bot's" :
 			skate_network_unit_skating(iterator.index) ? "another machine's" : NULL;
 
 		if (!who)

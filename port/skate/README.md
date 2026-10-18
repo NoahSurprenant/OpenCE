@@ -814,6 +814,45 @@ or a provider whose splines move with a frame and a grind that rides along
 with them, neither of which the engine has. A parked vehicle is no rail
 either, since it may drive off at any time.
 
+### Several skaters
+
+The engine can run more than one skater in one game (the host's bots on
+boards, `../linux/game/bots_skate.c`): up to `halo_skate_sessions()` sessions,
+each with its own worker thread, collision, skater, pose, hits and sounds.
+Session 0 is this machine's player's, which every call without a number
+drives exactly as before; the others are driven by the `_in` calls of
+`include/halo_skate.h`, which take the session first (`halo_skate_step_in`,
+`halo_skate_pose_nodes_in`, ...). What never changes is shared: the animation
+banks (the engine's own cache), the board's mesh and textures, and the game's
+settings (board scale, feet, bail and run-over speeds). Only session 0's
+sounds are mixed here; the others' are kept (`halo_skate_sound_take_in`) for
+the game to send to the other machines and to play as another player's
+(`skate_network.c`). Their log lines say whose: `halo-skate (session 2): ...`.
+
+`halo_skate_step_begin_in` starts a session's step without waiting, and
+`halo_skate_await_step_in` takes its pose: the game starts each bot's step,
+steps its own player's skater, then takes the bots' poses, so that the
+sessions' workers step side by side. `halo_skate_close_in` ends a session.
+
+In the game (`../linux/game/skate.c`) each skater is a `struct skate_skater`:
+skater 0 is this machine's player's, skaters 1 on are bots' (the host only),
+each in the session of its number. The level's collision goes to every
+session that has a skater; the bots' skaters collide with the host's own
+skater and each other as skaters (body and board), their hits go to the
+host's verdicts at once as its own skater's do (`skate_authority.c`), and
+they are posed, holstered, drawn and sent to the other machines as the
+host's own skater is (states 90/91 and sounds 94/95 keyed by player index:
+the wire is unchanged).
+
+What a session costs, measured with the real data
+(`halo-skate/tests/real_assets_sessions.rs`, an i686 build in a container
+capped at 1.5 processors): the first session about 57 MB of resident memory
+(the animation banks and the board, once), each further one about 35 MB with
+its worker; making one about 10 seconds of a processor (in the background);
+a step about 4.6 ms of a game tick for each skater, and three skaters side by
+side 9.6 ms. `server.bot_skaters` (4 at first, 8 at most) is how many bots
+may be on boards at once.
+
 ## Multiplayer
 
 In a network game (system link, internet play, co-op) everyone sees

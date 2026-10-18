@@ -618,6 +618,9 @@ static struct skate_network_player
 	skater's */
 	long sound_time;
 	boolean sound_local;
+	/* ... a skater this machine runs for a bot of its own (skate.c), heard here
+	as another machine's skater is */
+	boolean sound_hosted;
 	byte sound_entry[SKATE_SOUND_SIZE];
 	/* (this machine's skater's) its one-shots of the last
 	SKATE_SOUND_EVENT_TICKS, oldest first, each with its tick and sequence
@@ -668,6 +671,7 @@ void skate_network_new_game(void)
 		skate_network_players[index].bailing = FALSE;
 		skate_network_players[index].sound_time = NONE;
 		skate_network_players[index].sound_local = FALSE;
+		skate_network_players[index].sound_hosted = FALSE;
 		skate_network_players[index].sent_count = 0;
 		skate_network_players[index].has_played = FALSE;
 		if (skate_network_players[index].sounding)
@@ -934,7 +938,7 @@ static void skate_network_pose_error(long unit_index, real_matrix4x3 const *node
 /* this machine's skater's sounds this tick (skate_sound_take_local) into its
 entry: its loops, and its one-shots of the last SKATE_SOUND_EVENT_TICKS, each
 numbered as it came */
-static void skate_network_note_local_sounds(struct skate_network_player *player, byte player_index)
+static void skate_network_note_local_sounds(struct skate_network_player *player, byte player_index, short session)
 {
 	struct skate_sound_event taken[2 * SKATE_SOUND_EVENTS];
 	struct skate_sound_state state;
@@ -944,7 +948,7 @@ static void skate_network_note_local_sounds(struct skate_network_player *player,
 	short kept = 0;
 
 	memset(&state, 0, sizeof(state));
-	count = skate_sound_take_local(taken, (short)NUMBEROF(taken), &state.loops);
+	count = skate_sound_take_local(session, taken, (short)NUMBEROF(taken), &state.loops);
 	/* (the one-shots no longer sent: too old, or after a new game) */
 	for (index = 0; index < player->sent_count; index++)
 	{
@@ -984,10 +988,11 @@ static void skate_network_note_local_sounds(struct skate_network_player *player,
 	skate_sound_write(player_index, &state, player->sound_entry);
 	player->sound_time = now;
 	player->sound_local = TRUE;
+	player->sound_hosted = session != 0;
 }
 
 void skate_network_note_local(long player_index, long unit_index, boolean off_board, boolean bailing,
-	real const *board_placement)
+	real const *board_placement, short session)
 {
 	struct skate_network_player *player;
 	struct skate_state state;
@@ -1011,11 +1016,11 @@ void skate_network_note_local(long player_index, long unit_index, boolean off_bo
 			player->time = game_time_get();
 		}
 		/* (and no sounds: whatever the engine made since is dropped) */
-		skate_sound_take_local(NULL, 0, NULL);
+		skate_sound_take_local(session, NULL, 0, NULL);
 		player->sent_count = 0;
 		return;
 	}
-	skate_network_note_local_sounds(player, (byte)absolute_index);
+	skate_network_note_local_sounds(player, (byte)absolute_index, session);
 	object = object_get(unit_index);
 	state.flags = FLAG(_skate_state_skating_bit) | (off_board ? FLAG(_skate_state_off_board_bit) : 0) |
 		(bailing ? FLAG(_skate_state_bailing_bit) : 0);
@@ -1780,7 +1785,8 @@ static void skate_network_update_sounds(void)
 		real position[3];
 		short event_index;
 
-		if (player->sound_local || player->sound_time == NONE || age < 0 || age > SKATE_SOUND_STALE_TICKS ||
+		if ((player->sound_local && !player->sound_hosted) || player->sound_time == NONE || age < 0 ||
+			age > SKATE_SOUND_STALE_TICKS ||
 			(unit_index = skate_network_player_unit(index)) == NONE ||
 			!skate_sound_read(player->sound_entry, &player_index, &state))
 		{

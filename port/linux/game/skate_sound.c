@@ -178,7 +178,8 @@ void skate_sound_update(boolean skating, long unit_index, float const *position)
 	halo_skate_sound_listener(camera_position, forward, up, skate_sound.surface);
 }
 
-short skate_sound_take_local(struct skate_sound_event *events, short capacity, struct skate_sound_loops *loops)
+short skate_sound_take_local(short session, struct skate_sound_event *events, short capacity,
+	struct skate_sound_loops *loops)
 {
 	struct halo_skate_sound_event taken[2 * SKATE_SOUND_EVENTS];
 	struct halo_skate_sound_loops state;
@@ -187,19 +188,20 @@ short skate_sound_take_local(struct skate_sound_event *events, short capacity, s
 
 	if (!events || capacity <= 0)
 	{
-		halo_skate_sound_take(NULL, 0, NULL);
+		halo_skate_sound_take_in(session, NULL, 0, NULL);
 		return 0;
 	}
 	if (capacity > (short)NUMBEROF(taken))
 		capacity = (short)NUMBEROF(taken);
 	memset(&state, 0, sizeof(state));
-	count = (short)halo_skate_sound_take(taken, capacity, &state);
+	count = (short)halo_skate_sound_take_in(session, taken, capacity, &state);
 	if (loops)
 	{
 		loops->wheels = (short)state.wheels;
 		loops->grind = (short)state.grind;
 		loops->powerslide = state.powerslide != 0;
-		loops->surface = (short)skate_sound.surface;
+		/* (a bot's skater's surface is not looked for: the first) */
+		loops->surface = (short)(session ? 0 : skate_sound.surface);
 		loops->speed = state.speed;
 	}
 	for (index = 0; index < count; index++)
@@ -305,7 +307,8 @@ int skate_sound_console_setting(char const *word, real value, boolean valid, boo
 	return -1;
 }
 
-short skate_sound_take_local(struct skate_sound_event *events, short capacity, struct skate_sound_loops *loops)
+short skate_sound_take_local(short session, struct skate_sound_event *events, short capacity,
+	struct skate_sound_loops *loops)
 {
 	return 0;
 }
