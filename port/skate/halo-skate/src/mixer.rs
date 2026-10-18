@@ -429,10 +429,15 @@ pub(crate) fn with_mixer<T>(f: impl FnOnce(&mut Mixer) -> T) -> Option<T> {
 }
 
 /// (the worker, after each engine tick) the tick's events played, each told
-/// of in the log, and the loops set.
+/// of in the log, and the loops set. Another session's than 0 (a host's
+/// bot's) are only kept: the game sends them, and plays them as another
+/// player's (sound_remote.rs)
 pub(crate) fn engine_tick(events: &[Event], loops: &Loops) {
     // (and kept for the other machines to hear: sound_remote.rs)
     crate::sound_remote::note_local(events, loops);
+    if crate::current_session() != 0 {
+        return;
+    }
     let log = LOG.load(Ordering::Relaxed);
     let played: Vec<(Event, Option<String>)> = with_mixer(|m| {
         m.set_loops(loops, Instant::now());

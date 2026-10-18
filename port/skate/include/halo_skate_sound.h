@@ -82,6 +82,10 @@ struct halo_skate_sound_loops
 (at most capacity, the newest; none older than half a second), oldest first,
 into events, and its loops' state into loops: how many */
 int halo_skate_sound_take(struct halo_skate_sound_event *events, int capacity, struct halo_skate_sound_loops *loops);
+/* ... of another skate session than 0 (a host's bot's skater: halo_skate.h's _in calls),
+whose sounds are only kept, for the game to send and play as that player's */
+int halo_skate_sound_take_in(int session, struct halo_skate_sound_event *events, int capacity,
+	struct halo_skate_sound_loops *loops);
 /* each tick, another machine's skater's loops as their latest word says, at
 position (their board here, world units), on surface; player is their network
 player's index (the mixer's source of their own) */
