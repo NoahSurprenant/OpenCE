@@ -70,6 +70,7 @@ pub(crate) struct AnimationPhysical {
     pub time_since_teleport: f32,
 }
 
+#[derive(Clone)]
 pub(crate) struct SkaterAnimation {
     pub action: ActionHost,
     pub motion: MotionHost,

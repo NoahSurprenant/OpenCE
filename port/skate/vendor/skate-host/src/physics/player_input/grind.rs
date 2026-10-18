@@ -89,11 +89,13 @@ pub(crate) trait Host {
 }
 
 /// Not Clone: the caller consumes one pre result in one post phase.
+#[derive(Clone)]
 pub(crate) struct Pending {
     fields: GrindInvestigationFields,
     geometry: Option<GeometryWork>,
     metadata: Option<PrimitiveMetadata>,
 }
+#[derive(Clone)]
 struct GeometryWork {
     input: grind_surface::InvestigationInput,
     plan: Option<grind_surface::Investigation>,
@@ -108,6 +110,7 @@ pub(crate) struct PostResult {
     pub observation: ManagerObservation,
 }
 
+#[derive(Clone)]
 pub(crate) struct GrindInputState {
     previous_state: u32,
     engagement_counter: u32,

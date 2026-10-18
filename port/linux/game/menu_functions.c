@@ -4633,6 +4633,10 @@ enum
 	_option_setting		/* the host's own (config.toml): Server Setup's copy only */
 };
 
+/* the most choices a spinner of Edit Gametypes' or Server Setup's has (its
+string list's room, MAXIMUM_STRINGS, is more): BOTS has the most, 24 */
+#define GAMETYPE_OPTION_MAXIMUM_VALUES 32
+
 struct gametype_option
 {
 	char const *spinner;
@@ -4640,10 +4644,10 @@ struct gametype_option
 	short offset;
 	unsigned long argument;
 	short count;
-	long values[16];
+	long values[GAMETYPE_OPTION_MAXIMUM_VALUES];
 	/* (_option_setting: the setting, and its values' text) */
 	char const *setting;
-	char const *setting_values[16];
+	char const *setting_values[GAMETYPE_OPTION_MAXIMUM_VALUES];
 };
 
 #define VARIANT_FIELD(field) (short)offsetof(struct game_variant, field)
@@ -4764,8 +4768,9 @@ static struct gametype_option const gametype_options[] =
 	{ "map_share_upload_spinner", _option_setting, 0, 0, 6, { 0 }, "network.map_share_upload",
 		{ "256", "512", "1024", "2048", "4096", "8192" } },
 	/* bots' (Server Setup's BOTS: tools/port_settings.py's BOT_SETUP; bots.c) */
-	{ "bots_spinner", _option_setting, 0, 0, 16, { 0 }, "server.bots",
-		{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" } },
+	{ "bots_spinner", _option_setting, 0, 0, 24, { 0 }, "server.bots",
+		{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "20", "24", "32",
+		"48", "64", "96", "127" } },
 	{ "bot_difficulty_spinner", _option_setting, 0, 0, 5, { 0 }, "server.bot_difficulty",
 		{ "peaceful", "easy", "normal", "hard", "legendary" } },
 	{ "bots_fill_spinner", _option_setting, 0, 0, 2, { 0 }, "server.bots_fill", { "false", "true" } },

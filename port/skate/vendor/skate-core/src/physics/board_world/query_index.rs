@@ -3,11 +3,12 @@
 use super::query_metadata::{Bounds, QueryMesh};
 use std::ops::Range;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct QueryIndex {
     nodes: Vec<Node>,
     order: Vec<usize>,
 }
+#[derive(Clone)]
 struct Node {
     bounds: Bounds,
     children: Option<(usize, usize)>,

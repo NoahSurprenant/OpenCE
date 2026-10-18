@@ -130,6 +130,11 @@ static short bot_skate_mode(
 	char name[16];
 	short index = 0;
 
+	/* ("*ram": every bot so) */
+	boolean every = list && *list == '*';
+
+	if (every)
+		list++;
 	while (list && *list)
 	{
 		short length = 0;
@@ -139,7 +144,7 @@ static short bot_skate_mode(
 		while (*list && *list != ',' && length < (short)sizeof(name) - 1)
 			name[length++] = *list++;
 		name[length] = 0;
-		if (length > 0 && index++ == bot->slot)
+		if (length > 0 && (every || index++ == bot->slot))
 		{
 			if (!strcmp(name, "ram"))
 				return _bot_skate_ram;

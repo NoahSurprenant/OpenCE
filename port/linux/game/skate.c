@@ -155,7 +155,7 @@ static boolean skate_bots_data;
 
 /* skater 0 is this machine's player's, the others the host's bots' (as many
 as the engine has sessions, and server.bot_skaters allows) */
-#define SKATE_MAXIMUM_SKATERS 9
+#define SKATE_MAXIMUM_SKATERS (1 + SKATE_NETWORK_PLAYERS)
 static struct skate_skater skate_skaters[SKATE_MAXIMUM_SKATERS];
 #define skate_local (&skate_skaters[0])
 
@@ -2401,9 +2401,85 @@ static short skate_bots_allowed(void)
 
 	if (sessions > SKATE_MAXIMUM_SKATERS - 1)
 		sessions = SKATE_MAXIMUM_SKATERS - 1;
+	/* (0: as many as there are players; below 0: none) */
 	if (allowed < 0)
 		allowed = 0;
+	else if (allowed == 0)
+		allowed = sessions;
 	return (short)(allowed < sessions ? allowed : sessions);
+}
+
+/* ---------- many bots on boards
+The bots' skaters step on the skate engine's pool (as many threads as the
+machine has processors), beside this machine's player's. When their steps
+take longer than SKATE_BOTS_BUDGET_MS a tick (more skating bots than the
+machine has processors for), each bot's skater steps every few ticks instead
+of every tick - they skate slower, the game does not (unless even that is too
+much: then the game's ticks take longer too); as the load eases they step
+every tick again. The log says so each time. Nobody is refused a board. */
+#define SKATE_BOTS_BUDGET_MS 20
+#define SKATE_BOTS_MOST_EVERY 16
+static struct
+{
+	/* each bot's skater steps every this many ticks */
+	short every;
+	/* the time the bots' steps took a tick, averaged (milliseconds, 1/16ths) */
+	long average_ms16;
+	long started_ms;
+	short stepped;
+	long changed_time;
+} skate_bots_load = { 1, 0, 0, 0, NONE };
+
+unsigned long system_milliseconds(void);
+static short skate_bots_skating(void);
+
+/* the bots' steps of this tick, begun (started_ms) and taken: the load
+noted, and the stepping slowed down or sped up */
+static void skate_bots_note_load(void)
+{
+	long took = (long)(system_milliseconds() - (unsigned long)skate_bots_load.started_ms);
+	long now = game_time_get();
+
+	/* (no bot stepped: nothing to wait for, the load falls) */
+	if (!skate_bots_load.stepped || took < 0)
+		took = 0;
+	skate_bots_load.average_ms16 += (took * 16 - skate_bots_load.average_ms16) / 16;
+	if (skate_bots_load.changed_time != NONE && now - skate_bots_load.changed_time < 2 * TICKS_PER_SECOND &&
+		now >= skate_bots_load.changed_time)
+	{
+		return;
+	}
+	if (skate_bots_load.average_ms16 > SKATE_BOTS_BUDGET_MS * 16 && skate_bots_load.every < SKATE_BOTS_MOST_EVERY)
+	{
+		skate_bots_load.every++;
+		skate_bots_load.changed_time = now;
+		platform_log("skate: the bots' skaters take %ld ms a tick (more than %d, %d skating): each steps every %d ticks "
+			"now, slower (more skating bots than this machine has processors for)", skate_bots_load.average_ms16 / 16,
+			SKATE_BOTS_BUDGET_MS, skate_bots_skating(), skate_bots_load.every);
+	}
+	else if (skate_bots_load.every > 1 && skate_bots_load.average_ms16 * skate_bots_load.every <
+		SKATE_BOTS_BUDGET_MS * 16 * (skate_bots_load.every - 1) / 2)
+	{
+		skate_bots_load.every--;
+		skate_bots_load.changed_time = now;
+		platform_log("skate: the bots' skaters take %ld ms a tick: each steps every %d ticks now",
+			skate_bots_load.average_ms16 / 16, skate_bots_load.every);
+	}
+}
+
+boolean skate_bots_busy(void)
+{
+	return skate_bots_load.every > 1;
+}
+
+/* how many bots' skaters are on a board */
+static short skate_bots_skating(void)
+{
+	short index, count = 0;
+
+	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
+		count += skate_skaters[index].skating;
+	return count;
 }
 
 /* the bot's skater (player a datum), else NULL */
@@ -2561,6 +2637,8 @@ static void skate_bots_begin_steps(void)
 {
 	short index;
 
+	skate_bots_load.started_ms = (long)system_milliseconds();
+	skate_bots_load.stepped = 0;
 	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
 	{
 		struct skate_skater *skater = &skate_skaters[index];
@@ -2612,8 +2690,12 @@ static void skate_bots_begin_steps(void)
 		skate_follow_teleport(skater, skater->unit_index);
 		/* (a blast pushed them) */
 		skate_apply_blast(skater);
+		/* (the machine short of processors: every few ticks, slower) */
+		if (skate_bots_load.every > 1 && (game_time_get() + index) % skate_bots_load.every != 0)
+			continue;
 		skate_send_obstacles(skater, skater->unit_index);
 		skater->stepping = halo_skate_step_begin_in(index, &skater->pad, 1.f / TICKS_PER_SECOND) == 0;
+		skate_bots_load.stepped += skater->stepping;
 		if (!skater->stepping && halo_skate_state_in(index) == -1)
 		{
 			skate_engine_failed(skater);
@@ -2790,6 +2872,7 @@ void skate_update_before_objects(void)
 {
 	skate_local_update();
 	skate_bots_finish_steps();
+	skate_bots_note_load();
 }
 
 #endif
@@ -3488,6 +3571,11 @@ real skate_obstacle_bail_speed(void)
 
 /* (no bot skates without the mode) */
 boolean skate_bots_available(void)
+{
+	return FALSE;
+}
+
+boolean skate_bots_busy(void)
 {
 	return FALSE;
 }

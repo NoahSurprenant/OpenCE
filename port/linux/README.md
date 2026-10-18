@@ -417,7 +417,7 @@ the setting for one start of the game. It has priority over the file.
 | `server.score_limit` | `0` | `HALO_SERVER_SCORE_LIMIT` | The score to win a game of a dedicated server. `0`: the score of the game type. |
 | `server.bots_fill` | `false` | `HALO_SERVER_BOTS_FILL` | `server.bots` is how many players the game has in all: a bot leaves as a person joins, and comes back as one leaves. Refer to "Bots". |
 | `server.max_players` | `0` | `HALO_SERVER_MAX_PLAYERS` | The most players (people and bots) in a dedicated server's games; 0 for the build's 128. |
-| `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 16. Refer to "Bots". |
+| `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 127. Refer to "Bots". |
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.game_seed` | `0` | `HALO_GAME_SEED` | The start of the game's random numbers instead of the time (0: the time), so that a test's games go the same way each run. |
 | `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays, logs how much of the map it reaches, and ends the game. Refer to "Bots". |
@@ -1121,7 +1121,7 @@ empty, the server hosts its list instead of `server.maps`.
 ## Bots
 
 A host can have bots: players that the host plays itself. Set `server.bots`
-(`HALO_SERVER_BOTS`) to the number of bots, from 0 to 16. The bots join the
+(`HALO_SERVER_BOTS`) to the number of bots, from 0 to 127. The bots join the
 lobby of each game that the host makes (a dedicated server's, or a game
 that the menus host), and stay from game to game as the other players do.
 Co-op games have no bots.
@@ -1144,7 +1144,8 @@ Co-op games have no bots.
   joins. `server.max_players` sets how many players a dedicated server's
   games take (0: 128).
 - A host that the menus make sets them in Server Setup's BOTS screen
-  (BOTS, DIFFICULTY and FILL, which write these settings); a change in the
+  (BOTS: 0 to 16, then 20, 24, 32, 48, 64, 96 and 127; DIFFICULTY and FILL,
+  which write these settings); a change in the
   lobby takes effect at once.
 - A bot plays Slayer: it roams the map along the walking graph (below),
   takes better weapons, powerups and grenades lying about, and fights the
@@ -1152,7 +1153,7 @@ Co-op games have no bots.
   It plays the other game types too ("Game types", below).
 - With Skate 3 mode and its data a bot rides a board to travel and steps off
   to fight (`port/skate/README.md`, "Bots on boards"); `server.bot_skaters`
-  sets how many may ride at once.
+  can limit how many ride at once (none at first: every bot may).
 
 ### Fighting
 

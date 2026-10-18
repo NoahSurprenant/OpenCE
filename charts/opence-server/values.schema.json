@@ -121,9 +121,9 @@
         "gameTypes": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" } },
         "timeLimit": { "type": "integer", "minimum": 0 },
         "scoreLimit": { "type": "integer", "minimum": 0 },
-        "bots": { "type": "integer", "minimum": 0, "maximum": 16 },
+        "bots": { "type": "integer", "minimum": 0, "maximum": 127 },
         "botDifficulty": { "type": "string", "enum": ["peaceful", "easy", "normal", "hard", "legendary"] },
-        "botSkaters": { "type": "integer", "minimum": 0, "maximum": 8 }
+        "botSkaters": { "type": "integer", "minimum": -1, "maximum": 128 }
       }
     },
     "network": {

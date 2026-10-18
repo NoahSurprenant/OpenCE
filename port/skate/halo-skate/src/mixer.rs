@@ -327,15 +327,7 @@ impl Mixer {
         self.serial += 1;
         voice.serial = self.serial;
         if self.voices.len() >= VOICES {
-            // the oldest one-shot gives its voice up, else the oldest fading one
-            let oldest = self
-                .voices
-                .iter()
-                .enumerate()
-                .filter(|(_, v)| !v.looped || v.fading)
-                .min_by_key(|(_, v)| v.serial)
-                .map(|(i, _)| i);
-            match oldest {
+            match self.victim(&voice) {
                 Some(i) => {
                     self.voices.swap_remove(i);
                 }
@@ -343,6 +335,27 @@ impl Mixer {
             }
         }
         self.voices.push(voice);
+    }
+
+    /// With every voice in use (many skaters near), the one `voice` takes:
+    /// a fading one first (the oldest), else the quietest here (the furthest
+    /// away, the softest), if `voice` is louder; this machine's skater's
+    /// voices are kept, and its own sounds always play. None: `voice` is the
+    /// quietest, and is not played.
+    fn victim(&self, voice: &Voice) -> Option<usize> {
+        let level = |v: &Voice| v.target_gain * v.target_left.max(v.target_right);
+        if let Some((i, _)) =
+            self.voices.iter().enumerate().filter(|(_, v)| v.fading).min_by_key(|(_, v)| v.serial)
+        {
+            return Some(i);
+        }
+        let (i, quietest) = self
+            .voices
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.source != LOCAL)
+            .min_by(|(_, a), (_, b)| level(a).total_cmp(&level(b)).then(a.serial.cmp(&b.serial)))?;
+        (voice.source == LOCAL || level(voice) > level(quietest)).then_some(i)
     }
 
     /// This machine's skater's sounds fade out (off the board).
@@ -632,6 +645,35 @@ mod tests {
         assert!(largest_step(&air) < 0.01);
         assert!(peak(&air[40000..]) < 1e-4);
         assert_eq!(m.voices_of(Sound::Roll), 0, "a silent loop gives its voice up");
+    }
+
+    /// A lobby of skaters: more loops than voices. The nearest are heard: a
+    /// skater coming near takes the furthest one's voice, a far one finds
+    /// none, and this machine's skater always has its own.
+    #[test]
+    fn the_nearest_skaters_are_heard_when_the_voices_run_out() {
+        let mut m = Mixer::new(bank());
+        let now = Instant::now();
+        m.listener = Listener { set: true, position: Vec3::ZERO, right: Vec3::new(0.0, -1.0, 0.0) };
+        let at = |x: f32| Loops { position: Vec3::new(x, 0.0, 0.0), ..rolling(6.0) };
+        // 40 skaters, 2 to 41 world units away: as many voices as there are
+        for source in 1..=40u8 {
+            m.set_loops_of(source, &at(1.0 + f32::from(source)), Surface::Concrete, now);
+        }
+        assert_eq!(m.voices.len(), VOICES);
+        let heard: Vec<u8> = m.voices.iter().map(|v| v.source).collect();
+        assert!(heard.iter().all(|&s| s <= VOICES as u8), "a far skater kept a voice a near one wanted: {heard:?}");
+        // one comes near: the furthest heard gives its voice up
+        m.set_loops_of(100, &at(0.5), Surface::Concrete, now);
+        assert!(m.voices.iter().any(|v| v.source == 100), "the near skater found no voice");
+        assert!(!m.voices.iter().any(|v| v.source == VOICES as u8), "the furthest kept its voice");
+        // one far away finds none
+        m.set_loops_of(101, &at(60.0), Surface::Concrete, now);
+        assert!(!m.voices.iter().any(|v| v.source == 101));
+        // this machine's skater always plays
+        m.set_loops(&Loops { position: Vec3::new(500.0, 0.0, 0.0), ..rolling(6.0) }, now);
+        assert!(m.voices.iter().any(|v| v.source == LOCAL));
+        assert_eq!(m.voices.len(), VOICES);
     }
 
     #[test]

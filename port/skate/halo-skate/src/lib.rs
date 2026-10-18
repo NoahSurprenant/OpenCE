@@ -35,6 +35,7 @@ mod board;
 mod camera;
 mod mixer;
 pub mod obstacles;
+mod pool;
 pub use obstacles::HaloSkateObstacle;
 pub use sound_remote::{HaloSkateSoundEvent, HaloSkateSoundLoops, halo_skate_sound_take, halo_skate_sound_take_in};
 mod rails;
@@ -60,7 +61,7 @@ const METRES: f32 = 3.048;
 const INCHES: f32 = 120.0;
 /// The skate engine's call stack: its animation and physics keep large arrays
 /// on it.
-const WORKER_STACK: usize = 32 * 1024 * 1024;
+pub(crate) const WORKER_STACK: usize = 32 * 1024 * 1024;
 /// Longest the game waits for a tick's pose before it goes on without one.
 const STEP_WAIT: Duration = Duration::from_millis(250);
 const ACTIVATE_WAIT: Duration = Duration::from_secs(5);
@@ -108,7 +109,7 @@ pub struct HaloSkateFrame {
     pub state: [c_char; 32],
 }
 
-enum Job {
+pub(crate) enum Job {
     /// Makes the session, on a placeholder floor, before any map.
     Preload { root: PathBuf },
     Load { root: PathBuf, triangles: Vec<[Vec3; 3]>, generation: u64 },
@@ -130,7 +131,7 @@ enum Job {
     Suspend,
 }
 
-enum Reply {
+pub(crate) enum Reply {
     Preloaded,
     Loaded { triangles: usize, rails: usize, generation: u64 },
     /// A reload installed (`Job::Reload`).
@@ -151,7 +152,7 @@ enum Reply {
 }
 
 struct Host {
-    jobs: Sender<Job>,
+    jobs: Jobs,
     replies: Receiver<Reply>,
     /// The last map sent, shared with the worker so that it skips a map the
     /// game has already replaced (a BSP switched again before it was built).
@@ -185,7 +186,7 @@ struct Host {
 
 /// The most skate sessions at once: this machine's player's (0) and the
 /// host's bots' (`halo_skate_sessions`).
-pub const MAXIMUM_SESSIONS: usize = 9;
+pub const MAXIMUM_SESSIONS: usize = 129;
 
 /// Each session's engine, by its number.
 static HOSTS: [Mutex<Option<Host>>; MAXIMUM_SESSIONS] = [const { Mutex::new(None) }; MAXIMUM_SESSIONS];
@@ -193,7 +194,32 @@ static HOSTS: [Mutex<Option<Host>>; MAXIMUM_SESSIONS] = [const { Mutex::new(None
 thread_local! {
     /// The session this thread's calls are for: 0, or the one an `_in` call
     /// gives (`in_session`); a worker's own.
-    static SESSION: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static SESSION: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Where a session's jobs go: session 0's (this machine's player's) to a
+/// thread of its own, the others' to the pool (`pool.rs`).
+enum Jobs {
+    Thread(Sender<Job>),
+    Pool(Arc<pool::Pooled>),
+}
+
+impl Jobs {
+    fn send(&self, job: Job) -> Result<(), ()> {
+        match self {
+            Jobs::Thread(sender) => sender.send(job).map_err(|_| ()),
+            Jobs::Pool(pooled) => pooled.send(job),
+        }
+    }
+}
+
+impl Drop for Jobs {
+    /// (a pooled session ends with its host: its memory goes)
+    fn drop(&mut self) {
+        if let Jobs::Pool(pooled) = self {
+            pooled.close();
+        }
+    }
 }
 
 /// The session this thread's calls are for.
@@ -268,19 +294,24 @@ fn with_host<T>(f: impl FnOnce(&mut Host) -> T) -> Option<T> {
 
 impl Host {
     fn start() -> Result<Self, String> {
-        let (jobs, job_receiver) = mpsc::channel();
         let (reply_sender, replies) = mpsc::channel();
         let generation = Arc::new(AtomicU64::new(0));
         let latest = Arc::clone(&generation);
         let session = current_session();
-        std::thread::Builder::new()
-            .name(if session == 0 { "skate".into() } else { format!("skate {session}") })
-            .stack_size(WORKER_STACK)
-            .spawn(move || {
-                SESSION.with(|s| s.set(session));
-                worker(job_receiver, reply_sender, latest)
-            })
-            .map_err(|e| format!("skate worker: {e}"))?;
+        let jobs = if session == 0 {
+            let (jobs, job_receiver) = mpsc::channel();
+            std::thread::Builder::new()
+                .name("skate".into())
+                .stack_size(WORKER_STACK)
+                .spawn(move || {
+                    SESSION.with(|s| s.set(session));
+                    worker(job_receiver, reply_sender, latest)
+                })
+                .map_err(|e| format!("skate worker: {e}"))?;
+            Jobs::Thread(jobs)
+        } else {
+            Jobs::Pool(pool::Pooled::new(session, Worker::new(reply_sender, latest)))
+        };
         Ok(Self {
             jobs,
             replies,
@@ -438,29 +469,56 @@ fn host_started(guard: &mut Option<Host>) -> Option<&mut Host> {
     guard.as_mut()
 }
 
-fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
-    let mut session: Option<(PathBuf, Session)> = None;
+/// A session's worker: its session, and what it keeps between jobs. Session
+/// 0's runs on a thread of its own (`worker`), the others' on the pool
+/// (`pool.rs`), a job at a time, each session's in order.
+pub(crate) struct Worker {
+    replies: Sender<Reply>,
+    latest: Arc<AtomicU64>,
+    session: Option<(PathBuf, Session)>,
     // the assets the board was last read from
-    let mut board_root: Option<PathBuf> = None;
-    let mut accumulated = 0.0f32;
-    let mut packet = 0u32;
+    board_root: Option<PathBuf>,
+    accumulated: f32,
+    packet: u32,
     // the last good pose, to put the skater back on the board from and to
     // tell of a failure by; and the failures recovered from lately
-    let mut last: Option<Last> = None;
-    let mut recovery = recovery::Recovery::default();
-    let mut hits = obstacles::HitLog::default();
+    last: Option<Last>,
+    recovery: recovery::Recovery,
+    hits: obstacles::HitLog,
     // the skater's sounds between ticks (sound.rs)
-    let mut detector = sound::Detector::default();
-    let current = |generation: u64| generation == latest.load(Ordering::SeqCst);
+    detector: sound::Detector,
     // a level's collision built again aside (Job::Reload), and its generation
-    let mut rebuilding: Option<(u64, Rebuild)> = None;
-    for job in jobs {
+    rebuilding: Option<(u64, Rebuild)>,
+}
+
+impl Worker {
+    fn new(replies: Sender<Reply>, latest: Arc<AtomicU64>) -> Self {
+        Self {
+            replies,
+            latest,
+            session: None,
+            board_root: None,
+            accumulated: 0.0,
+            packet: 0,
+            last: None,
+            recovery: recovery::Recovery::default(),
+            hits: obstacles::HitLog::default(),
+            detector: sound::Detector::default(),
+            rebuilding: None,
+        }
+    }
+
+    /// Does a job; false when the worker is done (its game gone, or it failed).
+    pub(crate) fn handle(&mut self, job: Job) -> bool {
+        let Worker { replies, latest, session, board_root, accumulated, packet, last, recovery, hits, detector, rebuilding } =
+            self;
+        let current = |generation: u64| generation == latest.load(Ordering::SeqCst);
         // (installed between steps once built, when the skater is not on a
         // rail nor in the air, which hold the old grind world's rails)
         if let Some((generation, rebuild)) = rebuilding.take() {
             let ready = rebuild.is_finished() && session.as_ref().is_none_or(|(_, s)| installable(&s.state_name()));
             if !ready {
-                rebuilding = Some((generation, rebuild));
+                *rebuilding = Some((generation, rebuild));
             } else if current(generation) {
                 let reply = match (rebuild.join(), session.as_mut()) {
                     (Ok((Ok(prepared), triangles, rails)), Some((_, s))) => match s.install_collision(prepared) {
@@ -477,19 +535,19 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 };
                 let failed = matches!(reply, Reply::Error(_));
                 if replies.send(reply).is_err() || failed {
-                    return;
+                    return false;
                 }
             }
         }
         let reply = match job {
-            Job::Preload { root } => preload(&mut session, root),
+            Job::Preload { root } => preload(session, root),
             Job::Reload {
                 root,
                 triangles,
                 generation,
             } => {
                 if !current(generation) {
-                    continue;
+                    return true;
                 }
                 match session.as_ref() {
                     Some((loaded, s)) if *loaded == root => {
@@ -510,21 +568,21 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                             });
                         match spawned {
                             Ok(handle) => {
-                                rebuilding = Some((generation, handle));
-                                continue;
+                                *rebuilding = Some((generation, handle));
+                                return true;
                             }
                             Err(e) => Reply::Error(format!("skate rebuild: {e}")),
                         }
                     }
                     // (no session for these assets yet: loaded as any map)
-                    _ => match load(&mut session, root, triangles, || current(generation)) {
+                    _ => match load(session, root, triangles, || current(generation)) {
                         Some(Ok((triangles, rails))) => Reply::Reloaded {
                             triangles,
                             rails,
                             generation,
                         },
                         Some(Err(e)) => Reply::Error(e),
-                        None => continue,
+                        None => return true,
                     },
                 }
             }
@@ -535,16 +593,16 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
             } => {
                 // (a map replaced before its turn came is not built at all)
                 if !current(generation) {
-                    continue;
+                    return true;
                 }
-                match load(&mut session, root, triangles, || current(generation)) {
+                match load(session, root, triangles, || current(generation)) {
                     Some(Ok((triangles, rails))) => Reply::Loaded {
                         triangles,
                         rails,
                         generation,
                     },
                     Some(Err(e)) => Reply::Error(e),
-                    None => continue,
+                    None => return true,
                 }
             }
             Job::Activate {
@@ -554,7 +612,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 velocity,
             } => match session.as_mut() {
                 Some((_, s)) => {
-                    accumulated = 0.0;
+                    *accumulated = 0.0;
                     recovery.reset();
                     hits.reset();
                     // Skate's board faces its local +Z; a yaw of zero faces +X.
@@ -565,8 +623,8 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                     };
                     match placed {
                         Ok(pose) => {
-                            last = Some(Last::of(&pose));
-                            sound::reset(s, &mut detector);
+                            *last = Some(Last::of(&pose));
+                            sound::reset(s, detector);
                             Reply::Pose {
                                 sequence,
                                 pose,
@@ -582,19 +640,19 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
             Job::Step { sequence, pad, dt } => match session.as_mut() {
                 Some((_, s)) => {
                     let period = s.period();
-                    accumulated = (accumulated + dt).min(MAX_CATCH_UP);
+                    *accumulated = (*accumulated + dt).min(MAX_CATCH_UP);
                     let mut result = Ok(());
                     // One input sample a simulated tick: the flick and gesture
                     // recognisers read the stick a sample at a time.
-                    while accumulated >= period && result.is_ok() {
-                        packet = packet.wrapping_add(1);
+                    while *accumulated >= period && result.is_ok() {
+                        *packet = packet.wrapping_add(1);
                         s.collect(
-                            InputFrame::from_pad(pad.buttons, pad.triggers, pad.left, pad.right, packet),
+                            InputFrame::from_pad(pad.buttons, pad.triggers, pad.left, pad.right, *packet),
                             period,
                         );
                         result = s.advance();
                         if result.is_ok() {
-                            sound::observe(s, &mut detector);
+                            sound::observe(s, detector);
                             let (contacts, hit) = s.obstacle_contacts();
                             if contacts > 0 || hits.listening() {
                                 let pose = s.pose();
@@ -603,7 +661,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                                 }
                             }
                         }
-                        accumulated -= period;
+                        *accumulated -= period;
                     }
                     let held = take_held(s);
                     let failure = match result {
@@ -611,7 +669,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                             let pose = s.pose();
                             if pose_is_finite(&pose) {
                                 recovery.stepped();
-                                last = Some(Last::of(&pose));
+                                *last = Some(Last::of(&pose));
                                 Ok(pose)
                             } else {
                                 Err("the skater's pose is not finite".to_string())
@@ -627,11 +685,11 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                             held,
                         },
                         Err(e) => {
-                            accumulated = 0.0;
-                            match recover(s, &e, last.as_ref(), &pad, &mut recovery) {
+                            *accumulated = 0.0;
+                            match recover(s, &e, last.as_ref(), &pad, recovery) {
                                 Some(pose) => {
-                                    last = Some(Last::of(&pose));
-                                    sound::reset(s, &mut detector);
+                                    *last = Some(Last::of(&pose));
+                                    sound::reset(s, detector);
                                     Reply::Pose {
                                         sequence,
                                         pose,
@@ -651,25 +709,25 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                     s.set_obstacles(&obstacles, bail_speed);
                     s.set_run_over(run_over.0, run_over.1);
                 }
-                continue;
+                return true;
             }
             Job::Impulse { velocity } => {
                 if let Some((_, s)) = session.as_mut() {
                     s.apply_impulse(velocity.to_array());
                 }
-                continue;
+                return true;
             }
             Job::ForceBail { closing } => {
                 if let Some((_, s)) = session.as_mut() {
                     s.force_bail(closing);
                 }
-                continue;
+                return true;
             }
             Job::Suspend => {
                 if let Some((_, s)) = session.as_mut() {
                     s.suspend_input();
                 }
-                continue;
+                return true;
             }
         };
         // The board goes with the skater: read once the session is made from
@@ -678,13 +736,23 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
         if let Some((root, _)) = session.as_ref()
             && board_root.as_ref() != Some(root)
         {
-            board_root = Some(root.clone());
+            *board_root = Some(root.clone());
             if replies.send(Reply::Board(load_board(root))).is_err() {
-                return;
+                return false;
             }
         }
         let failed = matches!(reply, Reply::Error(_));
         if replies.send(reply).is_err() || failed {
+            return false;
+        }
+        true
+    }
+}
+
+fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
+    let mut worker = Worker::new(replies, latest);
+    for job in jobs {
+        if !worker.handle(job) {
             return;
         }
     }
@@ -857,12 +925,14 @@ fn preload(session: &mut Option<(PathBuf, Session)>, root: PathBuf) -> Reply {
         return Reply::Error(e);
     }
     eprintln!("halo-skate: preload: animation banks in {}ms", started.elapsed().as_millis());
-    let made = Instant::now();
-    match Session::new(&root, placeholder_floor(), Vec::new(), [0.0; 3], 0.0) {
-        Ok(s) => {
+    match template(&root) {
+        Ok((s, copied, waited, took)) => {
+            // (the web test reads "preload: session in <n>ms")
             eprintln!(
-                "halo-skate: preload: session in {}ms, {}ms in all",
-                made.elapsed().as_millis(),
+                "halo-skate: preload: session in {}ms{}{}, {}ms in all",
+                took.as_millis(),
+                if copied { " (a copy of the first)" } else { "" },
+                if waited.as_millis() > 0 { format!(" after {}ms waiting for the first", waited.as_millis()) } else { String::new() },
                 started.elapsed().as_millis()
             );
             *session = Some((root, s));
@@ -870,6 +940,28 @@ fn preload(session: &mut Option<(PathBuf, Session)>, root: PathBuf) -> Reply {
         }
         Err(e) => Reply::Error(e),
     }
+}
+
+/// A session for the assets in `root` on the placeholder floor: a copy of
+/// the first one made from them (several seconds to make - the skater, its
+/// graphs, its camera - against tens of milliseconds to copy, and a copy
+/// rides exactly as a session made afresh: real_assets_sessions.rs), and
+/// whether it was a copy, how long it waited for the first (sessions asked
+/// for at once wait for it) and how long it took itself.
+fn template(root: &Path) -> Result<(Session, bool, Duration, Duration), String> {
+    static TEMPLATE: Mutex<Option<(PathBuf, Session)>> = Mutex::new(None);
+    let asked = Instant::now();
+    let mut template = TEMPLATE.lock().unwrap_or_else(|e| e.into_inner());
+    let waited = asked.elapsed();
+    let started = Instant::now();
+    if let Some((from, s)) = template.as_ref()
+        && from == root
+    {
+        return Ok((s.clone(), true, waited, started.elapsed()));
+    }
+    let s = Session::new(root, placeholder_floor(), Vec::new(), [0.0; 3], 0.0)?;
+    *template = Some((root.to_path_buf(), s.clone()));
+    Ok((s, false, waited, started.elapsed()))
 }
 
 /// Builds the map's collision and puts it in the session (making the session
@@ -952,6 +1044,37 @@ fn load_board(root: &Path) -> Option<Arc<board::Board>> {
 /// along a Morton curve: the engine bounds them in runs of 64 in the order
 /// given, so neighbours in the list should be neighbours on the map.
 fn prepare(triangles: Vec<[Vec3; 3]>) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>) {
+    // (every session gets the same map: deduplicated, sorted and its rails
+    // found once, for all of them)
+    type Prepared = (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>, Vec<Vec<Vec3>>);
+    static PREPARED: Mutex<Option<(u64, Arc<Prepared>)>> = Mutex::new(None);
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        triangles.len().hash(&mut hasher);
+        for t in &triangles {
+            for p in t {
+                p.to_array().map(f32::to_bits).hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    };
+    let mut cached = PREPARED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((k, prepared)) = cached.as_ref()
+        && *k == key
+    {
+        keep_rails(prepared.2.clone());
+        eprintln!("halo-skate: the map's {} triangles and {} rails as prepared before", prepared.0.len(), prepared.1.len());
+        return (prepared.0.clone(), prepared.1.clone());
+    }
+    let (skate, rails, inches) = prepare_afresh(triangles);
+    keep_rails(inches.clone());
+    *cached = Some((key, Arc::new((skate.clone(), rails.clone(), inches))));
+    (skate, rails)
+}
+
+/// `prepare`'s work, and the rails in world units (for the bots).
+fn prepare_afresh(triangles: Vec<[Vec3; 3]>) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>, Vec<Vec<Vec3>>) {
     let started = Instant::now();
     let mut seen = std::collections::HashSet::new();
     let mut inches: Vec<[Vec3; 3]> = triangles
@@ -983,7 +1106,7 @@ fn prepare(triangles: Vec<[Vec3; 3]>) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>
         census.rails,
         finding.elapsed().as_millis()
     );
-    keep_rails(found.iter().map(|rail| rail.iter().map(|p| *p / INCHES).collect()).collect());
+    let world: Vec<Vec<Vec3>> = found.iter().map(|rail| rail.iter().map(|p| *p / INCHES).collect()).collect();
     let skate = |p: Vec3| to_skate(p / INCHES).to_array();
     (
         inches.iter().map(|t| t.map(skate)).collect(),
@@ -991,6 +1114,7 @@ fn prepare(triangles: Vec<[Vec3; 3]>) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>
             .into_iter()
             .map(|rail| rail.into_iter().map(skate).collect())
             .collect(),
+        world,
     )
 }
 

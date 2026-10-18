@@ -18,6 +18,7 @@ pub(crate) struct Checkpoint {
     pub on_board: bool,
 }
 
+#[derive(Clone)]
 pub(crate) struct Runtime {
     state: TeleportState,
     checkpoint: Checkpoint,

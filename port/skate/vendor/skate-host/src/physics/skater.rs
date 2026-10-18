@@ -25,7 +25,7 @@ use skate_core::physics::{
 use skate_data::collections::Collections;
 use std::path::Path;
 
-#[derive(Resource)]
+#[derive(Clone, Resource)]
 pub(crate) struct SkaterRuntime {
     pub scoring: crate::scoring_runtime::Runtime,
     pub climbing: super::climbing::Runtime,

@@ -15,7 +15,7 @@ struct Marker {
 #[derive(Message, Clone, Copy, Debug)]
 pub(crate) struct SessionMarkerAudio(pub u64);
 
-#[derive(Resource, Default)]
+#[derive(Clone, Resource, Default)]
 pub(crate) struct SessionMarker {
     marker: Option<Marker>,
     hold: state::Hold,
@@ -30,6 +30,7 @@ pub(crate) struct SessionMarker {
 }
 
 
+#[derive(Clone)]
 pub(crate) struct Runtime { session: SessionMarker, validation: validation::Validation }
 impl Runtime {
     pub fn load(root: &std::path::Path) -> Result<Self,String> { Ok(Self{session:SessionMarker::default(),validation:validation::Validation::load(root)?}) }

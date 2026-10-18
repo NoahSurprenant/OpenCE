@@ -65,6 +65,9 @@ struct halo_skate_pad;
 /* whether bots may skate here at all: the skate engine has its Skate 3 data
 and server.bot_skaters allows one */
 boolean skate_bots_available(void);
+/* the bots' skaters step slower than the game (the machine has too few
+processors for so many): no more bots get on boards meanwhile */
+boolean skate_bots_busy(void);
 /* (bots_skate.c, before each tick, for every bot that rides or wants to)
 the bot of player_index (a datum) wants to be on a board (on_board; FALSE: off
 it) with its unit, holding pad (NULL: nothing) this tick; run_over: people on

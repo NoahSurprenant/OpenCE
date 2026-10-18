@@ -532,7 +532,7 @@ static const struct config_setting config_settings[] =
 		"How many bots a game this machine hosts has (a dedicated server's, or\n"
 		"one the menus host): players the host plays itself, named \"[BOT] ...\",\n"
 		"which every machine sees as other players (port/linux/README.md's\n"
-		"\"Bots\"); 0 to 16. Not in co-op." },
+		"\"Bots\"); 0 to 127. Not in co-op." },
 
 	{ "server.bots_fill", _config_boolean, "false", "HALO_SERVER_BOTS_FILL", _environment_value, _platform_all,
 		"server.bots is how many players a game has in all: a bot leaves as a\n"
@@ -542,16 +542,19 @@ static const struct config_setting config_settings[] =
 		"How well the bots fight: \"peaceful\" (they never fight), \"easy\",\n"
 		"\"normal\", \"hard\" or \"legendary\" (their reaction time, how fast and how\n"
 		"well they aim, how far and how wide they see)." },
-	{ "server.bot_skaters", _config_integer, "4", "HALO_SERVER_BOT_SKATERS", _environment_value, _platform_all,
+	{ "server.bot_skaters", _config_integer, "0", "HALO_SERVER_BOT_SKATERS", _environment_value, _platform_all,
 		"The most bots on a board at once, in a game this machine hosts with\n"
-		"Skate 3 mode and its data (port/skate/README.md's \"Several skaters\"): each\n"
-		"one's skater is a skate session of its own, about 35 MB and several\n"
-		"seconds to make the first time; 0 to 8, 0 for bots always on foot." },
+		"Skate 3 mode and its data (port/skate/README.md's \"Several skaters\"):\n"
+		"0 (at first) for no limit - every bot may skate - or a number, or -1 for\n"
+		"bots always on foot. Each bot's skater is a skate session of its own,\n"
+		"about 9 MB; with more than the machine's processors keep up with, they\n"
+		"skate slower (the log says so)." },
 	{ "debug.bot_skate", _config_string, "\"\"", "HALO_BOT_SKATE", _environment_value, _platform_all,
 		"How each bot goes about boards (Skate 3 mode), with commas between, one\n"
 		"for each bot in the order they join: \"ram\" (it stays on its board in a\n"
 		"fight and rides at people on foot), \"never\" (it stays on foot),\n"
-		"\"stand\" (it stands still on foot) or anything else (as it sees fit), for\n"
+		"\"stand\" (it stands still on foot) or anything else (as it sees fit); one\n"
+		"entry after a star (\"*ram\") is every bot's. For\n"
 		"the tests. Empty: all as they see fit." },
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
 		"The bots' random numbers start from this, so that a test's bots do the\n"
