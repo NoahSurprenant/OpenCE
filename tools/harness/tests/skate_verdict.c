@@ -180,6 +180,16 @@ int main(int argc, char **argv)
 		input = hit(MS(13.9f), MS(14.f));
 		skate_verdict_decide(&input, &out);
 		CHECK(!out.run_over && out.bails[0], "a vehicle was run over");
+		/* (a harmless skater - a peaceful bot's - runs nobody over, told or
+		not: a bump, the person pushed, unhurt) */
+		input = hit(MS(13.9f), MS(14.f));
+		input.parties[1].pushable = TRUE;
+		input.run_over_told = TRUE;
+		input.harmless = TRUE;
+		skate_verdict_decide(&input, &out);
+		CHECK(out.believed && !out.run_over && out.share == 0.f, "a harmless skater ran a person over: %d %f",
+			out.run_over, out.share);
+		CHECK(out.push.i > 0.f, "the person a harmless skater bumped was not pushed");
 		return 0;
 	}
 

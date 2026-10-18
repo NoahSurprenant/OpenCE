@@ -65,6 +65,7 @@ int halo_skate_platform_board_draw(const float *vertices, int vertex_count, cons
 	int index_count, const struct halo_skate_board_surface *surfaces, int surface_count, const float *lights);
 /* the platform layer's log (halo.log on Windows, stderr on Linux) */
 void platform_log(const char *format, ...);
+int config_boolean(const char *name);
 
 #define SKATE_TWO_SIDED_FLAG 0x01
 #define SKATE_MAXIMUM_NODES 64
@@ -147,6 +148,10 @@ struct skate_skater
 machine's player's: skate_bots_finish_steps), as for its own skater's
 (lib.rs's STEP_WAIT) */
 #define SKATE_BOT_STEP_WAIT_MS 250
+
+/* the Skate 3 data is there for the bots' skaters (the startup preload found
+it, or a dedicated server, which makes no skater of its own, saw its folder) */
+static boolean skate_bots_data;
 
 /* skater 0 is this machine's player's, the others the host's bots' (as many
 as the engine has sessions, and server.bot_skaters allows) */
@@ -626,10 +631,21 @@ void skate_initialize(void)
 		skater->wanted_time = NONE;
 	}
 	/* (the engine says when there is no assets folder; nothing more happens
-	until J) */
-	skate_local->preloaded = halo_skate_preload(skate_assets()) == 0;
-	/* the skater's sounds (skate_sound.c) */
-	skate_sound_initialize(skate_assets());
+	until J). A dedicated server has no player of its own to skate: only its
+	bots' sessions are made, when they first ride */
+	if (config_boolean("server.dedicated"))
+	{
+		skate_bots_data = halo_skate_assets_present(skate_assets()) != 0;
+		platform_log(skate_bots_data ? "skate: a dedicated server with Skate 3 data at %s: its bots ride boards" :
+			"skate: a dedicated server without Skate 3 data (none at %s): its bots stay on foot", skate_assets());
+	}
+	else
+	{
+		skate_local->preloaded = halo_skate_preload(skate_assets()) == 0;
+		skate_bots_data = skate_local->preloaded;
+		/* the skater's sounds (skate_sound.c; a server plays none) */
+		skate_sound_initialize(skate_assets());
+	}
 }
 
 void skate_structure_bsp_changed(void)
@@ -2424,7 +2440,7 @@ static struct skate_skater *skate_bot_skater_for(long player_index)
 	short allowed = skate_bots_allowed();
 	short index;
 
-	if (skater || !skate_local->preloaded)
+	if (skater || !skate_bots_data)
 		return skater;
 	for (index = 1; index <= allowed; index++)
 	{
@@ -2458,7 +2474,7 @@ static struct skate_skater *skate_bot_skater_for(long player_index)
 
 boolean skate_bots_available(void)
 {
-	return skate_local->preloaded && skate_bots_allowed() > 0;
+	return skate_bots_data && skate_bots_allowed() > 0;
 }
 
 boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad,
@@ -2488,6 +2504,23 @@ boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, st
 		skater->unit_index = unit_index;
 	}
 	return TRUE;
+}
+
+int skate_bot_rails(float *points, int point_capacity, int *ends, int end_capacity)
+{
+	short index;
+
+	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		if (skate_skaters[index].player_index != NONE && skate_map_loaded(&skate_skaters[index]) &&
+			halo_skate_state_in(index) == 2)
+		{
+			int count = halo_skate_rails_in(index, points, point_capacity, ends, end_capacity);
+
+			return count > 0 ? count : 0;
+		}
+	}
+	return 0;
 }
 
 boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
@@ -2660,8 +2693,18 @@ static void skate_local_update(void)
 			skater->activate_when_ready = FALSE;
 	}
 	/* (and again when its scenery changed) */
-	else if (skate_map_loaded(skater) && halo_skate_state() == 2)
-		skate_watch_scenery();
+	else
+	{
+		boolean loaded = FALSE;
+
+		for (index = 0; index < SKATE_MAXIMUM_SKATERS && !loaded; index++)
+		{
+			loaded = skate_skater_used(&skate_skaters[index]) && skate_map_loaded(&skate_skaters[index]) &&
+				halo_skate_state_in(index) == 2;
+		}
+		if (loaded)
+			skate_watch_scenery();
+	}
 	/* (the bots' skaters step beside this one) */
 	skate_bots_begin_steps();
 
@@ -3232,6 +3275,13 @@ boolean skate_host_skater(long unit_index)
 	return skate_skater_of_unit(unit_index) != NULL;
 }
 
+boolean skate_host_skater_harmless(long unit_index)
+{
+	struct skate_skater *skater = skate_skater_of_unit(unit_index);
+
+	return skater && skater->no_run_over;
+}
+
 boolean skate_force_bail(long unit_index, real closing)
 {
 	struct skate_skater *skater = skate_skater_of_unit(unit_index);
@@ -3454,12 +3504,22 @@ boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
 	return FALSE;
 }
 
+int skate_bot_rails(float *points, int point_capacity, int *ends, int end_capacity)
+{
+	return 0;
+}
+
 boolean skate_host_skater_riding(long unit_index)
 {
 	return FALSE;
 }
 
 boolean skate_host_skater(long unit_index)
+{
+	return FALSE;
+}
+
+boolean skate_host_skater_harmless(long unit_index)
 {
 	return FALSE;
 }

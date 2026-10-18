@@ -1551,4 +1551,6 @@ void bot_brain_think(
 		SET_FLAG(action->control_flags, _unit_control_swap_weapons_bit, FALSE);
 		action->desired_weapon_index = NONE;
 	}
+	/* (on a board to travel, off it to fight: bots_skate.c) */
+	bot_skate_think(bot, player_index, unit_index, action);
 }

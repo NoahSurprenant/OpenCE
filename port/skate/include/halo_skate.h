@@ -236,6 +236,9 @@ skater, pose and hits; the animation banks, the board and the settings above
 are shared. A number that is no session fails as the call does with nothing
 loaded. */
 
+/* whether assets is a folder the converter wrote (1, else 0), loading
+nothing: a dedicated server makes no skater of its own, only its bots' */
+int halo_skate_assets_present(const char *assets);
 /* how many sessions there may be at once, 0 with them */
 int halo_skate_sessions(void);
 /* the session ended: its worker, skater and memory gone (made again by
@@ -263,5 +266,10 @@ int halo_skate_pose_nodes_in(int session, float *out, int capacity);
 int halo_skate_take_held_hit_in(int session, struct halo_skate_held_hit *out);
 int halo_skate_force_bail_in(int session, float closing);
 int halo_skate_board_placement_in(int session, float *out);
+/* the grind rails the engine found in the session's map (rails.rs), for the
+game's bots: each rail's points (3 floats each, world units) into points
+(room for point_capacity points), the count of points before each rail's end
+into ends (room for end_capacity rails); how many rails were written, or -1 */
+int halo_skate_rails_in(int session, float *points, int point_capacity, int *ends, int end_capacity);
 
 #endif

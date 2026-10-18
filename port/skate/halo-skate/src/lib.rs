@@ -494,10 +494,13 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                 match session.as_ref() {
                     Some((loaded, s)) if *loaded == root => {
                         let builder = s.collision_builder();
+                        let session = current_session();
                         let spawned = std::thread::Builder::new()
                             .name("skate-rebuild".into())
                             .stack_size(WORKER_STACK)
                             .spawn(move || {
+                                // (its lines and rails are the worker's session's)
+                                SESSION.with(|s| s.set(session));
                                 let started = Instant::now();
                                 let (triangles, rails) = prepare(triangles);
                                 let counts = (triangles.len(), rails.len());
@@ -980,6 +983,7 @@ fn prepare(triangles: Vec<[Vec3; 3]>) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>
         census.rails,
         finding.elapsed().as_millis()
     );
+    keep_rails(found.iter().map(|rail| rail.iter().map(|p| *p / INCHES).collect()).collect());
     let skate = |p: Vec3| to_skate(p / INCHES).to_array();
     (
         inches.iter().map(|t| t.map(skate)).collect(),
@@ -988,6 +992,57 @@ fn prepare(triangles: Vec<[Vec3; 3]>) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>
             .map(|rail| rail.into_iter().map(skate).collect())
             .collect(),
     )
+}
+
+/// Each session's grind rails of its last map, world units (`halo_skate_rails_in`).
+static RAILS: [Mutex<Vec<Vec<Vec3>>>; MAXIMUM_SESSIONS] = [const { Mutex::new(Vec::new()) }; MAXIMUM_SESSIONS];
+
+/// (the worker, or its rebuild) the rails found in the current session's map.
+fn keep_rails(rails: Vec<Vec<Vec3>>) {
+    *RAILS[current_session()].lock().unwrap_or_else(|e| e.into_inner()) = rails;
+}
+
+/// The grind rails the engine found in the session's map (rails.rs: edges
+/// where the ground drops away and nothing rises, chained), for the game's
+/// bots to ride toward: each rail's points, world units, 3 floats each, into
+/// `points` (room for `point_capacity` points), and the count of points
+/// before each rail's end into `ends` (room for `end_capacity` rails).
+/// Returns how many rails were written (those past the room are left out),
+/// or -1 for a session that is not one or a null pointer.
+///
+/// # Safety
+/// `points` holds `point_capacity * 3` floats and `ends` `end_capacity` ints.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_rails_in(
+    session: i32,
+    points: *mut f32,
+    point_capacity: i32,
+    ends: *mut i32,
+    end_capacity: i32,
+) -> i32 {
+    let Some(session) = usize::try_from(session).ok().filter(|&s| s < MAXIMUM_SESSIONS) else {
+        return -1;
+    };
+    if points.is_null() || ends.is_null() || point_capacity < 0 || end_capacity < 0 {
+        return -1;
+    }
+    let rails = RAILS[session].lock().unwrap_or_else(|e| e.into_inner());
+    let points = unsafe { std::slice::from_raw_parts_mut(points, point_capacity as usize * 3) };
+    let ends = unsafe { std::slice::from_raw_parts_mut(ends, end_capacity as usize) };
+    let mut used = 0usize;
+    let mut written = 0usize;
+    for rail in rails.iter() {
+        if written >= ends.len() || used + rail.len() > point_capacity as usize {
+            break;
+        }
+        for p in rail {
+            points[used * 3..used * 3 + 3].copy_from_slice(&p.to_array());
+            used += 1;
+        }
+        ends[written] = used as i32;
+        written += 1;
+    }
+    written as i32
 }
 
 fn morton(p: Vec3) -> u64 {
@@ -1938,6 +1993,21 @@ pub unsafe extern "C" fn halo_skate_board_obstacle(placement: *const f32, out: *
 // without a number): each session has its own worker, collision, skater,
 // pose and hits; what never changes is shared. A session number that is not
 // one fails as the call does with nothing loaded.
+
+/// Whether `assets` is a folder the converter wrote (it has `private/`):
+/// 1, else 0. Nothing is loaded (a dedicated server, which makes no skater of
+/// its own, looks before its bots ride).
+///
+/// # Safety
+/// `assets` is NULL or a C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_assets_present(assets: *const c_char) -> i32 {
+    if assets.is_null() {
+        return 0;
+    }
+    let root = PathBuf::from(unsafe { CStr::from_ptr(assets) }.to_string_lossy().into_owned());
+    i32::from(root.join("private").is_dir())
+}
 
 /// How many sessions there may be at once, this machine's player's (0) with
 /// them.
