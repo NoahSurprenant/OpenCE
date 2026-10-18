@@ -97,9 +97,14 @@ function forward(listenPort, targetPort) {
   return counts;
 }
 
+// whole lines of a stream (a pipe's chunks may end mid-line: the rest is
+// kept for the next chunk, else the server's invite could be cut in two)
 function lines(name, sink) {
+  let partial = '';
   return (data) => {
-    for (const line of String(data).split('\n')) {
+    const parts = (partial + String(data)).split('\n');
+    partial = parts.pop();
+    for (const line of parts) {
       if (!line) continue;
       sink.push(line);
       if (/Internet play|server: |network test: (joining|tick \d+ )/.test(line)) console.log(`  ${name} | ${line.slice(0, 160)}`);
@@ -209,7 +214,9 @@ try {
   await page.waitForFunction(() => /Copied|cannot/.test(document.querySelector('#import-text').textContent), null,
     { timeout: 600000 });
   const browserLines = [];
-  page.on('console', (message) => lines('browser', browserLines)(message.text()));
+  // (a console message is whole lines: each ended)
+  const browserSink = lines('browser', browserLines);
+  page.on('console', (message) => browserSink(message.text() + '\n'));
 
   console.log(`a browser joining the dedicated server by its invite${expectedPath ? `, through ${expectedPath}` : ''}`);
   await page.goto(`${pageUrl}?join=${invite}&set=HALO_NETWORK_TEST=join&set=HALO_NET_JOIN_FROM_CLIPBOARD=0` +

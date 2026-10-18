@@ -5125,7 +5125,13 @@ static boolean network_game_server_have_all_machines_have_precached(
 	waits for that too, instead of starting without the map (the assertion
 	below) */
 	if (all_machines_have_precached && !cache_files_precache_map_loaded(main_get_multiplayer_map_name()))
-		all_machines_have_precached = FALSE;
+	{
+		/* (its precache given time here too: its own client, which does that
+		once a second, network_game_client_update_precache_status, may not
+		have the game's settings yet, and nobody else would end the copy) */
+		all_machines_have_precached = cache_files_give_time_to_precache(main_get_multiplayer_map_name()) &&
+			cache_files_precache_map_loaded(main_get_multiplayer_map_name());
+	}
 
 	match_assert(
 		NETWORK_SERVER_MANAGER_FILE,
