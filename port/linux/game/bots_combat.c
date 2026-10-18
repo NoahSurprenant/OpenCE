@@ -280,6 +280,16 @@ static boolean bot_team_mate_at_hand(
 	return FALSE;
 }
 
+/* whether the unit has a flag or a ball in hand */
+boolean bot_holds_flag(
+	struct unit_datum *unit)
+{
+	long weapon_index = unit->unit.current_weapon_index != NONE ?
+		unit->unit.weapon_object_indices[unit->unit.current_weapon_index] : NONE;
+
+	return weapon_index != NONE && weapon_is_flag(weapon_index);
+}
+
 /* ---------- seeing */
 
 /* whether the bot sees the target's unit now */
@@ -637,6 +647,9 @@ void bot_combat_act(
 			brain->statistics.weapon_switches++;
 		combat->weapon_slot = slot;
 	}
+	/* (a flag or a ball in hand stays there: changing weapons drops it) */
+	if (bot_holds_flag(unit))
+		combat->weapon_slot = unit->unit.current_weapon_index;
 	if (combat->weapon_slot != NONE && combat->weapon_slot != unit->unit.current_weapon_index)
 		action->desired_weapon_index = combat->weapon_slot;
 	/* firing: in view, past its reaction, its aim near enough, in bursts */
@@ -708,6 +721,9 @@ void bot_combat_idle(
 		combat->weapon_look_tick = now + 2 * TICKS_PER_SECOND;
 		combat->weapon_slot = bot_weapon_choose(unit_index, 15.0f);
 	}
+	/* (a flag or a ball in hand stays there: changing weapons drops it) */
+	if (bot_holds_flag(unit))
+		combat->weapon_slot = unit->unit.current_weapon_index;
 	if (combat->weapon_slot != NONE && combat->weapon_slot != unit->unit.current_weapon_index)
 		action->desired_weapon_index = combat->weapon_slot;
 	if (weapon_index != NONE && now >= combat->reload_after_tick)

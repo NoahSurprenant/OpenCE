@@ -157,6 +157,9 @@ struct bots_nav
 	/* the node the spawns' part was reached from */
 	long main_node;
 	struct bots_nav_statistics statistics;
+	/* the kinds of edge bots_nav_find_path keeps off (bits by type; 0 by
+	default, not saved: a flag's carrier keeps off teleporters) */
+	unsigned long avoided_types;
 	/* A*'s working memory (bots_nav_find_path), made when first needed */
 	void *search;
 };

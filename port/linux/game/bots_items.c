@@ -284,6 +284,13 @@ short bot_weapon_choose(
 	real best_score = 0.0f;
 	short slot;
 
+	/* (a flag or a ball in hand stays there: changing weapons drops it) */
+	if (unit->unit.current_weapon_index != NONE &&
+		unit->unit.weapon_object_indices[unit->unit.current_weapon_index] != NONE &&
+		weapon_is_flag(unit->unit.weapon_object_indices[unit->unit.current_weapon_index]))
+	{
+		return unit->unit.current_weapon_index;
+	}
 	for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
 	{
 		long held = unit->unit.weapon_object_indices[slot];

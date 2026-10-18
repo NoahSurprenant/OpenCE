@@ -153,10 +153,16 @@ random_seed_debug_log(
 	return;
 }
 
+/* port: debug.game_seed (HALO_GAME_SEED), when not 0, is the seed instead
+of the time, so that a test's games go the same way each run */
+long config_integer(const char *name);
+
 unsigned long get_number_suitable_for_initializing_random_seed(
 	void)
 {
-	return system_seconds()^system_milliseconds()^rand();
+	unsigned long seed= (unsigned long)config_integer("debug.game_seed");
+
+	return seed ? seed : system_seconds()^system_milliseconds()^rand();
 }
 
 void

@@ -73,6 +73,8 @@ static struct
 	unsigned long added_count;
 	/* the game tick the bots last told the log what they had done */
 	long reported_tick;
+	/* whether the game was scoring when the bots last looked */
+	boolean scoring;
 	/* the game tick the bots last played (an earlier one: a new game) */
 	long played_tick;
 	/* server.bots as last read, and when the settings were */
@@ -243,6 +245,50 @@ boolean bots_player_is_bot(
 		network_game_server_port_machine_is_bot(player->network_player_data.machine_index);
 }
 
+static long bots_player_index(
+	struct bot const *bot);
+
+/* the game type's statistics of the bot's player (game.h's, the game's
+own), in the report: flags grabbed, returned and captured; seconds on the
+hill; seconds with the ball */
+static void bots_report_objective(
+	struct bot const *bot,
+	char const *name,
+	long now)
+{
+	struct player_datum *player = player_try_and_get(bots_player_index(bot));
+	struct game_variant *variant = game_engine_get_variant();
+	union multiplayer_statistics const *statistics;
+	long grabs = 0, returns = 0, captures = 0, hill = 0, ball = 0, laps = 0;
+
+	if (!player || !variant)
+		return;
+	statistics = &player->statistics.multiplayer_statistics;
+	switch (variant->game_engine_index)
+	{
+	case game_engine_ctf:
+		grabs = statistics->ctf_statistics.flag_grabs;
+		returns = statistics->ctf_statistics.flag_returns;
+		captures = statistics->ctf_statistics.flag_scores;
+		break;
+	case game_engine_king:
+		/* (ticks, short: they wrap after 18 minutes) */
+		hill = (unsigned short)statistics->king_statistics.time_on_hill / TICKS_PER_SECOND;
+		break;
+	case game_engine_oddball:
+		ball = (unsigned short)statistics->oddball_statistics.time_with_the_ball / TICKS_PER_SECOND;
+		break;
+	case game_engine_race:
+		laps = statistics->race_statistics.laps;
+		break;
+	default:
+		return;
+	}
+	platform_log("bots: %s objective at tick %ld: %ld flag grabs, %ld flag returns, %ld flag captures, %ld hill seconds, "
+		"%ld ball seconds, %ld race flags, %ld laps, %.0f world units carried", name, now, grabs, returns, captures, hill, ball,
+		bot->brain.statistics.race_flags, laps, bot->brain.statistics.longest_carry);
+}
+
 /* every BOTS_REPORT_TICKS of a game, what each bot has done (the tests
 read it) */
 static void bots_report(
@@ -252,12 +298,20 @@ static void bots_report(
 	long now;
 	short index;
 
+	boolean scoring;
+	boolean ended;
+
 	if (!game_in_progress() || !server)
 		return;
 	now = game_time_get();
+	/* (and once as the game ends - its scoring over - so that the last report
+	has what happened last: a capture that ended the game) */
+	scoring = game_engine_running() && game_engine_can_score();
+	ended = bots_globals.scoring && !scoring;
+	bots_globals.scoring = scoring;
 	if (now < bots_globals.reported_tick)
 		bots_globals.reported_tick = now;
-	if (now - bots_globals.reported_tick < BOTS_REPORT_TICKS)
+	if (now - bots_globals.reported_tick < BOTS_REPORT_TICKS && !ended)
 		return;
 	bots_globals.reported_tick = now;
 	for (index = 0; index < BOTS_MAXIMUM; index++)
@@ -285,7 +339,32 @@ static void bots_report(
 			statistics->grenade_kills, statistics->grenade_suicides, statistics->team_kills, statistics->noises_heard,
 			statistics->grenades_dodged, statistics->retreats, statistics->covers_reached, statistics->powerups_taken,
 			statistics->weapon_switches, statistics->power_weapons_taken, statistics->suicides, statistics->farthest);
+		bots_report_objective(bot, name, now);
 	}
+}
+
+short bots_team_rank(
+	struct bot const *bot,
+	short *count)
+{
+	struct network_player const *mine = network_game_server_port_bot_player(bot->machine_index, bot->controller_index);
+	short rank = 0;
+	short index;
+
+	*count = 0;
+	for (index = 0; mine && index < BOTS_MAXIMUM; index++)
+	{
+		struct bot const *other = &bots_globals.bots[index];
+		struct network_player const *player = other->used ?
+			network_game_server_port_bot_player(other->machine_index, other->controller_index) : NULL;
+
+		if (!player || player->team_index != mine->team_index)
+			continue;
+		(*count)++;
+		if (other->slot < bot->slot)
+			rank++;
+	}
+	return rank;
 }
 
 /* the bot of a player datum (NULL if none) */

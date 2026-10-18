@@ -1684,6 +1684,10 @@ long bots_nav_find_path(
 			long there = nav->edges[index].target;
 			float cost = search->cost[here] + nav->edges[index].cost;
 
+			/* (the edges of the kinds the caller keeps off: none taken) */
+			if (nav->avoided_types & (1u << nav->edges[index].type))
+				continue;
+
 			if (search->closed[there] == search->stamp)
 				continue;
 			if (search->seen[there] != search->stamp || cost < search->cost[there])
