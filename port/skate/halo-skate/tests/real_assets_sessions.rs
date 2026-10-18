@@ -20,8 +20,9 @@ use std::time::{Duration, Instant};
 /// The sessions the test makes (session 0 is left alone).
 const SESSIONS: [i32; 3] = [1, 2, 3];
 /// The most an extra session may cost (MB of resident memory): one costs
-/// about 13 on i686 (the animation banks and the board are shared).
-const MOST_PER_SESSION_MB: u64 = 64;
+/// about 35 in the game's i686 build and 67 in a 64-bit one (the animation
+/// banks and the board are shared, made once by the first).
+const MOST_PER_SESSION_MB: u64 = 100;
 
 /// This process's resident memory, MB (0 where /proc is not).
 fn resident_mb() -> u64 {

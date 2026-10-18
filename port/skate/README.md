@@ -817,7 +817,7 @@ either, since it may drive off at any time.
 ### Several skaters
 
 The engine can run more than one skater in one game (the host's bots on
-boards, `../linux/game/bots_skate.c`): up to `halo_skate_sessions()` sessions,
+boards): up to `halo_skate_sessions()` sessions,
 each with its own worker thread, collision, skater, pose, hits and sounds.
 Session 0 is this machine's player's, which every call without a number
 drives exactly as before; the others are driven by the `_in` calls of

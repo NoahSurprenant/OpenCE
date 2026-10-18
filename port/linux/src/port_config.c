@@ -544,7 +544,7 @@ static const struct config_setting config_settings[] =
 		"well they aim, how far and how wide they see)." },
 	{ "server.bot_skaters", _config_integer, "4", "HALO_SERVER_BOT_SKATERS", _environment_value, _platform_all,
 		"The most bots on a board at once, in a game this machine hosts with\n"
-		"Skate 3 mode and its data (port/skate/README.md's \"Bots on boards\"): each\n"
+		"Skate 3 mode and its data (port/skate/README.md's \"Several skaters\"): each\n"
 		"one's skater is a skate session of its own, about 35 MB and several\n"
 		"seconds to make the first time; 0 to 8, 0 for bots always on foot." },
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
