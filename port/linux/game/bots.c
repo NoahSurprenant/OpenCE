@@ -73,6 +73,8 @@ static struct
 	unsigned long added_count;
 	/* the game tick the bots last told the log what they had done */
 	long reported_tick;
+	/* the game tick the bots last played (an earlier one: a new game) */
+	long played_tick;
 	/* server.bots as last read, and when the settings were */
 	short setting;
 	short difficulty_setting;
@@ -550,6 +552,20 @@ void bots_take_actions(
 
 	if (!global_network_game_server_get() || !game_in_progress() || !player_data || !player_data->valid)
 		return;
+	/* (a new game - its time begins again: each brain afresh, its random
+	numbers going on, its statistics the new game's. Its times kept from the
+	last game, far ahead of the new one's, held it back for a whole game:
+	its reaction to a target, "now - last seen" negative, never ran out, so it
+	never fired; its fighting goals and pickups waited as long) */
+	if (game_time_get() < bots_globals.played_tick)
+	{
+		for (index = 0; index < BOTS_MAXIMUM; index++)
+		{
+			if (bots_globals.bots[index].used)
+				bot_brain_reset(&bots_globals.bots[index].brain, bots_globals.bots[index].brain.random);
+		}
+	}
+	bots_globals.played_tick = game_time_get();
 	for (index = 0; index < BOTS_MAXIMUM; index++)
 	{
 		struct bot *bot = &bots_globals.bots[index];

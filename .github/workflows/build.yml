@@ -629,7 +629,7 @@ jobs:
           # differ, so they go side by side)
           mkdir -p "$RUNNER_TEMP/bots"
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/a" tools/test_bots.py \
-            -k "dedicated_server or older_client or listen_host or nav_on_every_map or leave_for" \
+            -k "dedicated_server or older_client or listen_host or nav_on_every_map or leave_for or rotation" \
             > "$RUNNER_TEMP/bots-a.log" 2>&1 &
           first=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/b" tools/test_bots.py \
@@ -638,9 +638,9 @@ jobs:
           wait $first || true
           wait $second || true
           cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log"
-          if ! grep -q '5 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
+          if ! grep -q '6 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
             grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log"; then
-            echo "::error::the nine tests of tools/test_bots.py did not all run and pass (5 + 4)"
+            echo "::error::the ten tests of tools/test_bots.py did not all run and pass (6 + 4)"
             exit 1
           fi
 
