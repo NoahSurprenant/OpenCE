@@ -36,6 +36,7 @@ objects (render.c). */
 #include "units/bipeds.h"
 #include "units/units.h"
 
+#include "bots.h"
 #include "skate.h"
 #include "skate_sound.h"
 
@@ -81,8 +82,15 @@ once: past any speed on a board (90 m/s) */
 teleporter or a script, and the skater goes there (skate_follow_teleport) */
 #define SKATE_TELEPORT_DISTANCE 1.f
 
-static struct
+/* a skater this machine runs the skate engine for: its player's (skater 0,
+driven by the pad), or one of the host's bots' (skate_bot_..., driven by
+bots_skate.c), each in a skate session of its own (the engine's session of
+the same number: halo_skate.h's _in calls) */
+struct skate_skater
 {
+	/* (a bot's) the skater is the bot's of this player (a datum; NONE: a free
+	skater) */
+	long player_index;
 	/* the startup preload found the assets folder: maps are loaded as they
 	come; without it nothing loads until J (which says what is missing) */
 	boolean preloaded;
@@ -116,7 +124,35 @@ static struct
 	/* a blast's push on the skater since the last tick (world units a tick):
 	the skate engine takes it before the next step (skate_apply_blast) */
 	real_vector3d blast;
-} skate_globals ={ FALSE, FALSE, FALSE, NONE, NONE, NONE, NONE, 0, 0.f, { 0.f, 0.f } };
+	/* (a bot's) its pad this tick (skate_bot_drive), and its step begun
+	(skate_bots_begin_steps); whether it runs nobody over (a peaceful bot) */
+	struct halo_skate_pad pad;
+	boolean stepping;
+	boolean no_run_over;
+	/* (a bot's) its board where it was the last two ticks (drawn between
+	them, as another machine's skater's: skate_render_board), and the light
+	there */
+	real boards[2][7];
+	short board_latest;
+	boolean board_has_latest;
+	boolean board_has_previous;
+	float board_lights[5][4];
+	/* (a bot's) the first tick it was ready to ride for, and the game time it
+	last skated or wanted to (a bot's skater unused a while is given up:
+	skate_bots_update) */
+	long wanted_time;
+};
+
+/* the longest the game waits for a bot's skater's step (begun beside this
+machine's player's: skate_bots_finish_steps), as for its own skater's
+(lib.rs's STEP_WAIT) */
+#define SKATE_BOT_STEP_WAIT_MS 250
+
+/* skater 0 is this machine's player's, the others the host's bots' (as many
+as the engine has sessions, and server.bot_skaters allows) */
+#define SKATE_MAXIMUM_SKATERS 9
+static struct skate_skater skate_skaters[SKATE_MAXIMUM_SKATERS];
+#define skate_local (&skate_skaters[0])
 
 /* the board grown about its middle: Master Chief (about 2.1 m) is larger
 than the skater it was made for (about 1.8 m) */
@@ -250,13 +286,26 @@ static float *skate_collision_triangles(struct collision_bsp *bsp, long *count)
 	return triangles;
 }
 
-static void skate_stop(const char *reason);
+struct skate_skater;
+static void skate_stop(struct skate_skater *skater, const char *reason);
 static void skate_bsp_cache_clear(void);
 
-static boolean skate_map_loaded(void)
+/* the skater's skate session (halo_skate.h's _in calls) */
+static int skate_session(struct skate_skater const *skater)
 {
-	return skate_globals.loaded_scenario_index == global_scenario_index &&
-		skate_globals.loaded_structure_bsp_index == global_structure_bsp_index;
+	return (int)(skater - skate_skaters);
+}
+
+/* (a bot's) the skater has a bot's skate session, made or being made */
+static boolean skate_skater_used(struct skate_skater const *skater)
+{
+	return skater == skate_local || skater->player_index != NONE;
+}
+
+static boolean skate_map_loaded(struct skate_skater const *skater)
+{
+	return skater->loaded_scenario_index == global_scenario_index &&
+		skater->loaded_structure_bsp_index == global_structure_bsp_index;
 }
 
 /* the BSP of a node of an object's collision model, the permutation the
@@ -448,8 +497,10 @@ static unsigned long skate_scenery_signature(long *pieces)
 
 /* sends the BSP's collision, with the static scenery in it, to be built in
 the background; the engine copies the triangles, so this never waits for the
-build. rebuild: the same level again, its scenery changed (halo_skate_reload:
-the skater rides the old meanwhile) */
+build. To each skater's session whose map is pending (skate_structure_bsp_changed,
+a J, a bot's session made); rebuild: to each that has the level, its scenery
+changed (halo_skate_reload: the skater rides the old meanwhile). TRUE when
+sent to skater 0's session if it was one to send to, else to any */
 static boolean skate_load_map(boolean rebuild)
 {
 	struct collision_bsp *bsp = global_collision_bsp_get();
@@ -459,8 +510,19 @@ static boolean skate_load_map(boolean rebuild)
 	long signature_pieces;
 	float *triangles;
 	boolean sent = FALSE;
+	boolean local_wanted = rebuild ? skate_map_loaded(skate_local) : skate_local->map_pending;
+	boolean sent_local = FALSE;
+	boolean wanted[SKATE_MAXIMUM_SKATERS];
+	short index;
 
-	skate_globals.map_pending = FALSE;
+	for (index = 0; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		struct skate_skater *skater = &skate_skaters[index];
+
+		wanted[index] = skate_skater_used(skater) && (rebuild ? skate_map_loaded(skater) : skater->map_pending);
+		if (!rebuild)
+			skater->map_pending = FALSE;
+	}
 	skate_baked_scenery_count = 0;
 	skate_scenery_watch.changed_time = NONE;
 	if (!bsp)
@@ -476,16 +538,25 @@ static boolean skate_load_map(boolean rebuild)
 	}
 	platform_log("skate: the level's collision%s: %ld triangles, %ld of them %ld pieces of scenery",
 		rebuild ? " again, its scenery changed" : "", count, added, pieces);
-	if ((rebuild ? halo_skate_reload : halo_skate_load)(skate_assets(), triangles, (int)count) == 0)
+	for (index = 0; index < SKATE_MAXIMUM_SKATERS; index++)
 	{
-		skate_globals.loaded_scenario_index = global_scenario_index;
-		skate_globals.loaded_structure_bsp_index = global_structure_bsp_index;
-		sent = TRUE;
+		struct skate_skater *skater = &skate_skaters[index];
+
+		if (!wanted[index])
+			continue;
+		if ((rebuild ? halo_skate_reload_in : halo_skate_load_in)(index, skate_assets(), triangles, (int)count) == 0)
+		{
+			skater->loaded_scenario_index = global_scenario_index;
+			skater->loaded_structure_bsp_index = global_structure_bsp_index;
+			sent = TRUE;
+			if (!index)
+				sent_local = TRUE;
+		}
 	}
-	else
+	if (!sent)
 		skate_baked_scenery_count = 0;
 	free(triangles);
-	return sent;
+	return local_wanted ? sent_local : sent;
 }
 
 /* the level's collision built again when its scenery changed: looked at
@@ -540,9 +611,23 @@ void skate_initialize(void)
 	halo_skate_set_feet(skate_settings.ankle_height, skate_settings.feet_offset);
 	halo_skate_set_obstacle_bail_speed(skate_settings.obstacle_bail_speed);
 	halo_skate_set_run_over(SKATE_RUN_OVER_SPEED, SKATE_RUN_OVER_KEEP);
+	short index;
+
+	for (index = 0; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		struct skate_skater *skater = &skate_skaters[index];
+
+		memset(skater, 0, sizeof(*skater));
+		skater->player_index = NONE;
+		skater->unit_index = NONE;
+		skater->loaded_scenario_index = NONE;
+		skater->loaded_structure_bsp_index = NONE;
+		skater->skeleton_definition_index = NONE;
+		skater->wanted_time = NONE;
+	}
 	/* (the engine says when there is no assets folder; nothing more happens
 	until J) */
-	skate_globals.preloaded = halo_skate_preload(skate_assets()) == 0;
+	skate_local->preloaded = halo_skate_preload(skate_assets()) == 0;
 	/* the skater's sounds (skate_sound.c) */
 	skate_sound_initialize(skate_assets());
 }
@@ -550,29 +635,38 @@ void skate_initialize(void)
 void skate_structure_bsp_changed(void)
 {
 	struct scenario *scenario = global_scenario_get();
-	/* (a J still waiting for its load waits for this bsp's instead) */
-	boolean waiting = skate_globals.activate_when_ready && !skate_globals.skating;
+	short index;
 
-	/* the board is left in the old bsp's collision */
-	skate_stop("the level changed");
-	/* (and this bsp is not the one loaded, even where a new map's scenario
-	tag has the old one's index) */
-	skate_globals.loaded_scenario_index = NONE;
-	skate_globals.loaded_structure_bsp_index = NONE;
-	skate_globals.map_pending = FALSE;
 	skate_baked_scenery_count = 0;
 	/* (a new map's collision models are other tags) */
 	skate_bsp_cache_clear();
-	/* nobody skates in the main menu; a failed preload is retried on J */
-	if (!skate_globals.preloaded || !scenario || scenario->type == _scenario_type_main_menu ||
-		halo_skate_state() == -1)
+	for (index = 0; index < SKATE_MAXIMUM_SKATERS; index++)
 	{
-		return;
+		struct skate_skater *skater = &skate_skaters[index];
+		/* (a J still waiting for its load waits for this bsp's instead) */
+		boolean waiting = skater->activate_when_ready && !skater->skating;
+
+		if (!skate_skater_used(skater))
+			continue;
+		/* the board is left in the old bsp's collision */
+		skate_stop(skater, "the level changed");
+		/* (and this bsp is not the one loaded, even where a new map's scenario
+		tag has the old one's index) */
+		skater->loaded_scenario_index = NONE;
+		skater->loaded_structure_bsp_index = NONE;
+		skater->map_pending = FALSE;
+		/* nobody skates in the main menu; a failed preload is retried on J
+		(a bot's, when it next wants to ride) */
+		if (!skater->preloaded || !scenario || scenario->type == _scenario_type_main_menu ||
+			halo_skate_state_in(index) == -1)
+		{
+			continue;
+		}
+		/* (sent on the next tick, skate_update_before_objects: a new map's
+		scenery is placed after its first bsp loads) */
+		skater->map_pending = TRUE;
+		skater->activate_when_ready = waiting;
 	}
-	/* (sent on the next tick, skate_update_before_objects: a new map's
-	scenery is placed after its first bsp loads) */
-	skate_globals.map_pending = TRUE;
-	skate_globals.activate_when_ready = waiting;
 }
 
 /* a model's geometry and part, as models.c and powerup_render_bounds.c each
@@ -730,7 +824,7 @@ static real skate_model_ankle_height(struct model *model)
 	return 0.f;
 }
 
-static void skate_describe_skeleton(long unit_index)
+static void skate_describe_skeleton(struct skate_skater *skater, long unit_index)
 {
 	struct unit_datum *unit = unit_get(unit_index);
 	struct object_definition *definition = object_definition_get(unit->definition_index);
@@ -740,8 +834,9 @@ static void skate_describe_skeleton(long unit_index)
 	float inverses[SKATE_MAXIMUM_NODES][13];
 	long count;
 	long index;
+	int mapped;
 
-	if (skate_globals.skeleton_definition_index == unit->definition_index ||
+	if (skater->skeleton_definition_index == unit->definition_index ||
 		definition->object.model.index == NONE)
 	{
 		return;
@@ -759,12 +854,15 @@ static void skate_describe_skeleton(long unit_index)
 		inverses[index][0] = inverse->scale;
 		memcpy(&inverses[index][1], inverse->n, sizeof(float) * 12);
 	}
-	console_printf(FALSE, "skate: %d of %ld nodes follow the skater",
-		halo_skate_set_skeleton((int)count, &names[0][0], parents, &inverses[0][0]), count);
+	mapped = halo_skate_set_skeleton_in(skate_session(skater), (int)count, &names[0][0], parents, &inverses[0][0]);
+	if (skater == skate_local)
+		console_printf(FALSE, "skate: %d of %ld nodes follow the skater", mapped, count);
+	else
+		platform_log("skate: bot skater %d: %d of %ld nodes follow the skater", skate_session(skater), mapped, count);
 	/* riding, its soles rest on the deck (rig.rs) */
 	skate_settings.ankle_height = skate_model_ankle_height(model);
 	halo_skate_set_feet(skate_settings.ankle_height, skate_settings.feet_offset);
-	skate_globals.skeleton_definition_index = unit->definition_index;
+	skater->skeleton_definition_index = unit->definition_index;
 }
 
 static boolean skate_unit_can_skate(long unit_index)
@@ -778,19 +876,19 @@ static boolean skate_unit_can_skate(long unit_index)
 }
 
 /* starting: getting on the board, when the camera takes the board's heading */
-static void skate_apply_frame(long unit_index, boolean starting)
+static void skate_apply_frame(struct skate_skater *skater, long unit_index, boolean starting)
 {
 	struct object_datum *object = object_get(unit_index);
 	real_point3d position;
 	real_vector3d forward, up;
 	float const *velocity;
 
-	position.x = skate_globals.frame.position[0];
-	position.y = skate_globals.frame.position[1];
-	position.z = skate_globals.frame.position[2] + skate_globals.height;
+	position.x = skater->frame.position[0];
+	position.y = skater->frame.position[1];
+	position.z = skater->frame.position[2] + skater->height;
 	/* the biped stands upright, facing the board's heading */
-	forward.i = skate_globals.frame.forward[0];
-	forward.j = skate_globals.frame.forward[1];
+	forward.i = skater->frame.forward[0];
+	forward.j = skater->frame.forward[1];
 	forward.k = 0.f;
 	if (normalize3d(&forward) == 0.f)
 		forward = object->object.forward;
@@ -801,49 +899,49 @@ static void skate_apply_frame(long unit_index, boolean starting)
 	round behind the way it faces, wherever the board went */
 	if (starting)
 	{
-		skate_globals.camera.heading = (real)atan2(forward.j, forward.i);
-		skate_globals.camera.still = 0.f;
+		skater->camera.heading = (real)atan2(forward.j, forward.i);
+		skater->camera.still = 0.f;
 	}
 	else
 	{
-		halo_skate_follow(&skate_globals.camera, &skate_globals.frame, skate_settings.camera_speed,
+		halo_skate_follow(&skater->camera, &skater->frame, skate_settings.camera_speed,
 			SKATE_CAMERA_TURN, 1.f / TICKS_PER_SECOND);
 	}
 	/* (the player's desired yaw must be within 0 to 2 pi: player_control.c) */
-	if (!(skate_globals.camera.heading >= 0.f && skate_globals.camera.heading < 2.f * _pi))
-		skate_globals.camera.heading = (real)fmod(skate_globals.camera.heading, 2.f * _pi);
-	if (skate_globals.camera.heading < 0.f)
-		skate_globals.camera.heading += 2.f * _pi;
-	if (!(skate_globals.camera.heading >= 0.f && skate_globals.camera.heading < 2.f * _pi))
-		skate_globals.camera.heading = 0.f;
+	if (!(skater->camera.heading >= 0.f && skater->camera.heading < 2.f * _pi))
+		skater->camera.heading = (real)fmod(skater->camera.heading, 2.f * _pi);
+	if (skater->camera.heading < 0.f)
+		skater->camera.heading += 2.f * _pi;
+	if (!(skater->camera.heading >= 0.f && skater->camera.heading < 2.f * _pi))
+		skater->camera.heading = 0.f;
 
 	/* (a push Halo gave the biped since the last tick, a blast or a vehicle's
 	hit, goes nowhere: the skate engine has the skater) */
-	if (!starting && skate_globals.placed)
+	if (!starting && skater->placed)
 	{
 		real_vector3d push;
 
-		push.i = object->object.translational_velocity.i - skate_globals.placed_velocity.i;
-		push.j = object->object.translational_velocity.j - skate_globals.placed_velocity.j;
-		push.k = object->object.translational_velocity.k - skate_globals.placed_velocity.k;
+		push.i = object->object.translational_velocity.i - skater->placed_velocity.i;
+		push.j = object->object.translational_velocity.j - skater->placed_velocity.j;
+		push.k = object->object.translational_velocity.k - skater->placed_velocity.k;
 		if (magnitude3d(&push) * TICKS_PER_SECOND > SKATE_PUSH_TOLD &&
-			(skate_globals.pushed_time == NONE || game_time_get() - skate_globals.pushed_time >= TICKS_PER_SECOND))
+			(skater->pushed_time == NONE || game_time_get() - skater->pushed_time >= TICKS_PER_SECOND))
 		{
-			skate_globals.pushed_time = game_time_get();
+			skater->pushed_time = game_time_get();
 			platform_log("skate: a push of %.1f m/s on the skater undone (the skate engine has them)",
 				magnitude3d(&push) * TICKS_PER_SECOND * 3.048f);
 		}
 	}
 	object_set_position(unit_index, &position, &forward, &up);
 	/* the biped moves with the skater: off the board, not with the board */
-	velocity = skate_globals.frame.off_board ? skate_globals.frame.skater_velocity : skate_globals.frame.velocity;
+	velocity = skater->frame.off_board ? skater->frame.skater_velocity : skater->frame.velocity;
 	object->object.translational_velocity.i = velocity[0] / TICKS_PER_SECOND;
 	object->object.translational_velocity.j = velocity[1] / TICKS_PER_SECOND;
 	object->object.translational_velocity.k = velocity[2] / TICKS_PER_SECOND;
-	skate_globals.placed = TRUE;
-	skate_globals.placed_position = object->object.position;
-	skate_globals.placed_yaw = (real)atan2(forward.j, forward.i);
-	skate_globals.placed_velocity = object->object.translational_velocity;
+	skater->placed = TRUE;
+	skater->placed_position = object->object.position;
+	skater->placed_yaw = (real)atan2(forward.j, forward.i);
+	skater->placed_velocity = object->object.translational_velocity;
 }
 
 /* ---------- the board
@@ -1028,6 +1126,30 @@ static void skate_board_upload_textures(void)
 	skate_board.uploaded_generation = skate_board.generation;
 }
 
+/* a board's placement (a quaternion, then a position) fraction of the way from
+previous to latest: the turn the shorter way, made one long */
+static void skate_placement_between(real const *previous, real const *latest, real fraction, real *placement)
+{
+	real dot = 0.f;
+	real length = 0.f;
+	short index;
+
+	for (index = 0; index < 4; index++)
+		dot += previous[index] * latest[index];
+	for (index = 0; index < 4; index++)
+	{
+		real from = dot < 0.f ? -previous[index] : previous[index];
+
+		placement[index] = from + (latest[index] - from) * fraction;
+		length += placement[index] * placement[index];
+	}
+	length = (real)sqrt(length);
+	for (index = 0; index < 4; index++)
+		placement[index] = length > 0.f ? placement[index] / length : latest[index];
+	for (index = 4; index < 7; index++)
+		placement[index] = previous[index] + (latest[index] - previous[index]) * fraction;
+}
+
 void skate_render_board(void)
 {
 	float const *previous;
@@ -1062,7 +1184,30 @@ void skate_render_board(void)
 			skate_board.index_count, skate_board.surfaces, skate_board.surface_count,
 			&skate_remote_lights[player_index][0][0]);
 	}
-	if (!skate_globals.skating || !skate_board.has_latest || !skate_board.vertex_count)
+	/* the host's bots' skaters' boards, as those (skate_bots_after_objects
+	keeps their last two) */
+	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		struct skate_skater *bot = &skate_skaters[index];
+		real placement[7];
+
+		if (!bot->skating || !bot->board_has_latest || !skate_board.vertex_count || !skate_board.drawn)
+			continue;
+		if (bot->board_has_previous && fraction < 1.f)
+			skate_placement_between(bot->boards[bot->board_latest ^ 1], bot->boards[bot->board_latest], fraction,
+				placement);
+		else
+			memcpy(placement, bot->boards[bot->board_latest], sizeof(placement));
+		if (skate_board.uploaded_generation != skate_board.generation)
+			skate_board_upload_textures();
+		if (halo_skate_board_vertices_at(placement, skate_board.drawn, skate_board.vertex_count) ==
+			skate_board.vertex_count)
+		{
+			halo_skate_platform_board_draw(skate_board.drawn, skate_board.vertex_count, skate_board.indices,
+				skate_board.index_count, skate_board.surfaces, skate_board.surface_count, &bot->board_lights[0][0]);
+		}
+	}
+	if (!skate_local->skating || !skate_board.has_latest || !skate_board.vertex_count)
 		return;
 	if (skate_board.uploaded_generation != skate_board.generation)
 		skate_board_upload_textures();
@@ -1084,38 +1229,56 @@ void skate_render_board(void)
 	}
 }
 
-static void skate_stop(const char *reason)
+/* nothing of the skater's board to draw from until its next tick on it */
+static void skate_skater_board_forget(struct skate_skater *skater)
 {
-	if (skate_globals.skating)
+	if (skater == skate_local)
+		skate_board_forget();
+	skater->board_has_latest = FALSE;
+	skater->board_has_previous = FALSE;
+}
+
+static void skate_stop(struct skate_skater *skater, const char *reason)
+{
+	if (skater->skating)
 	{
-		halo_skate_suspend();
-		if (reason)
+		halo_skate_suspend_in(skate_session(skater));
+		if (reason && skater == skate_local)
 		{
 			console_printf(FALSE, "skate: off (%s)", reason);
 			platform_log("skate: off (%s)", reason);
 		}
+		else if (reason)
+			platform_log("skate: bot skater %d off (%s)", skate_session(skater), reason);
 	}
-	skate_globals.skating = FALSE;
-	skate_globals.activate_when_ready = FALSE;
-	skate_globals.unit_index = NONE;
-	skate_globals.placed = FALSE;
-	skate_globals.blast.i = skate_globals.blast.j = skate_globals.blast.k = 0.f;
-	skate_board_forget();
+	skater->skating = FALSE;
+	skater->activate_when_ready = FALSE;
+	skater->unit_index = NONE;
+	skater->placed = FALSE;
+	skater->stepping = FALSE;
+	skater->blast.i = skater->blast.j = skater->blast.k = 0.f;
+	skate_skater_board_forget(skater);
 }
 
 /* the engine failed (halo_skate_state -1): off the board as by J, so that the
 biped walks, holds its weapon and is watched and aimed as on foot again (all
-of which follow skate_globals.skating), and everything the engine was told
-is told afresh: the next J restarts it with the map and the skeleton */
-static void skate_engine_failed(void)
+of which follow skater->skating), and everything the engine was told
+is told afresh: the next J restarts it with the map and the skeleton (a
+bot's next wish to ride) */
+static void skate_engine_failed(struct skate_skater *skater)
 {
-	if (skate_globals.skating || skate_globals.activate_when_ready)
-		console_printf(FALSE, "skate: off (%s)", halo_skate_error());
-	platform_log("skate: off, the skate engine failed: %s", halo_skate_error());
-	skate_stop(NULL);
-	skate_globals.loaded_scenario_index = NONE;
-	skate_globals.loaded_structure_bsp_index = NONE;
-	skate_globals.skeleton_definition_index = NONE;
+	int session = skate_session(skater);
+
+	if (skater == skate_local && (skater->skating || skater->activate_when_ready))
+		console_printf(FALSE, "skate: off (%s)", halo_skate_error_in(session));
+	if (skater == skate_local)
+		platform_log("skate: off, the skate engine failed: %s", halo_skate_error_in(session));
+	else
+		platform_log("skate: bot skater %d off, the skate engine failed: %s", session, halo_skate_error_in(session));
+	skate_stop(skater, NULL);
+	skater->loaded_scenario_index = NONE;
+	skater->loaded_structure_bsp_index = NONE;
+	skater->skeleton_definition_index = NONE;
 }
 
 /* the ground under from (from itself when none is near) */
@@ -1138,36 +1301,45 @@ static real_point3d skate_ground_under(long unit_index, real_point3d const *from
 
 /* the skater put on the board again at spot (on the ground under it), facing
 yaw: the network test's duel (debug.network_test_skate_duel) */
-static void skate_put(long unit_index, real_point3d const *spot, real yaw)
+static void skate_put(struct skate_skater *skater, long unit_index, real_point3d const *spot, real yaw)
 {
 	real_point3d ground = skate_ground_under(unit_index, spot);
 
-	if (halo_skate_activate(&ground.x, yaw, &skate_globals.frame) != 0)
+	if (halo_skate_activate_in(skate_session(skater), &ground.x, yaw, &skater->frame) != 0)
 		return;
-	skate_board_forget();
-	skate_apply_frame(unit_index, TRUE);
+	skate_skater_board_forget(skater);
+	skate_apply_frame(skater, unit_index, TRUE);
 }
 
-static void skate_start(long unit_index)
+static void skate_start(struct skate_skater *skater, long unit_index)
 {
 	struct object_datum *object = object_get(unit_index);
 	real_point3d ground = skate_ground_under(unit_index, &object->object.position);
+	int session = skate_session(skater);
 
-	skate_globals.height = object->object.position.z - ground.z;
-	skate_describe_skeleton(unit_index);
-	if (halo_skate_activate(&ground.x, (real)atan2(object->object.forward.j, object->object.forward.i),
-		&skate_globals.frame) != 0)
+	skater->height = object->object.position.z - ground.z;
+	skate_describe_skeleton(skater, unit_index);
+	if (halo_skate_activate_in(session, &ground.x, (real)atan2(object->object.forward.j, object->object.forward.i),
+		&skater->frame) != 0)
 	{
-		console_printf(FALSE, "skate: could not get on the board: %s", halo_skate_error());
+		if (skater == skate_local)
+			console_printf(FALSE, "skate: could not get on the board: %s", halo_skate_error_in(session));
+		else
+			platform_log("skate: bot skater %d could not get on the board: %s", session, halo_skate_error_in(session));
 		return;
 	}
-	skate_globals.skating = TRUE;
-	skate_globals.unit_index = unit_index;
-	skate_globals.skeleton_described_again = FALSE;
-	skate_board_forget();
-	skate_apply_frame(unit_index, TRUE);
-	console_printf(FALSE, "skate: on");
-	platform_log("skate: on");
+	skater->skating = TRUE;
+	skater->unit_index = unit_index;
+	skater->skeleton_described_again = FALSE;
+	skate_skater_board_forget(skater);
+	skate_apply_frame(skater, unit_index, TRUE);
+	if (skater == skate_local)
+	{
+		console_printf(FALSE, "skate: on");
+		platform_log("skate: on");
+	}
+	else
+		platform_log("skate: bot skater %d on (player %ld)", session, DATUM_INDEX_TO_ABSOLUTE_INDEX(skater->player_index));
 }
 
 /* the skating biped was moved since the last tick by something other than
@@ -1177,7 +1349,7 @@ exit), a script, or a respawn's or the host's placing. The skate engine's
 skater goes there, on the board, turned as the unit was turned and moving as
 fast as before, the same way round from the exit as it came into the
 entrance; the camera turns with it, and the board is drawn there at once */
-static void skate_follow_teleport(long unit_index)
+static void skate_follow_teleport(struct skate_skater *skater, long unit_index)
 {
 	struct object_datum *object = object_get(unit_index);
 	real_point3d ground;
@@ -1185,45 +1357,48 @@ static void skate_follow_teleport(long unit_index)
 	float velocity[3];
 	float const *was;
 
-	if (!skate_globals.placed ||
-		distance_squared3d(&object->object.position, &skate_globals.placed_position) <=
+	if (!skater->placed ||
+		distance_squared3d(&object->object.position, &skater->placed_position) <=
 		SKATE_TELEPORT_DISTANCE * SKATE_TELEPORT_DISTANCE)
 	{
 		return;
 	}
-	turn = (real)atan2(object->object.forward.j, object->object.forward.i) - skate_globals.placed_yaw;
-	yaw = (real)atan2(skate_globals.frame.forward[1], skate_globals.frame.forward[0]) + turn;
+	turn = (real)atan2(object->object.forward.j, object->object.forward.i) - skater->placed_yaw;
+	yaw = (real)atan2(skater->frame.forward[1], skater->frame.forward[0]) + turn;
 	c = (real)cos(turn);
 	s = (real)sin(turn);
-	was = skate_globals.frame.off_board ? skate_globals.frame.skater_velocity : skate_globals.frame.velocity;
+	was = skater->frame.off_board ? skater->frame.skater_velocity : skater->frame.velocity;
 	velocity[0] = c * was[0] - s * was[1];
 	velocity[1] = s * was[0] + c * was[1];
 	velocity[2] = was[2];
 	ground = skate_ground_under(unit_index, &object->object.position);
-	if (halo_skate_teleport(&ground.x, yaw, velocity, &skate_globals.frame) != 0)
+	if (halo_skate_teleport_in(skate_session(skater), &ground.x, yaw, velocity, &skater->frame) != 0)
 		return;
 	platform_log("skate: teleported %.2f world units to (%.2f %.2f %.2f), turned %.0f degrees, at %.1f m/s",
-		(real)sqrt(distance_squared3d(&object->object.position, &skate_globals.placed_position)), ground.x, ground.y,
+		(real)sqrt(distance_squared3d(&object->object.position, &skater->placed_position)), ground.x, ground.y,
 		ground.z, turn * 180.f / _pi, sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1]) * 3.048f);
-	skate_board_forget();
-	skate_apply_frame(unit_index, TRUE);
+	skate_skater_board_forget(skater);
+	skate_apply_frame(skater, unit_index, TRUE);
 }
 
 /* a blast's push on the skater since the last tick (skate_unit_pushed) goes
 to the skate engine: added to the skater's velocity before this step, as
 biped_accelerate adds it to a player's on foot */
-static void skate_apply_blast(void)
+static void skate_apply_blast(struct skate_skater *skater)
 {
-	real_vector3d blast = skate_globals.blast;
+	real_vector3d blast = skater->blast;
 	real speed = magnitude3d(&blast) * TICKS_PER_SECOND;
 
-	skate_globals.blast.i = skate_globals.blast.j = skate_globals.blast.k = 0.f;
+	skater->blast.i = skater->blast.j = skater->blast.k = 0.f;
 	if (!(speed > 0.f))
 		return;
-	if (halo_skate_apply_impulse(blast.i * TICKS_PER_SECOND, blast.j * TICKS_PER_SECOND, blast.k * TICKS_PER_SECOND) != 0)
+	if (halo_skate_apply_impulse_in(skate_session(skater), blast.i * TICKS_PER_SECOND, blast.j * TICKS_PER_SECOND,
+		blast.k * TICKS_PER_SECOND) != 0)
+	{
 		return;
+	}
 	platform_log("skate: a push of %.1f m/s on the skater applied at tick %ld (%s), along (%.2f %.2f %.2f)",
-		speed * 3.048f, game_time_get(), skate_globals.frame.off_board ? "off the board" : "on the board",
+		speed * 3.048f, game_time_get(), skater->frame.off_board ? "off the board" : "on the board",
 		blast.i * TICKS_PER_SECOND / speed, blast.j * TICKS_PER_SECOND / speed, blast.k * TICKS_PER_SECOND / speed);
 }
 
@@ -1243,6 +1418,7 @@ again this often */
 
 double config_real(const char *name);
 int config_boolean(const char *name);
+long config_integer(const char *name);
 
 /* whether the network test's player, off the board where it should be on
 one, gets on now: alive, and SKATE_TEST_RETRY_TICKS since the last try (in
@@ -1264,7 +1440,7 @@ static boolean skate_test_should_get_on(long *tried, long tick)
 		}
 		return FALSE;
 	}
-	if (skate_globals.skating || skate_globals.activate_when_ready || !skate_unit_can_skate(unit_index) ||
+	if (skate_local->skating || skate_local->activate_when_ready || !skate_unit_can_skate(unit_index) ||
 		(*tried != NONE && *tried <= tick && tick - *tried < SKATE_TEST_RETRY_TICKS))
 	{
 		return FALSE;
@@ -1303,12 +1479,12 @@ static boolean skate_test_duel_pad(struct halo_skate_pad *pad, boolean *toggle)
 		platform_log("skate test: on the board, to stand in the skater's way");
 		*toggle = TRUE;
 	}
-	if (tick >= 0 && skate_globals.skating)
+	if (tick >= 0 && skate_local->skating)
 	{
 		long since;
 
 		memset(pad, 0, sizeof(*pad));
-		if (skate_globals.frame.off_board)
+		if (skate_local->frame.off_board)
 		{
 			if (tick % 30 < 4)
 				pad->buttons = 0x8000;
@@ -1416,8 +1592,8 @@ SKATE_TEST_STUCK_ROLL (halo_skate_teleport, as a teleporter puts them) */
 static void skate_test_unstick(long tick)
 {
 	static long slow_since = NONE;
-	long unit_index = skate_globals.unit_index;
-	float const *v = skate_globals.frame.velocity;
+	long unit_index = skate_local->unit_index;
+	float const *v = skate_local->frame.velocity;
 	struct object_datum *object;
 	real_point3d ground;
 	float velocity[3];
@@ -1436,16 +1612,16 @@ static void skate_test_unstick(long tick)
 	slow_since = NONE;
 	object = object_get(unit_index);
 	ground = skate_ground_under(unit_index, &object->object.position);
-	yaw = (real)atan2(skate_globals.frame.forward[1], skate_globals.frame.forward[0]) + SKATE_TEST_STUCK_TURN;
+	yaw = (real)atan2(skate_local->frame.forward[1], skate_local->frame.forward[0]) + SKATE_TEST_STUCK_TURN;
 	velocity[0] = (float)(cos(yaw) * SKATE_TEST_STUCK_ROLL);
 	velocity[1] = (float)(sin(yaw) * SKATE_TEST_STUCK_ROLL);
 	velocity[2] = 0.f;
-	if (halo_skate_teleport(&ground.x, yaw, velocity, &skate_globals.frame) != 0)
+	if (halo_skate_teleport_in(0, &ground.x, yaw, velocity, &skate_local->frame) != 0)
 		return;
 	platform_log("skate test: stuck riding at (%.2f %.2f %.2f) for %d seconds, turned round", ground.x, ground.y,
 		ground.z, SKATE_TEST_STUCK_TICKS / TICKS_PER_SECOND);
 	skate_board_forget();
-	skate_apply_frame(unit_index, TRUE);
+	skate_apply_frame(skate_local, unit_index, TRUE);
 }
 
 static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
@@ -1471,19 +1647,19 @@ static void skate_test_pad(struct halo_skate_pad *pad, boolean *toggle)
 		platform_log("skate test: on the board");
 		*toggle = TRUE;
 	}
-	if (tick == SKATE_TEST_OFF_SECONDS * TICKS_PER_SECOND && skate_globals.skating)
+	if (tick == SKATE_TEST_OFF_SECONDS * TICKS_PER_SECOND && skate_local->skating)
 	{
 		platform_log("skate test: off the board");
 		*toggle = TRUE;
 	}
-	if (!skate_globals.skating)
+	if (!skate_local->skating)
 		return;
 	skate_test_unstick(tick);
 	/* (pushes, A held half a second and let go as long, then the right
 	stick pulled down and flicked up: real_assets.rs's push and ollie) */
 	cycle = tick % SKATE_TEST_CYCLE_TICKS;
 	memset(pad, 0, sizeof(*pad));
-	if (skate_globals.frame.off_board)
+	if (skate_local->frame.off_board)
 	{
 		if (cycle % 30 < 4)
 			pad->buttons = 0x8000;
@@ -1617,6 +1793,9 @@ the object it is (its triangles made once the nearest are known) */
 /* this tick's obstacles of other players, their vehicles and other skaters
 are held: their hits the host decides (skate_send_obstacles) */
 static boolean skate_obstacles_held;
+/* ... and whether people on foot are run over by the skater they are sent to
+(riding, and not a peaceful bot's: skate_bot_drive) */
+static boolean skate_obstacles_run_over;
 
 struct skate_obstacles
 {
@@ -1696,7 +1875,7 @@ static void skate_biped_obstacle(long object_index, real_point3d const *skater, 
 	obstacle.held = skate_obstacles_held;
 	/* (a person on foot, held: run over by a skater riding into them fast
 	enough, as by a vehicle; skate_authority.c decides what it does to them) */
-	obstacle.run_over = skate_obstacles_held && skate_local_skater_riding();
+	obstacle.run_over = skate_obstacles_held && skate_obstacles_run_over;
 	obstacle.center[0] = base.x;
 	obstacle.center[1] = base.y;
 	obstacle.center[2] = base.z + segment / 2.f;
@@ -1900,7 +2079,51 @@ static void skate_skater_nodes(long definition_index, short nodes[3])
 	memcpy(nodes, cached, sizeof(cached));
 }
 
-/* another machine's skater (skate_network.c poses them from their state): their
+/* the board of a skater this machine runs the engine for (the host's own
+player's, or a bot's) where the engine had it last tick: FALSE for none */
+static boolean skate_host_skater_board(long unit_index, real *placement)
+{
+	short index;
+
+	for (index = 0; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		struct skate_skater const *skater = &skate_skaters[index];
+
+		if (skater->skating && skater->unit_index == unit_index && skater->board_has_latest)
+		{
+			memcpy(placement, skater->boards[skater->board_latest], 7 * sizeof(real));
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* the skater rides: on the board, not bailing */
+static boolean skate_skater_riding(struct skate_skater const *skater)
+{
+	return skater->skating && skate_unit_can_skate(skater->unit_index) && !skater->frame.off_board &&
+		strncmp(skater->frame.state, "Wipeout", 7) != 0;
+}
+
+/* the skater this machine runs the engine for whose unit it is, else NULL */
+static struct skate_skater *skate_skater_of_unit(long unit_index)
+{
+	short index;
+
+	if (unit_index == NONE)
+		return NULL;
+	for (index = 0; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		struct skate_skater *skater = &skate_skaters[index];
+
+		if (skater->skating && skater->unit_index == unit_index && skate_unit_can_skate(unit_index))
+			return skater;
+	}
+	return NULL;
+}
+
+/* another machine's skater (skate_network.c poses them from their state), or
+another of this machine's (posed by its engine): their
 body as a capsule from between their feet to their head, as posed, and their
 board as a box where their state has it, both moving at their unit's
 velocity. FALSE when their biped's nodes are not the cyborg's (their pill is
@@ -1954,10 +2177,12 @@ static boolean skate_skater_obstacles(long object_index, real_point3d const *ska
 	skate_obstacle_velocity(object, &obstacle);
 	skate_obstacle_speed_limit(&obstacle, SKATE_MAXIMUM_SKATER_OBSTACLE_SPEED);
 	skate_obstacle_keep(kept, &obstacle, skate_distance(skater, obstacle.center) - obstacle.half_extents[2], NONE);
-	/* (the board drawn last tick: halo_skate_board_obstacle sizes it) */
-	if (player_index != NONE &&
+	/* (the board drawn last tick: halo_skate_board_obstacle sizes it; a skater
+	of this machine's, where its engine had it) */
+	if (((player_index != NONE &&
 		skate_network_board((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), 1.f, &board_unit_index, placement) &&
-		board_unit_index == object_index && halo_skate_board_obstacle(placement, &obstacle) == 0)
+		board_unit_index == object_index) || skate_host_skater_board(object_index, placement)) &&
+		halo_skate_board_obstacle(placement, &obstacle) == 0)
 	{
 		real largest = MAX(obstacle.half_extents[0], MAX(obstacle.half_extents[1], obstacle.half_extents[2]));
 
@@ -1990,7 +2215,7 @@ static void skate_test_run_over_boost(struct skate_obstacles const *kept, real_p
 {
 	static long in_way = NONE;
 	static long seen = 0;
-	float const *v = skate_globals.frame.velocity;
+	float const *v = skate_local->frame.velocity;
 	real speed = (real)sqrt(v[0] * v[0] + v[1] * v[1]);
 	long found = NONE;
 	int index;
@@ -2035,7 +2260,7 @@ static void skate_test_run_over_boost(struct skate_obstacles const *kept, real_p
 }
 
 /* the obstacles around the skater's biped unit_index, to the engine */
-static void skate_send_obstacles(long unit_index)
+static void skate_send_obstacles(struct skate_skater *rider, long unit_index)
 {
 	static float triangles[HALO_SKATE_MAXIMUM_OBSTACLE_TRIANGLES * 9];
 	struct object_datum *unit = object_get(unit_index);
@@ -2051,6 +2276,7 @@ static void skate_send_obstacles(long unit_index)
 	/* (in a network game the host decides hits on other players, their
 	vehicles and other skaters: skate_authority.c) */
 	skate_obstacles_held = skate_authority_holds();
+	skate_obstacles_run_over = skate_skater_riding(rider) && !rider->no_run_over;
 	object_get_origin(unit_index, &skater);
 	/* (collideable objects only: class bit 0) */
 	count = objects_in_sphere(FLAG(0),
@@ -2067,10 +2293,11 @@ static void skate_send_obstacles(long unit_index)
 			continue;
 		if (object->object.type == _object_type_biped)
 		{
-			/* (another machine's skater as their body and board, else as
-			Halo's pill) */
+			/* (another skater, another machine's or another of this
+			machine's, as their body and board, else as Halo's pill) */
 			if (!(object->object.damage_flags & FLAG(_object_dead_bit)) &&
-				!(skate_network_unit_skating(object_index) && skate_skater_obstacles(object_index, &skater, &kept)))
+				!((skate_network_unit_skating(object_index) || skate_skater_of_unit(object_index)) &&
+				skate_skater_obstacles(object_index, &skater, &kept)))
 			{
 				skate_biped_obstacle(object_index, &skater, &kept);
 			}
@@ -2097,7 +2324,9 @@ static void skate_send_obstacles(long unit_index)
 		kept.obstacles[sent++] = *obstacle;
 	}
 	kept.count = sent;
-	halo_skate_set_obstacles(kept.obstacles, kept.count, triangles, used);
+	halo_skate_set_obstacles_in(skate_session(rider), kept.obstacles, kept.count, triangles, used);
+	if (rider != skate_local)
+		return;
 	skate_test_run_over_boost(&kept, &skater);
 	/* (the network tests, debug.network_test_skate and _duel, tell what is
 	near once a second; the engine tells of each hit: "halo-skate: hit a biped
@@ -2123,66 +2352,341 @@ static void skate_send_obstacles(long unit_index)
 
 /* what the engine told of its skater's hits on held obstacles since the last
 step, to the host's verdicts (skate_authority.c) */
-static void skate_take_held_hit(void)
+static void skate_take_held_hit(struct skate_skater *skater)
 {
 	struct halo_skate_held_hit held;
 	real_vector3d normal;
 
-	if (halo_skate_take_held_hit(&held) != 1)
+	if (halo_skate_take_held_hit_in(skate_session(skater), &held) != 1)
 		return;
 	normal.i = held.normal[0];
 	normal.j = held.normal[1];
 	normal.k = held.normal[2];
-	skate_authority_engine_hit(skate_globals.unit_index, held.tag, held.closing, &normal, held.touched != 0,
+	skate_authority_engine_hit(skater->unit_index, held.tag, held.closing, &normal, held.touched != 0,
 		held.bail_held != 0, held.run_over != 0);
 }
 
-void skate_update_before_objects(void)
+/* ---------- the host's bots' skaters
+A bot rides a skate session of its own (skaters 1 on), which bots_skate.c
+drives: each tick it says whether the bot wants to be on a board and the pad
+it holds (skate_bot_drive), before the tick is played. Here the skater gets
+on when its session has the level, steps with that pad beside this machine's
+player's own skater, and is posed, holstered, drawn, heard and sent to the
+other machines as this machine's own skater is (skate_bots_after_objects).
+A session is made the first time a bot wants one (in the background, as the
+startup preload is: several seconds), and kept for the next bot; at most
+server.bot_skaters bots have one. */
+
+/* the most bots' skaters: server.bot_skaters, within the engine's sessions */
+static short skate_bots_allowed(void)
 {
+	long allowed = config_integer("server.bot_skaters");
+	long sessions = halo_skate_sessions() - 1;
+
+	if (sessions > SKATE_MAXIMUM_SKATERS - 1)
+		sessions = SKATE_MAXIMUM_SKATERS - 1;
+	if (allowed < 0)
+		allowed = 0;
+	return (short)(allowed < sessions ? allowed : sessions);
+}
+
+/* the bot's skater (player a datum), else NULL */
+static struct skate_skater *skate_bot_skater(long player_index)
+{
+	short index;
+
+	if (player_index == NONE)
+		return NULL;
+	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		if (skate_skaters[index].player_index == player_index)
+			return &skate_skaters[index];
+	}
+	return NULL;
+}
+
+/* the bot's skater no longer: off the board, its session kept for another */
+static void skate_bot_release(struct skate_skater *skater, char const *reason)
+{
+	skate_stop(skater, reason);
+	skate_network_note_local(skater->player_index, NONE, FALSE, FALSE, NULL, (short)skate_session(skater));
+	platform_log("skate: bot skater %d given up (%s)", skate_session(skater), reason);
+	skater->player_index = NONE;
+	skater->wanted_time = NONE;
+	skater->no_run_over = FALSE;
+}
+
+/* a skater for the bot: its own, else a free one (its session made, and the
+level sent to it), else NULL (none allowed, or no Skate 3 data) */
+static struct skate_skater *skate_bot_skater_for(long player_index)
+{
+	struct skate_skater *skater = skate_bot_skater(player_index);
+	short allowed = skate_bots_allowed();
+	short index;
+
+	if (skater || !skate_local->preloaded)
+		return skater;
+	for (index = 1; index <= allowed; index++)
+	{
+		skater = &skate_skaters[index];
+		if (skater->player_index != NONE)
+			continue;
+		skater->player_index = player_index;
+		skater->wanted_time = game_time_get();
+		if (!skater->preloaded || halo_skate_state_in(index) == -1)
+		{
+			skater->preloaded = halo_skate_preload_in(index, skate_assets()) == 0;
+			skater->loaded_scenario_index = NONE;
+			skater->loaded_structure_bsp_index = NONE;
+			skater->skeleton_definition_index = NONE;
+			platform_log("skate: bot skater %d made for player %ld%s", index, DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index),
+				skater->preloaded ? "" : " (its session could not be made)");
+		}
+		else
+			platform_log("skate: bot skater %d for player %ld", index, DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index));
+		if (!skater->preloaded)
+		{
+			skater->player_index = NONE;
+			return NULL;
+		}
+		if (!skate_map_loaded(skater))
+			skater->map_pending = TRUE;
+		return skater;
+	}
+	return NULL;
+}
+
+boolean skate_bots_available(void)
+{
+	return skate_local->preloaded && skate_bots_allowed() > 0;
+}
+
+boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad,
+	boolean run_over)
+{
+	struct skate_skater *skater = on_board ? skate_bot_skater_for(player_index) : skate_bot_skater(player_index);
+
+	if (!skater)
+		return FALSE;
+	skater->wanted_time = game_time_get();
+	skater->no_run_over = !run_over;
+	if (pad)
+		skater->pad = *pad;
+	else
+		memset(&skater->pad, 0, sizeof(skater->pad));
+	if (!on_board)
+	{
+		if (skater->skating || skater->activate_when_ready)
+			skate_stop(skater, "the bot stepped off");
+		return TRUE;
+	}
+	if (skater->skating && skater->unit_index != unit_index)
+		skate_stop(skater, "the bot's biped left the board");
+	if (!skater->skating && skate_unit_can_skate(unit_index))
+	{
+		skater->activate_when_ready = TRUE;
+		skater->unit_index = unit_index;
+	}
+	return TRUE;
+}
+
+boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
+{
+	struct skate_skater *skater = skate_bot_skater(player_index);
+	float const *velocity;
+
+	memset(view, 0, sizeof(*view));
+	if (!skater)
+		return FALSE;
+	view->ready = skate_map_loaded(skater) && halo_skate_state_in(skate_session(skater)) == 2;
+	view->skating = skater->skating;
+	if (!skater->skating)
+		return TRUE;
+	view->off_board = skater->frame.off_board != 0;
+	view->bailing = !strncmp(skater->frame.state, "Wipeout", 7);
+	view->grinding = !strncmp(skater->frame.state, "Grind", 5);
+	view->airborne = strstr(skater->frame.state, "Air") != NULL;
+	velocity = skater->frame.off_board ? skater->frame.skater_velocity : skater->frame.velocity;
+	view->position[0] = skater->frame.position[0];
+	view->position[1] = skater->frame.position[1];
+	view->position[2] = skater->frame.position[2] + skater->height;
+	view->velocity[0] = velocity[0];
+	view->velocity[1] = velocity[1];
+	view->velocity[2] = velocity[2];
+	view->forward[0] = skater->frame.forward[0];
+	view->forward[1] = skater->frame.forward[1];
+	view->forward[2] = skater->frame.forward[2];
+	strncpy(view->state, skater->frame.state, sizeof(view->state) - 1);
+	return TRUE;
+}
+
+/* (before the objects update) each bot's skater: given up when its bot is
+gone, on the board when its session is ready, off it when its biped left it;
+each riding one's step begun (the sessions step side by side with this
+machine's player's skater; skate_bots_finish_steps takes the poses) */
+static void skate_bots_begin_steps(void)
+{
+	short index;
+
+	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		struct skate_skater *skater = &skate_skaters[index];
+		struct player_datum *player;
+		int state;
+
+		if (skater->player_index == NONE)
+			continue;
+		player = player_try_and_get(skater->player_index);
+		if (!player || !bots_player_is_bot(player) || game_connection() != _game_connection_network_server)
+		{
+			skate_bot_release(skater, "the bot is gone");
+			continue;
+		}
+		/* (a bot that stopped asking: its brain no longer drives it) */
+		if (skater->wanted_time == NONE || game_time_get() - skater->wanted_time > TICKS_PER_SECOND ||
+			game_time_get() < skater->wanted_time)
+		{
+			skate_bot_release(skater, "the bot no longer rides");
+			continue;
+		}
+		state = halo_skate_state_in(index);
+		if (state == -1)
+		{
+			if (skater->skating || skater->activate_when_ready)
+				skate_engine_failed(skater);
+			skate_bot_release(skater, "its skate session failed");
+			continue;
+		}
+		if (skater->skating && (skater->unit_index != player->unit_index || !skate_unit_can_skate(skater->unit_index) ||
+			!skate_map_loaded(skater)))
+		{
+			skate_stop(skater, "the biped left the board");
+		}
+		if (skater->activate_when_ready && state == 2 && skate_map_loaded(skater))
+		{
+			long unit_index = skater->unit_index;
+
+			skater->activate_when_ready = FALSE;
+			if (unit_index != NONE && unit_index == player->unit_index && skate_unit_can_skate(unit_index))
+				skate_start(skater, unit_index);
+			else
+				skater->unit_index = NONE;
+			continue;
+		}
+		if (!skater->skating)
+			continue;
+		/* (moved by a teleporter or a script: the skater goes there) */
+		skate_follow_teleport(skater, skater->unit_index);
+		/* (a blast pushed them) */
+		skate_apply_blast(skater);
+		skate_send_obstacles(skater, skater->unit_index);
+		skater->stepping = halo_skate_step_begin_in(index, &skater->pad, 1.f / TICKS_PER_SECOND) == 0;
+		if (!skater->stepping && halo_skate_state_in(index) == -1)
+		{
+			skate_engine_failed(skater);
+			skate_bot_release(skater, "its skate session failed");
+		}
+	}
+}
+
+/* ... and their poses taken, each placed (as this machine's player's skater
+is in skate_update_before_objects) */
+static void skate_bots_finish_steps(void)
+{
+	short index;
+
+	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		struct skate_skater *skater = &skate_skaters[index];
+		int stepped;
+
+		if (!skater->stepping)
+			continue;
+		skater->stepping = FALSE;
+		/* (as the game waits for this machine's player's skater's step) */
+		stepped = halo_skate_await_step_in(index, SKATE_BOT_STEP_WAIT_MS, &skater->frame);
+		if (stepped == 2)
+		{
+			platform_log("skate: bot skater %d thrown, back on the board", index);
+			skate_skater_board_forget(skater);
+			skate_apply_frame(skater, skater->unit_index, FALSE);
+		}
+		else if (stepped >= 0)
+			skate_apply_frame(skater, skater->unit_index, FALSE);
+		else if (halo_skate_state_in(index) == -1)
+		{
+			skate_engine_failed(skater);
+			skate_bot_release(skater, "its skate session failed");
+			continue;
+		}
+		if (skater->skating)
+			skate_take_held_hit(skater);
+	}
+}
+
+/* this machine's player's skater, before the objects update (the bots'
+steps begun beside it) */
+static void skate_local_update(void)
+{
+	struct skate_skater *skater = skate_local;
 	long unit_index = player_control_get_unit_index(0);
 	struct halo_skate_pad pad;
 	boolean toggle;
+	boolean pending = FALSE;
 	int state;
 	int stepped;
+	short index;
 
 	memset(&pad, 0, sizeof(pad));
 	halo_skate_platform_pad(&pad);
 	toggle = halo_skate_platform_toggle_pressed() ||
 		((pad.buttons & SKATE_THUMB_CLICKS) == SKATE_THUMB_CLICKS &&
-		(skate_globals.previous_buttons & SKATE_THUMB_CLICKS) != SKATE_THUMB_CLICKS);
-	skate_globals.previous_buttons = pad.buttons;
+		(skater->previous_buttons & SKATE_THUMB_CLICKS) != SKATE_THUMB_CLICKS);
+	skater->previous_buttons = pad.buttons;
 	skate_test_pad(&pad, &toggle);
 	skate_test_scenery();
 	/* (other machines' skaters carried on: skate_network.c) */
 	skate_network_update_before_objects();
-	/* the structure bsp loaded since the last tick, with its scenery placed */
-	if (skate_globals.map_pending && !skate_load_map(FALSE))
-		skate_globals.activate_when_ready = FALSE;
-	/* (and again when its scenery changed) */
-	else if (!skate_globals.map_pending && skate_map_loaded() && halo_skate_state() == 2)
-		skate_watch_scenery();
-
-	if (skate_globals.skating && (unit_index != skate_globals.unit_index ||
-		!skate_unit_can_skate(unit_index) || !skate_map_loaded()))
+	/* the structure bsp loaded since the last tick, with its scenery placed
+	(to each session that waits for it: this machine's player's, a bot's
+	just made) */
+	for (index = 0; index < SKATE_MAXIMUM_SKATERS; index++)
+		pending |= skate_skater_used(&skate_skaters[index]) && skate_skaters[index].map_pending;
+	if (pending)
 	{
-		skate_stop("the biped left the board");
+		boolean local_pending = skater->map_pending;
+
+		if (!skate_load_map(FALSE) && local_pending)
+			skater->activate_when_ready = FALSE;
+	}
+	/* (and again when its scenery changed) */
+	else if (skate_map_loaded(skater) && halo_skate_state() == 2)
+		skate_watch_scenery();
+	/* (the bots' skaters step beside this one) */
+	skate_bots_begin_steps();
+
+	if (skater->skating && (unit_index != skater->unit_index ||
+		!skate_unit_can_skate(unit_index) || !skate_map_loaded(skater)))
+	{
+		skate_stop(skater, "the biped left the board");
 	}
 	if (toggle)
 	{
-		if (skate_globals.skating || skate_globals.activate_when_ready)
+		if (skater->skating || skater->activate_when_ready)
 		{
-			skate_stop("J");
+			skate_stop(skater, "J");
 		}
 		else if (skate_unit_can_skate(unit_index))
 		{
 			/* (normally loaded already: at startup and as the bsp loaded.
 			Without the preload, or after a failure, it loads now) */
-			if (!skate_map_loaded() || halo_skate_state() == -1)
+			if (!skate_map_loaded(skater) || halo_skate_state() == -1)
 			{
+				skater->map_pending = TRUE;
 				if (skate_load_map(FALSE))
 					console_printf(FALSE, "skate: loading");
 			}
-			skate_globals.activate_when_ready = TRUE;
+			skater->activate_when_ready = TRUE;
 			if (halo_skate_state() == 1)
 			{
 				console_printf(FALSE, halo_skate_preloading() ?
@@ -2193,34 +2697,34 @@ void skate_update_before_objects(void)
 	}
 
 	state = halo_skate_state();
-	if (state == -1 && (skate_globals.skating || skate_globals.activate_when_ready))
+	if (state == -1 && (skater->skating || skater->activate_when_ready))
 	{
-		skate_engine_failed();
+		skate_engine_failed(skater);
 		return;
 	}
-	if (skate_globals.activate_when_ready && state == 2)
+	if (skater->activate_when_ready && state == 2)
 	{
-		skate_globals.activate_when_ready = FALSE;
+		skater->activate_when_ready = FALSE;
 		if (skate_unit_can_skate(unit_index))
-			skate_start(unit_index);
+			skate_start(skater, unit_index);
 		return;
 	}
-	if (!skate_globals.skating)
+	if (!skater->skating)
 		return;
 	/* (the network test's duel: on the board in another skater's way) */
 	{
 		real_point3d spot;
 		real yaw;
 
-		if (skate_network_block_spot(skate_globals.unit_index, TRUE, &spot, &yaw))
-			skate_put(skate_globals.unit_index, &spot, yaw);
+		if (skate_network_block_spot(skater->unit_index, TRUE, &spot, &yaw))
+			skate_put(skater, skater->unit_index, &spot, yaw);
 	}
 	/* (moved by a teleporter or a script: the skater goes there) */
-	skate_follow_teleport(skate_globals.unit_index);
+	skate_follow_teleport(skater, skater->unit_index);
 	/* (a blast pushed them) */
-	skate_apply_blast();
-	skate_send_obstacles(skate_globals.unit_index);
-	stepped =halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skate_globals.frame);
+	skate_apply_blast(skater);
+	skate_send_obstacles(skater, skater->unit_index);
+	stepped =halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skater->frame);
 	if (stepped == 2)
 	{
 		/* a step failed (a bail the engine could not follow): the engine put
@@ -2228,15 +2732,21 @@ void skate_update_before_objects(void)
 		camera turns from where it was rather than snapping round */
 		console_printf(FALSE, "skate: thrown, back on the board");
 		skate_board_forget();
-		skate_apply_frame(skate_globals.unit_index, FALSE);
+		skate_apply_frame(skater, skater->unit_index, FALSE);
 	}
 	else if (stepped >= 0)
-		skate_apply_frame(skate_globals.unit_index, FALSE);
+		skate_apply_frame(skater, skater->unit_index, FALSE);
 	else if (halo_skate_state() == -1)
-		skate_engine_failed();
+		skate_engine_failed(skater);
 	/* (its hits on held obstacles, for the host to decide: skate_authority.c) */
-	if (skate_globals.skating)
-		skate_take_held_hit();
+	if (skater->skating)
+		skate_take_held_hit(skater);
+}
+
+void skate_update_before_objects(void)
+{
+	skate_local_update();
+	skate_bots_finish_steps();
 }
 
 #endif
@@ -2473,12 +2983,13 @@ test reads it: port/web/tests/skate.mjs). (Finite: between the largest floats,
 which neither a NaN nor an infinity is; the game's C has no isfinite) */
 static void skate_status(int written, int node_count, real_matrix4x3 const *matrices)
 {
+	struct skate_skater *skater = skate_local;
 	static double interval = -1.0;
 	static long last_tick = NONE;
 	long now = game_time_get();
 	float const *values = &matrices[0].scale;
-	float const *velocity = skate_globals.frame.off_board ? skate_globals.frame.skater_velocity :
-		skate_globals.frame.velocity;
+	float const *velocity = skater->frame.off_board ? skater->frame.skater_velocity :
+		skater->frame.velocity;
 	boolean finite = TRUE;
 	int index;
 
@@ -2494,18 +3005,99 @@ static void skate_status(int written, int node_count, real_matrix4x3 const *matr
 	}
 	for (index = 0; index < 3; index++)
 	{
-		if (!(skate_globals.frame.position[index] > -FLT_MAX && skate_globals.frame.position[index] < FLT_MAX))
+		if (!(skater->frame.position[index] > -FLT_MAX && skater->frame.position[index] < FLT_MAX))
 			finite = FALSE;
 	}
 	platform_log("skate status: %s at (%.2f %.2f %.2f), %.1f m/s, %s, posed %d of %d nodes, the pose %s, the board "
-		"drawn %ld times", skate_globals.frame.state, skate_globals.frame.position[0], skate_globals.frame.position[1],
-		skate_globals.frame.position[2], sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] +
-		velocity[2] * velocity[2]) * 3.048, skate_globals.frame.off_board ? "off the board" : "on the board", written,
+		"drawn %ld times", skater->frame.state, skater->frame.position[0], skater->frame.position[1],
+		skater->frame.position[2], sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] +
+		velocity[2] * velocity[2]) * 3.048, skater->frame.off_board ? "off the board" : "on the board", written,
 		node_count, finite ? "finite" : "NOT FINITE", skate_status_board_draws);
+}
+
+/* the skater's board where its engine has it this tick, kept (with the last
+tick's) to draw it between them and to collide with it; NULL when none */
+static float const *skate_skater_board_note(struct skate_skater *skater, float *placement)
+{
+	short next;
+
+	if (halo_skate_board_placement_in(skate_session(skater), placement) != 0)
+	{
+		skater->board_has_latest = FALSE;
+		skater->board_has_previous = FALSE;
+		return NULL;
+	}
+	next = skater->board_has_latest ? (short)(skater->board_latest ^ 1) : skater->board_latest;
+	memcpy(skater->boards[next], placement, sizeof(skater->boards[next]));
+	skater->board_has_previous = skater->board_has_latest;
+	if (skater->board_has_previous)
+	{
+		real const *previous = skater->boards[next ^ 1];
+		real dx = placement[4] - previous[4], dy = placement[5] - previous[5], dz = placement[6] - previous[6];
+
+		if (!(dx * dx + dy * dy + dz * dz <= SKATE_BOARD_SNAP_DISTANCE * SKATE_BOARD_SNAP_DISTANCE))
+			skater->board_has_previous = FALSE;
+	}
+	skater->board_has_latest = TRUE;
+	skater->board_latest = next;
+	return placement;
+}
+
+/* (after the objects update) each bot's skater posed as its engine has it,
+its weapon holstered, its board kept and lit, and the other machines told
+(as this machine's player's skater) */
+static void skate_bots_after_objects(void)
+{
+	real_matrix4x3 matrices[SKATE_MAXIMUM_NODES];
+	short index;
+
+	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		struct skate_skater *skater = &skate_skaters[index];
+		struct object_datum *object;
+		real_matrix4x3 *node_matrices;
+		float placement[7];
+		float const *board;
+		int node_count;
+		int written;
+
+		if (skater->player_index == NONE)
+			continue;
+		if (!skater->skating || !skate_unit_can_skate(skater->unit_index))
+		{
+			skate_network_note_local(skater->player_index, NONE, FALSE, FALSE, NULL, index);
+			skate_skater_board_forget(skater);
+			continue;
+		}
+		object = object_get(skater->unit_index);
+		node_count = object->object.node_matrices.size / (int)sizeof(real_matrix4x3);
+		if (node_count <= 0 || node_count > SKATE_MAXIMUM_NODES)
+			continue;
+		node_matrices = (real_matrix4x3 *)object_header_block_get(skater->unit_index, &object->object.node_matrices);
+		written = halo_skate_pose_nodes_in(index, &matrices[0].scale, node_count);
+		if (written != node_count && !skater->skeleton_described_again)
+		{
+			platform_log("skate: bot skater %d posed %d of %d nodes: describing the skeleton again", index, written,
+				node_count);
+			skater->skeleton_definition_index = NONE;
+			skater->skeleton_described_again = TRUE;
+			skate_describe_skeleton(skater, skater->unit_index);
+			written = halo_skate_pose_nodes_in(index, &matrices[0].scale, node_count);
+		}
+		if (written == node_count)
+			memcpy(node_matrices, matrices, sizeof(real_matrix4x3) * node_count);
+		skate_holster_weapon(skater->unit_index, node_matrices, node_count);
+		board = skate_skater_board_note(skater, placement);
+		if (board)
+			skate_board_light(skater->unit_index, skater->board_lights);
+		skate_network_note_local(skater->player_index, skater->unit_index, (boolean)(skater->frame.off_board != 0),
+			!strncmp(skater->frame.state, "Wipeout", 7), board, index);
+	}
 }
 
 void skate_update_after_objects(void)
 {
+	struct skate_skater *skater = skate_local;
 	real_matrix4x3 matrices[SKATE_MAXIMUM_NODES];
 	struct object_datum *object;
 	real_matrix4x3 *node_matrices;
@@ -2514,8 +3106,8 @@ void skate_update_after_objects(void)
 
 	short player_index;
 
-	skate_sound_update(skate_globals.skating && skate_unit_can_skate(skate_globals.unit_index), skate_globals.unit_index,
-		skate_globals.frame.position);
+	skate_sound_update(skater->skating && skate_unit_can_skate(skater->unit_index), skater->unit_index,
+		skater->frame.position);
 	/* other machines' skaters posed, and their boards lit (skate_network.c) */
 	skate_network_update_after_objects();
 	if (skate_board_ready())
@@ -2529,61 +3121,66 @@ void skate_update_after_objects(void)
 				skate_board_light(unit_index, skate_remote_lights[player_index]);
 		}
 	}
-	if (!skate_globals.skating || !skate_unit_can_skate(skate_globals.unit_index))
+	/* (the host's bots' skaters) */
+	skate_bots_after_objects();
+	if (!skater->skating || !skate_unit_can_skate(skater->unit_index))
 	{
-		skate_network_note_local(local_player_get_player_index(0), NONE, FALSE, FALSE, NULL);
-		skate_board_forget();
+		skate_network_note_local(local_player_get_player_index(0), NONE, FALSE, FALSE, NULL, 0);
+		skate_skater_board_forget(skater);
 		return;
 	}
-	skate_board_capture(skate_globals.unit_index);
-	object = object_get(skate_globals.unit_index);
+	skate_board_capture(skater->unit_index);
+	object = object_get(skater->unit_index);
 	node_count = object->object.node_matrices.size / (int)sizeof(real_matrix4x3);
 	if (node_count <= 0 || node_count > SKATE_MAXIMUM_NODES)
 		return;
-	node_matrices = (real_matrix4x3 *)object_header_block_get(skate_globals.unit_index,
+	node_matrices = (real_matrix4x3 *)object_header_block_get(skater->unit_index,
 		&object->object.node_matrices);
 	written = halo_skate_pose_nodes(&matrices[0].scale, node_count);
-	if (written != node_count && !skate_globals.skeleton_described_again)
+	if (written != node_count && !skater->skeleton_described_again)
 	{
 		/* the engine lost the skeleton (it never should: lib.rs keeps it
 		across restarts): told again, rather than the biped left standing on
 		the board in Halo's own pose */
 		platform_log("skate: the skate engine posed %d of %d nodes: describing the skeleton again", written,
 			node_count);
-		skate_globals.skeleton_definition_index = NONE;
-		skate_globals.skeleton_described_again = TRUE;
-		skate_describe_skeleton(skate_globals.unit_index);
+		skater->skeleton_definition_index = NONE;
+		skater->skeleton_described_again = TRUE;
+		skate_describe_skeleton(skater, skater->unit_index);
 		written = halo_skate_pose_nodes(&matrices[0].scale, node_count);
 	}
 	if (written == node_count)
 		memcpy(node_matrices, matrices, sizeof(real_matrix4x3) * node_count);
 	skate_status(written, node_count, matrices);
 	/* on a board the weapon is never in hand, posed or not */
-	skate_holster_weapon(skate_globals.unit_index, node_matrices, node_count);
+	skate_holster_weapon(skater->unit_index, node_matrices, node_count);
 	/* and the others told, in a network game (skate_network.c) */
 	{
 		float placement[7];
 
-		skate_network_note_local(local_player_get_player_index(0), skate_globals.unit_index,
-			(boolean)(skate_globals.frame.off_board != 0), !strncmp(skate_globals.frame.state, "Wipeout", 7),
-			halo_skate_board_placement(placement) == 0 ? placement : NULL);
+		skate_network_note_local(local_player_get_player_index(0), skater->unit_index,
+			(boolean)(skater->frame.off_board != 0), !strncmp(skater->frame.state, "Wipeout", 7),
+			skate_skater_board_note(skater, placement), 0);
 	}
 }
 
 boolean skate_local_pose(long unit_index, real_matrix4x3 *nodes, int count, char const **state)
 {
-	if (unit_index == NONE || unit_index != skate_local_skater_unit() || count <= 0 || count > SKATE_MAXIMUM_NODES)
+	struct skate_skater *skater = skate_skater_of_unit(unit_index);
+
+	if (!skater || count <= 0 || count > SKATE_MAXIMUM_NODES)
 		return FALSE;
 	if (state)
-		*state = skate_globals.frame.state;
-	return halo_skate_pose_nodes(&nodes[0].scale, count) == count;
+		*state = skater->frame.state;
+	return halo_skate_pose_nodes_in(skate_session(skater), &nodes[0].scale, count) == count;
 }
 
 boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration)
 {
+	struct skate_skater *skater = skate_skater_of_unit(unit_index);
 	struct biped_datum *biped;
 
-	if (!skate_globals.skating || unit_index == NONE || unit_index != skate_globals.unit_index)
+	if (!skater)
 		return FALSE;
 	biped = biped_get(unit_index);
 	/* (dead, the body flies as anyone's) */
@@ -2592,35 +3189,56 @@ boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration)
 	/* (as biped_accelerate pushes a living biped: half) */
 	if (!TEST_FLAG(biped_definition_get(biped->definition_index)->unit.flags, _unit_is_special_bit))
 	{
-		skate_globals.blast.i += acceleration->i * 0.5f;
-		skate_globals.blast.j += acceleration->j * 0.5f;
-		skate_globals.blast.k += acceleration->k * 0.5f;
+		skater->blast.i += acceleration->i * 0.5f;
+		skater->blast.j += acceleration->j * 0.5f;
+		skater->blast.k += acceleration->k * 0.5f;
 	}
 	return TRUE;
 }
 
 boolean skate_unit_is_skating(long unit_index)
 {
-	return (skate_globals.skating && unit_index != NONE && unit_index == skate_globals.unit_index) ||
-		skate_network_unit_skating(unit_index);
+	short index;
+
+	for (index = 0; index < SKATE_MAXIMUM_SKATERS && unit_index != NONE; index++)
+	{
+		if (skate_skaters[index].skating && unit_index == skate_skaters[index].unit_index)
+			return TRUE;
+	}
+	return skate_network_unit_skating(unit_index);
 }
 
 long skate_local_skater_unit(void)
 {
-	return skate_globals.skating && skate_unit_can_skate(skate_globals.unit_index) ? skate_globals.unit_index : NONE;
+	struct skate_skater *skater = skate_local;
+
+	return skater->skating && skate_unit_can_skate(skater->unit_index) ? skater->unit_index : NONE;
 }
 
 boolean skate_local_skater_riding(void)
 {
-	return skate_local_skater_unit() != NONE && !skate_globals.frame.off_board &&
-		strncmp(skate_globals.frame.state, "Wipeout", 7) != 0;
+	return skate_skater_riding(skate_local);
+}
+
+boolean skate_host_skater_riding(long unit_index)
+{
+	struct skate_skater *skater = skate_skater_of_unit(unit_index);
+
+	return skater && skate_skater_riding(skater);
+}
+
+boolean skate_host_skater(long unit_index)
+{
+	return skate_skater_of_unit(unit_index) != NULL;
 }
 
 boolean skate_force_bail(long unit_index, real closing)
 {
-	if (unit_index == NONE || unit_index != skate_local_skater_unit())
+	struct skate_skater *skater = skate_skater_of_unit(unit_index);
+
+	if (!skater)
 		return FALSE;
-	return halo_skate_force_bail(closing) == 0;
+	return halo_skate_force_bail_in(skate_session(skater), closing) == 0;
 }
 
 real skate_obstacle_bail_speed(void)
@@ -2630,10 +3248,12 @@ real skate_obstacle_bail_speed(void)
 
 boolean skate_local_player_skating(short local_player_index, real *yaw)
 {
-	if (local_player_index != 0 || !skate_globals.skating)
+	struct skate_skater *skater = skate_local;
+
+	if (local_player_index != 0 || !skater->skating)
 		return FALSE;
 	if (yaw)
-		*yaw = skate_globals.camera.heading;
+		*yaw = skater->camera.heading;
 	return TRUE;
 }
 
@@ -2814,6 +3434,34 @@ boolean skate_force_bail(long unit_index, real closing)
 real skate_obstacle_bail_speed(void)
 {
 	return 6.f / 3.048f;
+}
+
+/* (no bot skates without the mode) */
+boolean skate_bots_available(void)
+{
+	return FALSE;
+}
+
+boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad,
+	boolean run_over)
+{
+	return FALSE;
+}
+
+boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
+{
+	memset(view, 0, sizeof(*view));
+	return FALSE;
+}
+
+boolean skate_host_skater_riding(long unit_index)
+{
+	return FALSE;
+}
+
+boolean skate_host_skater(long unit_index)
+{
+	return FALSE;
 }
 
 #endif

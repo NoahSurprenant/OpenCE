@@ -51,6 +51,7 @@ decides), and its client's skater decides its own hits as before. */
 #include "units/units.h"
 #include "network_distributed.h"
 
+#include "bots.h"
 #include "skate.h"
 
 #include <math.h>
@@ -469,8 +470,10 @@ static void skate_verdict_text(struct skate_verdict const *verdict, char *text, 
 
 static struct skate_local_hit
 {
-	/* what was hit (NONE: a free slot) */
+	/* what was hit (NONE: a free slot), and by which of this machine's
+	skaters (its player's, or on the host a bot's: skate.c) */
 	long target_index;
+	long skater_index;
 	byte number;
 	long first_time;
 	long last_time;
@@ -606,16 +609,16 @@ static byte skate_authority_player_of(long object_index)
 }
 
 /* whether a unit is a skater on the board and not bailing, as this machine
-has them: its own skater as its engine has them, another machine's as their
-state says */
+has them: its own skaters (its player's, the host's bots') as its engine has
+them, another machine's as their state says */
 static boolean skate_authority_riding(long unit_index)
 {
 	byte player_index;
 
 	if (unit_index == NONE)
 		return FALSE;
-	if (unit_index == skate_local_skater_unit())
-		return skate_local_skater_riding();
+	if (skate_host_skater_riding(unit_index))
+		return TRUE;
 	player_index = skate_authority_player_of(unit_index);
 	return player_index != SKATE_AUTHORITY_NO_PLAYER && skate_network_player_riding(player_index) &&
 		skate_network_unit_skating(unit_index);
@@ -641,9 +644,17 @@ static void skate_authority_measure(word number, long object_index, real_vector3
 	measure->along.k = 0.f;
 }
 
-/* this machine's skater's hit on target_index (a slot within
+/* whether this machine runs the player's skater: its own player, or on the
+host one of its bots (skate.c runs their skate engine) */
+static boolean skate_authority_runs(struct player_datum const *player)
+{
+	return player && (player->local_player_index != NONE ||
+		(game_connection() == _game_connection_network_server && bots_player_is_bot(player)));
+}
+
+/* this machine's skater's (skater_index's) hit on target_index (a slot within
 SKATE_AUTHORITY_APART_TICKS of its last contact), else NULL */
-static struct skate_local_hit *skate_authority_local_hit(long target_index)
+static struct skate_local_hit *skate_authority_local_hit(long skater_index, long target_index)
 {
 	short index;
 
@@ -651,7 +662,7 @@ static struct skate_local_hit *skate_authority_local_hit(long target_index)
 	{
 		struct skate_local_hit *hit = &skate_local_hits[index];
 
-		if (hit->target_index != NONE && hit->target_index == target_index &&
+		if (hit->target_index != NONE && hit->target_index == target_index && hit->skater_index == skater_index &&
 			game_time_get() - hit->last_time <= SKATE_AUTHORITY_APART_TICKS)
 		{
 			return hit;
@@ -662,7 +673,7 @@ static struct skate_local_hit *skate_authority_local_hit(long target_index)
 
 /* a slot for a new hit of this machine's skater on target_index: a free
 one, else the oldest */
-static struct skate_local_hit *skate_authority_new_local_hit(long target_index)
+static struct skate_local_hit *skate_authority_new_local_hit(long skater_index, long target_index)
 {
 	struct skate_local_hit *hit = &skate_local_hits[0];
 	short index;
@@ -679,6 +690,7 @@ static struct skate_local_hit *skate_authority_new_local_hit(long target_index)
 	}
 	memset(hit, 0, sizeof(*hit));
 	hit->target_index = target_index;
+	hit->skater_index = skater_index;
 	hit->number = ++skate_authority_globals.next_hit_number;
 	hit->first_time = game_time_get();
 	hit->last_time = game_time_get();
@@ -703,15 +715,14 @@ static void skate_authority_settle(struct skate_verdict const *verdict)
 
 		/* (this machine's player's skater, on the board still or not) */
 		if ((party && !TEST_FLAG(verdict->flags, _skate_verdict_second_skater_bit)) ||
-			player_index == SKATE_AUTHORITY_NO_PLAYER || !distributed_player(player_index) ||
-			distributed_player(player_index)->local_player_index == NONE ||
+			player_index == SKATE_AUTHORITY_NO_PLAYER || !skate_authority_runs(distributed_player(player_index)) ||
 			distributed_living_unit(distributed_player(player_index)) != skater_index)
 		{
 			continue;
 		}
-		hit = skate_authority_local_hit(other_index);
+		hit = skate_authority_local_hit(skater_index, other_index);
 		if (!hit)
-			hit = skate_authority_new_local_hit(other_index);
+			hit = skate_authority_new_local_hit(skater_index, other_index);
 		/* (each verdict once; a newer one on the same hit is the host's still) */
 		if (hit->resolved && hit->verdict == verdict->number)
 			continue;
@@ -915,7 +926,7 @@ static void skate_authority_decide(long machine_index, struct skate_report const
 	short index;
 
 	if (report->player_index >= SKATE_NETWORK_PLAYERS || !(player = distributed_player(report->player_index)) ||
-		(machine_index == NONE ? player->local_player_index == NONE :
+		(machine_index == NONE ? !skate_authority_runs(player) :
 		!distributed_machine_has_player(machine_index, report->player_index)))
 	{
 		return;
@@ -1038,7 +1049,7 @@ void skate_authority_engine_hit(long skater_index, long target_index, real closi
 		return;
 	}
 	if (touched)
-		hit = skate_authority_local_hit(target_index);
+		hit = skate_authority_local_hit(skater_index, target_index);
 	else
 	{
 		/* (a bail held without a contact this tick: the latest hit's) */
@@ -1046,7 +1057,8 @@ void skate_authority_engine_hit(long skater_index, long target_index, real closi
 		{
 			struct skate_local_hit *candidate = &skate_local_hits[index];
 
-			if (candidate->target_index != NONE && now - candidate->last_time <= SKATE_AUTHORITY_APART_TICKS &&
+			if (candidate->target_index != NONE && candidate->skater_index == skater_index &&
+				now - candidate->last_time <= SKATE_AUTHORITY_APART_TICKS &&
 				(!hit || candidate->last_time > hit->last_time))
 			{
 				hit = candidate;
@@ -1057,7 +1069,7 @@ void skate_authority_engine_hit(long skater_index, long target_index, real closi
 	}
 	if (!hit)
 	{
-		hit = skate_authority_new_local_hit(target_index);
+		hit = skate_authority_new_local_hit(skater_index, target_index);
 		hit->send_until = now + SKATE_AUTHORITY_REPEAT_TICKS;
 		platform_log("skate hit %d: this machine's skater (player %d) hit %s at %.1f m/s%s, for the host to decide",
 			hit->number, skate_authority_player_of(skater_index) == SKATE_AUTHORITY_NO_PLAYER ? -1 :
@@ -1124,8 +1136,11 @@ short skate_authority_reports(byte *out, short capacity)
 		struct skate_local_hit const *hit = &skate_local_hits[index];
 		struct skate_report report;
 
-		if (hit->target_index == NONE || hit->resolved || hit->send_until == NONE || now > hit->send_until)
+		if (hit->target_index == NONE || hit->skater_index != skater_index || hit->resolved ||
+			hit->send_until == NONE || now > hit->send_until)
+		{
 			continue;
+		}
 		memset(&report, 0, sizeof(report));
 		report.player_index = player_index;
 		report.flags = (byte)((hit->bail_held ? FLAG(_skate_report_bail_held_bit) : 0) |
@@ -1222,7 +1237,6 @@ void skate_authority_handle_verdicts(byte const *data, byte const *end, short co
 void skate_authority_update(void)
 {
 	long now = game_time_get();
-	long skater_index = skate_local_skater_unit();
 	short index;
 
 	if (game_connection() != _game_connection_network_client && game_connection() != _game_connection_network_server)
@@ -1256,7 +1270,7 @@ void skate_authority_update(void)
 			hit->bails = TRUE;
 			platform_log("skate hit %d: no verdict came in time, this machine's skater bails as its engine held",
 				hit->number);
-			skate_force_bail(skater_index, hit->closing);
+			skate_force_bail(hit->skater_index, hit->closing);
 		}
 		if (now - hit->last_time > SKATE_AUTHORITY_APART_TICKS + SKATE_AUTHORITY_WAIT_TICKS || now < hit->first_time)
 			hit->target_index = NONE;

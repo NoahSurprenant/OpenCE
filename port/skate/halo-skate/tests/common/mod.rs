@@ -493,7 +493,7 @@ pub fn error() -> String {
     unsafe { CStr::from_ptr(halo_skate_error()) }.to_string_lossy().into_owned()
 }
 
-fn wait(what: &str, limit: Duration, done: impl Fn() -> bool) {
+pub fn wait(what: &str, limit: Duration, done: impl Fn() -> bool) {
     let started = Instant::now();
     while !done() {
         assert!(started.elapsed() < limit, "{what} took longer than {limit:?}");
