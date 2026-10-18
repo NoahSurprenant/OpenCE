@@ -24,9 +24,10 @@ RUN_OVER_KILLED = re.compile(r"skate verdict \d+: the person run over died here,
 
 
 def _server():
-    """the build the dedicated servers run: HALO_TEST_GAME's, the --skate one
-    (the server image has no Skate 3 mode)"""
-    return os.environ.get("HALO_TEST_GAME")
+    """the dedicated server's build (HALO_TEST_SERVER: the server image's, a
+    release build with the mode), else HALO_TEST_GAME's"""
+    server = os.environ.get("HALO_TEST_SERVER")
+    return server if server and Path(server).is_file() else os.environ.get("HALO_TEST_GAME")
 
 
 def _needs_skate():
@@ -130,7 +131,7 @@ def test_skating_bots_ride_and_fight(tmp_path):
 def test_skating_bots_run_over(tmp_path):
     """A bot that rams (debug.bot_skate "ram": it stays on its board in a
     fight) and a peaceful bot standing still on foot ('stand'), on Blood Gulch's dedicated
-    server (HALO_TEST_GAME's --skate build) with Skate 3 data: the first rides at the other on foot and runs
+    server (the server image's build, HALO_TEST_SERVER) with Skate 3 data: the first rides at the other on foot and runs
     them over, the host deciding it (skate_authority.c) and crediting the
     kill to the skater, as a vehicle's driver. Until the first such kill (at
     most a five-minute game): about two to three minutes."""
@@ -172,7 +173,7 @@ def test_skating_bots_harmless(tmp_path):
 
 def test_skating_bots_need_data(tmp_path):
     """The same dedicated server without Skate 3 data (HALO_SKATE_ASSETS names
-    no folder): it says
+    no folder, as the server image without its skate-data volume): it says
     so, makes no skate session, and its bots stay on foot and play. About a
     minute and a half."""
     _, maps, _ = _needs_skate()

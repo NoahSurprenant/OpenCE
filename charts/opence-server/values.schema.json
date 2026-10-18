@@ -87,6 +87,23 @@
         "readOnly": { "type": "boolean" }
       }
     },
+    "skateData": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingClaim": { "type": "string" },
+        "nfs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "server": { "type": "string" },
+            "path": { "type": "string" }
+          }
+        },
+        "volume": { "$ref": "#/definitions/k8sObject" },
+        "subPath": { "type": "string" }
+      }
+    },
     "logs": {
       "type": "object",
       "additionalProperties": false,
@@ -105,7 +122,8 @@
         "timeLimit": { "type": "integer", "minimum": 0 },
         "scoreLimit": { "type": "integer", "minimum": 0 },
         "bots": { "type": "integer", "minimum": 0, "maximum": 16 },
-        "botDifficulty": { "type": "string", "enum": ["peaceful", "easy", "normal", "hard", "legendary"] }
+        "botDifficulty": { "type": "string", "enum": ["peaceful", "easy", "normal", "hard", "legendary"] },
+        "botSkaters": { "type": "integer", "minimum": 0, "maximum": 8 }
       }
     },
     "network": {

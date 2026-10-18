@@ -18,6 +18,10 @@
 {{- $env = append $env (dict "name" "HALO_SERVER_SCORE_LIMIT" "value" (toString (int .Values.server.scoreLimit))) }}
 {{- $env = append $env (dict "name" "HALO_SERVER_BOTS" "value" (toString (int .Values.server.bots))) }}
 {{- $env = append $env (dict "name" "HALO_SERVER_BOT_DIFFICULTY" "value" .Values.server.botDifficulty) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_BOT_SKATERS" "value" (toString (int .Values.server.botSkaters))) }}
+{{- if include "opence-server.hasSkateData" . }}
+{{- $env = append $env (dict "name" "HALO_SKATE_ASSETS" "value" "/skate-data/assets") }}
+{{- end }}
 {{- $env = append $env (dict "name" "HALO_NET_ONLINE" "value" (toString .Values.network.online)) }}
 {{- $env = append $env (dict "name" "HALO_NET_TUNNEL_PORT" "value" (toString (int .Values.network.tunnelPort))) }}
 {{- $env = append $env (dict "name" "HALO_NET_HOST_PUBLIC" "value" (toString .Values.network.hostPublic)) }}
@@ -130,6 +134,15 @@ spec:
               subPath: {{ . }}
               {{- end }}
             {{- end }}
+            {{- if include "opence-server.hasSkateData" . }}
+            # the converted Skate 3 data (HALO_SKATE_ASSETS=/skate-data/assets): the bots ride boards
+            - name: skate-data
+              mountPath: /skate-data
+              readOnly: true
+              {{- with .Values.skateData.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+            {{- end }}
             {{- if include "opence-server.hasLogs" . }}
             # debug.txt (HALO_LOG_ROOT)
             - name: logs
@@ -178,6 +191,21 @@ spec:
             readOnly: {{ .Values.customMaps.readOnly }}
           {{- else }}
           {{- toYaml .Values.customMaps.volume | nindent 10 }}
+          {{- end }}
+        {{- end }}
+        {{- if include "opence-server.hasSkateData" . }}
+        - name: skate-data
+          {{- if .Values.skateData.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.skateData.existingClaim }}
+            readOnly: true
+          {{- else if and .Values.skateData.nfs.server .Values.skateData.nfs.path }}
+          nfs:
+            server: {{ .Values.skateData.nfs.server }}
+            path: {{ .Values.skateData.nfs.path }}
+            readOnly: true
+          {{- else }}
+          {{- toYaml .Values.skateData.volume | nindent 10 }}
           {{- end }}
         {{- end }}
         {{- if include "opence-server.hasLogs" . }}

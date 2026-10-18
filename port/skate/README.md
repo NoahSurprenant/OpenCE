@@ -861,6 +861,10 @@ boards to travel (`port/linux/game/bots_skate.c`): each bot on a board rides
 a skate session of its own (above, "Several skaters"), at most
 `server.bot_skaters` of them at once (4 at first). Without the mode or the
 data the bots walk, as before.
+The server image (`docker/server/Dockerfile`, chart `charts/opence-server`) is
+such a build: mount your own `skate-data` folder at `/skate-data`, read-only
+(the chart's `skateData`), and its bots ride; without it they walk. The data
+is never in the image.
 
 - **On:** the way ahead along its path (the walking graph) rolls - walks not
   steeper than 0.45 up or 0.8 down, drops of 1 world unit or less - for 15

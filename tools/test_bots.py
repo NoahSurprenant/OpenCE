@@ -645,9 +645,13 @@ def _moved(text):
 def test_bots_difficulties(tmp_path):
     """Two bots, easy against legendary (debug.bot_difficulties), one
     against the other in two three-minute Slayer games (Hang 'Em High, then
-    Chill Out; their games seeded): legendary kills twice as many as easy
-    over both (the bots_combat.c table; README "Bots"). In eight such games
-    locally legendary won every one, 59 kills to 12 (the closest 5 to 3). (Four bots, one of each difficulty, are too noisy for a test of
+    Chill Out; their games seeded): over both, legendary kills more and dies
+    less than easy (the bots_combat.c table; README "Bots"). In eight such
+    games locally legendary won every one, 59 kills to 12 (the closest 5 to
+    3); the seeds fix the games' random numbers, not the machine's timing, so
+    on a busy runner a game can still go 2 to 2, and a few kills a game make
+    "twice as many" too tight a test (it failed twice in CI: 11 to 7, and 7
+    to 4 with a draw). (Four bots, one of each difficulty, are too noisy for a test of
     two games: the order shows over 16 games, the README's table. Peaceful,
     which never fights, is test_bots_peaceful.) About seven minutes."""
     maps, _ = _needs("HALO_TEST_SERVER")
@@ -666,8 +670,10 @@ def test_bots_difficulties(tmp_path):
         print(f"{game.splitlines()[0]}: kills, deaths {kills}")
         games.append(kills)
     assert len(games) == 2 and all(len(kills) == 2 for kills in games), log[-4000:]
-    assert sum(kills["legendary"][0] for kills in games) >= 2 * sum(kills["easy"][0] for kills in games), \
-        f"legendary did not kill twice as many as easy: {games}"
+    total = {level: (sum(kills[level][0] for kills in games), sum(kills[level][1] for kills in games))
+             for level in ("easy", "legendary")}
+    assert total["legendary"][0] > total["easy"][0] and total["legendary"][1] < total["easy"][1], \
+        f"legendary did not kill more and die less than easy over both games: {games}"
 
 
 def test_bots_ctf(tmp_path):
