@@ -273,26 +273,20 @@ impl Detector {
     }
 }
 
-/// The worker's detector, between its ticks.
-static DETECTOR: std::sync::Mutex<Option<Detector>> = std::sync::Mutex::new(None);
-
-/// (the worker, after each tick of the engine) the tick's events and loops to
-/// the mixer.
-pub(crate) fn observe(session: &skate_host::bridge::Session) {
+/// (the worker, after each tick of the engine; each worker has its own
+/// detector) the tick's events and loops to the mixer.
+pub(crate) fn observe(session: &skate_host::bridge::Session, detector: &mut Detector) {
     let now = session.sound_observation();
     let mut events = Vec::new();
-    let loops = {
-        let mut guard = DETECTOR.lock().unwrap_or_else(|e| e.into_inner());
-        guard.get_or_insert_with(Detector::default).observe(&now, &mut events)
-    };
+    let loops = detector.observe(&now, &mut events);
     crate::mixer::engine_tick(&events, &loops);
 }
 
 /// (the worker) the skater was put on the board, by J or after a failed
 /// step: its state as it is makes no sound.
-pub(crate) fn reset(session: &skate_host::bridge::Session) {
+pub(crate) fn reset(session: &skate_host::bridge::Session, detector: &mut Detector) {
     let now = session.sound_observation();
-    DETECTOR.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Detector::default).reset(&now);
+    detector.reset(&now);
 }
 
 #[cfg(test)]

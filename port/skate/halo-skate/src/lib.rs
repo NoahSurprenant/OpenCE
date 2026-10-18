@@ -12,12 +12,22 @@
 //!
 //! Halo space is Z up in world units of 10 feet; Skate space is Y up in metres.
 //! `to_skate` is a proper rotation, so a triangle's winding survives it.
+//!
+//! Several skaters: up to `MAXIMUM_SESSIONS` sessions, each with its own
+//! worker, session, collision and pose. Session 0 is this machine's player's,
+//! which the calls without a session number drive; the others (the host's
+//! bots) are driven by the `_in` calls, which take the session first. They
+//! share what never changes: the animation banks (the engine's own cache),
+//! the board's mesh (`load_board`) and the game's settings. Only session 0
+//! plays its sounds here; the others' are kept for the game to send
+//! (`sound_remote.rs`).
 
 /// The crate's log lines go where the engine's go (`skate_host::log`): to the
-/// game's log once `halo_skate_set_log` is called, else to stderr.
+/// game's log once `halo_skate_set_log` is called, else to stderr; another
+/// session's than 0 say whose (`log_line`).
 macro_rules! eprintln {
     ($($arg:tt)*) => {
-        skate_host::log::write(&format!($($arg)*))
+        $crate::log_line(&format!($($arg)*))
     };
 }
 
@@ -26,6 +36,7 @@ mod camera;
 mod mixer;
 pub mod obstacles;
 pub use obstacles::HaloSkateObstacle;
+pub use sound_remote::{HaloSkateSoundEvent, HaloSkateSoundLoops, halo_skate_sound_take, halo_skate_sound_take_in};
 mod rails;
 mod recovery;
 mod rig;
@@ -172,7 +183,49 @@ struct Host {
     held: skate_host::bridge::HeldReport,
 }
 
-static HOST: Mutex<Option<Host>> = Mutex::new(None);
+/// The most skate sessions at once: this machine's player's (0) and the
+/// host's bots' (`halo_skate_sessions`).
+pub const MAXIMUM_SESSIONS: usize = 9;
+
+/// Each session's engine, by its number.
+static HOSTS: [Mutex<Option<Host>>; MAXIMUM_SESSIONS] = [const { Mutex::new(None) }; MAXIMUM_SESSIONS];
+
+thread_local! {
+    /// The session this thread's calls are for: 0, or the one an `_in` call
+    /// gives (`in_session`); a worker's own.
+    static SESSION: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The session this thread's calls are for.
+pub(crate) fn current_session() -> usize {
+    SESSION.with(|s| s.get())
+}
+
+/// Runs `f` for `session` (the `_in` calls): `fallback` for a session
+/// that is not one.
+pub(crate) fn in_session<T>(session: i32, fallback: T, f: impl FnOnce() -> T) -> T {
+    let Some(session) = usize::try_from(session).ok().filter(|&s| s < MAXIMUM_SESSIONS) else {
+        return fallback;
+    };
+    let previous = SESSION.with(|s| s.replace(session));
+    let result = f();
+    SESSION.with(|s| s.set(previous));
+    result
+}
+
+/// A log line, told as another session's than 0 when it is (`eprintln!`).
+pub(crate) fn log_line(line: &str) {
+    let session = current_session();
+    match line.strip_prefix("halo-skate: ") {
+        Some(rest) if session != 0 => skate_host::log::write(&format!("halo-skate (session {session}): {rest}")),
+        _ => skate_host::log::write(line),
+    }
+}
+
+/// The current session's engine, locked.
+fn host_guard() -> std::sync::MutexGuard<'static, Option<Host>> {
+    HOSTS[current_session()].lock().unwrap_or_else(|e| e.into_inner())
+}
 /// Boards loaded so far, across engine restarts: each one's generation.
 static BOARD_GENERATIONS: AtomicU32 = AtomicU32::new(0);
 
@@ -209,7 +262,7 @@ static RUN_OVER_SPEED: Setting = Setting::new(-1.0);
 static RUN_OVER_KEEP: Setting = Setting::new(1.0);
 
 fn with_host<T>(f: impl FnOnce(&mut Host) -> T) -> Option<T> {
-    let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = host_guard();
     guard.as_mut().map(f)
 }
 
@@ -219,10 +272,14 @@ impl Host {
         let (reply_sender, replies) = mpsc::channel();
         let generation = Arc::new(AtomicU64::new(0));
         let latest = Arc::clone(&generation);
+        let session = current_session();
         std::thread::Builder::new()
-            .name("skate".into())
+            .name(if session == 0 { "skate".into() } else { format!("skate {session}") })
             .stack_size(WORKER_STACK)
-            .spawn(move || worker(job_receiver, reply_sender, latest))
+            .spawn(move || {
+                SESSION.with(|s| s.set(session));
+                worker(job_receiver, reply_sender, latest)
+            })
             .map_err(|e| format!("skate worker: {e}"))?;
         Ok(Self {
             jobs,
@@ -392,6 +449,8 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
     let mut last: Option<Last> = None;
     let mut recovery = recovery::Recovery::default();
     let mut hits = obstacles::HitLog::default();
+    // the skater's sounds between ticks (sound.rs)
+    let mut detector = sound::Detector::default();
     let current = |generation: u64| generation == latest.load(Ordering::SeqCst);
     // a level's collision built again aside (Job::Reload), and its generation
     let mut rebuilding: Option<(u64, Rebuild)> = None;
@@ -504,7 +563,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                     match placed {
                         Ok(pose) => {
                             last = Some(Last::of(&pose));
-                            sound::reset(s);
+                            sound::reset(s, &mut detector);
                             Reply::Pose {
                                 sequence,
                                 pose,
@@ -532,7 +591,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                         );
                         result = s.advance();
                         if result.is_ok() {
-                            sound::observe(s);
+                            sound::observe(s, &mut detector);
                             let (contacts, hit) = s.obstacle_contacts();
                             if contacts > 0 || hits.listening() {
                                 let pose = s.pose();
@@ -569,7 +628,7 @@ fn worker(jobs: Receiver<Job>, replies: Sender<Reply>, latest: Arc<AtomicU64>) {
                             match recover(s, &e, last.as_ref(), &pad, &mut recovery) {
                                 Some(pose) => {
                                     last = Some(Last::of(&pose));
-                                    sound::reset(s);
+                                    sound::reset(s, &mut detector);
                                     Reply::Pose {
                                         sequence,
                                         pose,
@@ -855,8 +914,16 @@ fn load(
 }
 
 /// The board of the skater model in `root`, or None (reported) when it has
-/// none to draw.
+/// none to draw: read once for every session made from `root` (it never
+/// changes).
 fn load_board(root: &Path) -> Option<Arc<board::Board>> {
+    static LOADED: Mutex<Option<(PathBuf, Arc<board::Board>)>> = Mutex::new(None);
+    let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((from, board)) = loaded.as_ref()
+        && from == root
+    {
+        return Some(Arc::clone(board));
+    }
     let started = Instant::now();
     match board::Board::load(root) {
         Ok(board) => {
@@ -867,7 +934,9 @@ fn load_board(root: &Path) -> Option<Arc<board::Board>> {
                 board.textures.len(),
                 started.elapsed().as_millis()
             );
-            Some(Arc::new(board))
+            let board = Arc::new(board);
+            *loaded = Some((root.to_path_buf(), Arc::clone(&board)));
+            Some(board)
         }
         Err(e) => {
             eprintln!("halo-skate: the board is not drawn: {e}");
@@ -1002,7 +1071,7 @@ pub unsafe extern "C" fn halo_skate_preload(assets: *const c_char) -> i32 {
         eprintln!("halo-skate: no Skate 3 data at {}, nothing preloaded", root.display());
         return -1;
     }
-    let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = host_guard();
     let Some(host) = host_started(&mut guard) else {
         return -1;
     };
@@ -1045,7 +1114,7 @@ pub unsafe extern "C" fn halo_skate_load(assets: *const c_char, triangles: *cons
             ]
         })
         .collect();
-    let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = host_guard();
     let Some(host) = host_started(&mut guard) else {
         return -1;
     };
@@ -1079,7 +1148,7 @@ pub unsafe extern "C" fn halo_skate_reload(assets: *const c_char, triangles: *co
     if assets.is_null() || (triangles.is_null() && count > 0) {
         return -1;
     }
-    let mut guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = host_guard();
     let ready = guard.as_ref().is_some_and(|h| h.ready && h.error.is_none());
     drop(guard);
     if !ready {
@@ -1095,7 +1164,7 @@ pub unsafe extern "C" fn halo_skate_reload(assets: *const c_char, triangles: *co
         .chunks_exact(9)
         .map(|t| [Vec3::new(t[0], t[1], t[2]), Vec3::new(t[3], t[4], t[5]), Vec3::new(t[6], t[7], t[8])])
         .collect::<Vec<_>>();
-    guard = HOST.lock().unwrap_or_else(|e| e.into_inner());
+    guard = host_guard();
     let Some(host) = guard.as_mut() else {
         return -1;
     };
@@ -1247,6 +1316,35 @@ pub unsafe extern "C" fn halo_skate_step(pad: *const HaloSkatePad, dt: f32, out:
             }
             None => -1,
         }
+    })
+    .unwrap_or(-1)
+}
+
+/// Starts `dt` seconds of skating with `pad` held, as `halo_skate_step`, and
+/// returns at once: `halo_skate_await_step` takes the pose. The game starts
+/// each bot's skater's step so, then takes their poses, so that the sessions'
+/// workers step side by side. 0, or -1 (nothing loaded, or a failure).
+///
+/// # Safety
+/// `pad` is readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_step_begin(pad: *const HaloSkatePad, dt: f32) -> i32 {
+    if pad.is_null() {
+        return -1;
+    }
+    let pad = unsafe { *pad };
+    with_host(|host| {
+        host.drain();
+        if !host.ready || host.error.is_some() {
+            return -1;
+        }
+        host.sequence += 1;
+        let sequence = host.sequence;
+        if host.jobs.send(Job::Step { sequence, pad, dt }).is_err() {
+            host.fail("the skate engine stopped".into());
+            return -1;
+        }
+        0
     })
     .unwrap_or(-1)
 }
@@ -1833,6 +1931,188 @@ pub unsafe extern "C" fn halo_skate_board_obstacle(placement: *const f32, out: *
     0
 }
 
+// ---------- other sessions than 0 (the host's bots' skaters)
+//
+// Each `_in` call is the call of the same name for `session` (1 to
+// `halo_skate_sessions() - 1`; 0 is this machine's player's, as the calls
+// without a number): each session has its own worker, collision, skater,
+// pose and hits; what never changes is shared. A session number that is not
+// one fails as the call does with nothing loaded.
+
+/// How many sessions there may be at once, this machine's player's (0) with
+/// them.
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_sessions() -> i32 {
+    MAXIMUM_SESSIONS as i32
+}
+
+/// Ends the session: its worker stops and its skater, collision and memory
+/// go (a bot left). The next `halo_skate_preload_in` makes it again.
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_close_in(session: i32) {
+    in_session(session, (), || {
+        let closed = host_guard().take();
+        if closed.is_some() {
+            eprintln!("halo-skate: session closed");
+        }
+    });
+}
+
+/// # Safety
+/// As `halo_skate_preload`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_preload_in(session: i32, assets: *const c_char) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_preload(assets) })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_preloading_in(session: i32) -> i32 {
+    in_session(session, 0, || halo_skate_preloading())
+}
+
+/// # Safety
+/// As `halo_skate_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_load_in(session: i32, assets: *const c_char, triangles: *const f32, count: i32) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_load(assets, triangles, count) })
+}
+
+/// # Safety
+/// As `halo_skate_reload`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_reload_in(
+    session: i32,
+    assets: *const c_char,
+    triangles: *const f32,
+    count: i32,
+) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_reload(assets, triangles, count) })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_state_in(session: i32) -> i32 {
+    in_session(session, 0, || halo_skate_state())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_error_in(session: i32) -> *const c_char {
+    static EMPTY: &CStr = c"";
+    in_session(session, EMPTY.as_ptr(), || halo_skate_error())
+}
+
+/// # Safety
+/// As `halo_skate_activate`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_activate_in(
+    session: i32,
+    position: *const f32,
+    yaw: f32,
+    out: *mut HaloSkateFrame,
+) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_activate(position, yaw, out) })
+}
+
+/// # Safety
+/// As `halo_skate_teleport`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_teleport_in(
+    session: i32,
+    position: *const f32,
+    yaw: f32,
+    velocity: *const f32,
+    out: *mut HaloSkateFrame,
+) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_teleport(position, yaw, velocity, out) })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_apply_impulse_in(session: i32, x: f32, y: f32, z: f32) -> i32 {
+    in_session(session, -1, || halo_skate_apply_impulse(x, y, z))
+}
+
+/// # Safety
+/// As `halo_skate_step`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_step_in(
+    session: i32,
+    pad: *const HaloSkatePad,
+    dt: f32,
+    out: *mut HaloSkateFrame,
+) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_step(pad, dt, out) })
+}
+
+/// # Safety
+/// As `halo_skate_step_begin`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_step_begin_in(session: i32, pad: *const HaloSkatePad, dt: f32) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_step_begin(pad, dt) })
+}
+
+/// # Safety
+/// As `halo_skate_await_step`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_await_step_in(session: i32, wait_ms: u32, out: *mut HaloSkateFrame) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_await_step(wait_ms, out) })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_suspend_in(session: i32) {
+    in_session(session, (), || halo_skate_suspend())
+}
+
+/// # Safety
+/// As `halo_skate_set_obstacles`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_set_obstacles_in(
+    session: i32,
+    obstacles: *const obstacles::HaloSkateObstacle,
+    count: i32,
+    triangles: *const f32,
+    triangle_count: i32,
+) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_set_obstacles(obstacles, count, triangles, triangle_count) })
+}
+
+/// # Safety
+/// As `halo_skate_set_skeleton`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_set_skeleton_in(
+    session: i32,
+    count: i32,
+    names: *const c_char,
+    parents: *const i16,
+    inverse_defaults: *const f32,
+) -> i32 {
+    in_session(session, 0, || unsafe { halo_skate_set_skeleton(count, names, parents, inverse_defaults) })
+}
+
+/// # Safety
+/// As `halo_skate_pose_nodes`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_pose_nodes_in(session: i32, out: *mut f32, capacity: i32) -> i32 {
+    in_session(session, 0, || unsafe { halo_skate_pose_nodes(out, capacity) })
+}
+
+/// # Safety
+/// As `halo_skate_take_held_hit`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_take_held_hit_in(session: i32, out: *mut HaloSkateHeldHit) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_take_held_hit(out) })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_force_bail_in(session: i32, closing: f32) -> i32 {
+    in_session(session, -1, || halo_skate_force_bail(closing))
+}
+
+/// # Safety
+/// As `halo_skate_board_placement`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_board_placement_in(session: i32, out: *mut f32) -> i32 {
+    in_session(session, -1, || unsafe { halo_skate_board_placement(out) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1899,7 +2179,7 @@ mod tests {
         }
         let parents = [-1i16];
         let inverse = [1.0f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
-        *HOST.lock().unwrap_or_else(|e| e.into_inner()) = Some(Host::start().unwrap());
+        *host_guard() = Some(Host::start().unwrap());
         unsafe { halo_skate_set_skeleton(1, names.as_ptr(), parents.as_ptr(), inverse.as_ptr()) };
         assert_eq!(with_host(|h| h.rig.is_some()), Some(true));
         with_host(|h| h.fail("Nonfinite BipedAir launch packet".into()));
@@ -1907,5 +2187,34 @@ mod tests {
         let assets = CString::new("no-skate-data-here").unwrap();
         assert_eq!(unsafe { halo_skate_load(assets.as_ptr(), std::ptr::null(), 0) }, 0);
         assert_eq!(with_host(|h| h.rig.is_some()), Some(true));
+    }
+
+    /// Sessions are apart: one started, its skeleton described and failed is
+    /// none of another's business, and a number that is no session is refused.
+    #[test]
+    fn sessions_are_apart() {
+        let mut names = [0 as c_char; 32];
+        for (slot, byte) in names.iter_mut().zip(b"bip01 pelvis") {
+            *slot = *byte as c_char;
+        }
+        let parents = [-1i16];
+        let inverse = [1.0f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+        in_session(7, (), || *host_guard() = Some(Host::start().unwrap()));
+        unsafe { halo_skate_set_skeleton_in(7, 1, names.as_ptr(), parents.as_ptr(), inverse.as_ptr()) };
+        assert_eq!(in_session(7, None, || with_host(|h| h.rig.is_some())), Some(true));
+        // (session 8 never started: nothing there, and nothing loaded)
+        assert_eq!(in_session(8, Some(true), || with_host(|h| h.rig.is_some())), None);
+        assert_eq!(halo_skate_state_in(8), 0);
+        in_session(7, None, || with_host(|h| h.fail("a step failed".into())));
+        assert_eq!(halo_skate_state_in(7), -1);
+        assert_eq!(halo_skate_state_in(8), 0);
+        // (no such sessions)
+        assert_eq!(halo_skate_state_in(-1), 0);
+        assert_eq!(halo_skate_state_in(MAXIMUM_SESSIONS as i32), 0);
+        assert_eq!(halo_skate_force_bail_in(MAXIMUM_SESSIONS as i32, 1.0), -1);
+        // (the calls come back to session 0)
+        assert_eq!(current_session(), 0);
+        halo_skate_close_in(7);
+        assert_eq!(halo_skate_state_in(7), 0);
     }
 }

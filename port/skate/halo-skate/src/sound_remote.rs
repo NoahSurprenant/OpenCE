@@ -81,12 +81,16 @@ impl Kept {
     }
 }
 
-static KEPT_STATE: Mutex<Option<Kept>> = Mutex::new(None);
+/// Each session's (lib.rs: this machine's player's skater, and the host's
+/// bots')
+static KEPT_STATE: [Mutex<Option<Kept>>; crate::MAXIMUM_SESSIONS] =
+    [const { Mutex::new(None) }; crate::MAXIMUM_SESSIONS];
 
 /// (the worker, after each engine tick: mixer.rs's engine_tick) this
-/// machine's skater's one-shots and loops, kept for the network.
+/// machine's skater's one-shots and loops (the worker's session's), kept for
+/// the network.
 pub(crate) fn note_local(events: &[Event], loops: &Loops) {
-    let mut guard = KEPT_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = KEPT_STATE[crate::current_session()].lock().unwrap_or_else(|e| e.into_inner());
     guard.get_or_insert_with(Kept::default).note(events, loops, Instant::now());
 }
 
@@ -160,7 +164,7 @@ pub unsafe extern "C" fn halo_skate_sound_take(
 ) -> i32 {
     let capacity = if events.is_null() { 0 } else { usize::try_from(capacity).unwrap_or(0) };
     let (taken, state) = {
-        let mut guard = KEPT_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = KEPT_STATE[crate::current_session()].lock().unwrap_or_else(|e| e.into_inner());
         guard.get_or_insert_with(Kept::default).take(capacity, Instant::now())
     };
     if !loops.is_null() {
@@ -176,6 +180,21 @@ pub unsafe extern "C" fn halo_skate_sound_take(
         }
     }
     taken.len() as i32
+}
+
+/// `halo_skate_sound_take` for another session than 0 (a host's bot's skater,
+/// lib.rs): its sounds, kept for the game to send and play as that player's.
+///
+/// # Safety
+/// As `halo_skate_sound_take`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_sound_take_in(
+    session: i32,
+    events: *mut HaloSkateSoundEvent,
+    capacity: i32,
+    loops: *mut HaloSkateSoundLoops,
+) -> i32 {
+    crate::in_session(session, 0, || unsafe { halo_skate_sound_take(events, capacity, loops) })
 }
 
 /// (skate_network.c, each tick) another machine's skater's loops as their

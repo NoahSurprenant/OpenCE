@@ -70,6 +70,10 @@ int halo_skate_step(const struct halo_skate_pad *pad, float dt, struct halo_skat
 /* after halo_skate_step returned 1, waits up to wait_ms for that step's pose
 (the tests; the game moves on with the last pose): codes as halo_skate_step */
 int halo_skate_await_step(unsigned int wait_ms, struct halo_skate_frame *out);
+/* starts a step as halo_skate_step does and returns at once (0, or -1):
+halo_skate_await_step takes its pose. Each bot's skater's step is started so,
+then their poses taken, so that their sessions step side by side */
+int halo_skate_step_begin(const struct halo_skate_pad *pad, float dt);
 void halo_skate_suspend(void);
 int halo_skate_set_skeleton(int count, const char *names, const short *parents, const float *inverse_defaults);
 /* the biped's nodes posed as the skater; riding, its soles rest on the deck
@@ -224,5 +228,40 @@ board is, around it as drawn (grown halo_skate_set_board_scale times), its
 velocity 0 for the game to set. 0, or -1 with no board or a placement that is
 not one */
 int halo_skate_board_obstacle(const float *placement, struct halo_skate_obstacle *out);
+
+/* ---------- several skaters (lib.rs): a session for each, this machine's player's
+(0, which the calls above drive) and the host's bots' (1 on). Each _in call is
+the call of its name for that session, which has its own worker, collision,
+skater, pose and hits; the animation banks, the board and the settings above
+are shared. A number that is no session fails as the call does with nothing
+loaded. */
+
+/* how many sessions there may be at once, 0 with them */
+int halo_skate_sessions(void);
+/* the session ended: its worker, skater and memory gone (made again by
+halo_skate_preload_in) */
+void halo_skate_close_in(int session);
+int halo_skate_preload_in(int session, const char *assets);
+int halo_skate_preloading_in(int session);
+int halo_skate_load_in(int session, const char *assets, const float *triangles, int count);
+int halo_skate_reload_in(int session, const char *assets, const float *triangles, int count);
+int halo_skate_state_in(int session);
+const char *halo_skate_error_in(int session);
+int halo_skate_activate_in(int session, const float *position, float yaw, struct halo_skate_frame *out);
+int halo_skate_teleport_in(int session, const float *position, float yaw, const float *velocity,
+	struct halo_skate_frame *out);
+int halo_skate_apply_impulse_in(int session, float x, float y, float z);
+int halo_skate_step_in(int session, const struct halo_skate_pad *pad, float dt, struct halo_skate_frame *out);
+int halo_skate_step_begin_in(int session, const struct halo_skate_pad *pad, float dt);
+int halo_skate_await_step_in(int session, unsigned int wait_ms, struct halo_skate_frame *out);
+void halo_skate_suspend_in(int session);
+int halo_skate_set_obstacles_in(int session, const struct halo_skate_obstacle *obstacles, int count,
+	const float *triangles, int triangle_count);
+int halo_skate_set_skeleton_in(int session, int count, const char *names, const short *parents,
+	const float *inverse_defaults);
+int halo_skate_pose_nodes_in(int session, float *out, int capacity);
+int halo_skate_take_held_hit_in(int session, struct halo_skate_held_hit *out);
+int halo_skate_force_bail_in(int session, float closing);
+int halo_skate_board_placement_in(int session, float *out);
 
 #endif

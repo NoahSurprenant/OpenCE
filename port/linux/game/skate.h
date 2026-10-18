@@ -35,6 +35,53 @@ boolean skate_unit_pushed(long unit_index, real_vector3d const *acceleration);
 keeps (radians) */
 boolean skate_local_player_skating(short local_player_index, real *yaw);
 
+/* ---------- the host's bots' skaters (skate.c; bots_skate.c drives them)
+A host with the skate engine and Skate 3 data runs a skate session for each
+bot on a board (as many as server.bot_skaters allows), beside its own
+player's: the bots' skaters step, collide, are posed, holstered, drawn,
+heard and sent to the other machines as the host's own skater is. Without
+the mode, or the data, no bot skates. */
+
+/* what a bot's skater is doing (skate_bot_frame) */
+struct skate_bot_view
+{
+	/* its session has the level: it gets on as soon as it asks */
+	boolean ready;
+	boolean skating;
+	boolean off_board;
+	boolean bailing;
+	boolean grinding;
+	boolean airborne;
+	/* the biped's origin, its velocity (world units a second: the board's,
+	or off the board the skater's own) and the board's forward */
+	real position[3];
+	real velocity[3];
+	real forward[3];
+	/* the engine's state (e.g. "Wipeout...", "Grind...") */
+	char state[32];
+};
+
+struct halo_skate_pad;
+/* whether bots may skate here at all: the skate engine has its Skate 3 data
+and server.bot_skaters allows one */
+boolean skate_bots_available(void);
+/* (bots_skate.c, before each tick, for every bot that rides or wants to)
+the bot of player_index (a datum) wants to be on a board (on_board; FALSE: off
+it) with its unit, holding pad (NULL: nothing) this tick; run_over: people on
+foot it rides into fast are run over (a peaceful bot's are not). FALSE when it
+has no skater, and none is to be had (all in use, or none allowed); a bot
+that stops asking for a second is given up */
+boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad,
+	boolean run_over);
+/* the bot's skater as its last step left it, into view; FALSE when it has
+none */
+boolean skate_bot_frame(long player_index, struct skate_bot_view *view);
+/* skate_authority.c: whether the unit is a skater the host's engine runs
+(its own player's or a bot's) on the board and not bailing; and whether it is
+such a skater at all (alive, on foot or riding) */
+boolean skate_host_skater_riding(long unit_index);
+boolean skate_host_skater(long unit_index);
+
 /* hs_compile_and_evaluate: a console command tuning Skate 3 mode, one of
 SKATE_CONSOLE_SETTINGS, with what follows its word: sets the value for the
 session when given a number, and prints it either way. FALSE on a bad
@@ -74,9 +121,11 @@ boolean skate_network_unit_skating(long unit_index);
 
 /* skate.c, each tick: this machine's skater (unit NONE: none, or not
 skating), its pose already in the unit's nodes, whether it walks off the
-board or bails, and where the engine has the board (NULL: nowhere) */
+board or bails, and where the engine has the board (NULL: nowhere); session:
+its skate session (0 this machine's player's; another, a host's bot's, whose
+sounds are played here too, as another machine's skater's are) */
 void skate_network_note_local(long player_index, long unit_index, boolean off_board, boolean bailing,
-	real const *board_placement);
+	real const *board_placement, short session);
 /* before the objects update: another machine's skater carried on at its
 velocity (its biped's own movement is off); after it: posed */
 void skate_network_update_before_objects(void);
