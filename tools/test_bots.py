@@ -572,6 +572,39 @@ def test_bots_grenades(tmp_path):
     assert total("grenades dodged") >= 1, "no bot ran from a grenade"
 
 
+def test_bots_rotation(tmp_path):
+    """Four bots (normal) through a dedicated server's rotation of three
+    short Slayer games (Blood Gulch, Hang 'Em High, Blood Gulch, two minutes each),
+    as the live server goes through its games: every game has kills, every
+    bot fires in every game, and few of its ways fail. Each game's bots begin afresh (bots.c):
+    kept from the last game, their times, far ahead of the new game's, held
+    them back for a whole game - the live server's bots hardly fought after
+    its first game. About seven minutes."""
+    maps, _ = _needs("HALO_TEST_SERVER")
+    if not all(Path(maps, f"{name}.map").is_file() for name in ("bloodgulch", "hangemhigh")):
+        pytest.skip("needs bloodgulch and hangemhigh")
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "5", "HALO_SERVER_BOT_DIFFICULTY": "normal",
+        "HALO_SERVER_MAPS": "bloodgulch,hangemhigh,bloodgulch", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(245), "HALO_NET_BROADCAST": _test_address(246)}, games_over=3, seconds=660)
+    games = log.split("server: the game starts: ")[1:4]
+    assert len(games) == 3, log[-4000:]
+    for number, text in enumerate(games, 1):
+        where = text.splitlines()[0]
+        kills = sum(int(k) for _, _, k, _ in SCORE.findall(text))
+        reports = _reports(text)
+        fired = {name: counts.get("ticks", 0) for name, counts in reports.items()}
+        paths = {name: (counts.get("paths", 0), counts.get("failed", 0)) for name, counts in reports.items()}
+        print(f"game {number}, {where}: {kills} kills; ticks fired {fired}; paths (failed) {paths}")
+        assert kills >= 2, f"game {number} ({where}) had {kills} kills"
+        assert len(fired) == 4 and all(ticks > 0 for ticks in fired.values()), \
+            f"a bot never fired in game {number} ({where}): {fired}"
+        # (the live server's bots, a game on, had two thirds of their ways fail:
+        # they went on fighting a target of the last game, where it was then)
+        assert all(failed <= max(10, planned // 4) for planned, failed in paths.values()), \
+            f"a bot's ways failed in game {number} ({where}): {paths}"
+
+
 def test_bots_leave_for_a_person(tmp_path):
     """A dedicated server full of bots (server.max_players 3, server.bots 3)
     and a person who joins it: a bot leaves at once to make room, the person
