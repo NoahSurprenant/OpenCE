@@ -87,16 +87,25 @@ halo-linux: server: no usable maps in /data/maps (looked for ui.map, bloodgulch.
 
 The pod goes into `CrashLoopBackOff` and never gets ready. `kubectl logs --previous` shows the line.
 
-## Custom maps and logs
+## Custom maps, Skate 3 data and logs
 
-Two optional volumes, each with at most one source:
+Three optional volumes, each with at most one source:
 
 | Value | Mounted at | Variable | Without it |
 | --- | --- | --- | --- |
 | `customMaps.existingClaim`, `customMaps.nfs`, `customMaps.volume` (`subPath`, `readOnly`, true by default) | `/custom_maps` | `HALO_CUSTOM_MAPS_ROOT` | `custom_maps` in the game data if it has one, else an empty folder in the save root |
+| `skateData.existingClaim`, `skateData.nfs`, `skateData.volume` (`subPath`), always read-only | `/skate-data` | `HALO_SKATE_ASSETS=/skate-data/assets` | the bots stay on foot |
 | `logs.existingClaim`, `logs.volume` (`subPath`) | `/logs` | `HALO_LOG_ROOT` | `debug.txt` in the save root, `/state/saves/debug.txt` |
 
 The log goes to the standard error either way.
+
+`skateData` is your own converted Skate 3 data (`port/skate/README.md`, "What you need": the
+`skate-data` folder, the one with `assets/` in it), never in the image. With it the server's bots
+ride boards to travel and step off to fight (`port/skate/README.md`, "Bots on boards"), at most
+`server.botSkaters` (4) at once, each about 35 MB of memory more and several seconds of a processor
+the first time it rides; the server logs `skate: a dedicated server with Skate 3 data` at start.
+Without it the server logs that it has none, and its bots walk. Human skaters joining the server
+skate either way: the server relays them and decides their hits without the data.
 
 ## Networking
 
@@ -166,7 +175,7 @@ The chart maps its values to the server's environment variables (port/linux/READ
 | `server.maps` (list) | `HALO_SERVER_MAPS` |
 | `server.gameTypes` (list) | `HALO_SERVER_GAME_TYPES` |
 | `server.timeLimit`, `server.scoreLimit` | `HALO_SERVER_TIME_LIMIT`, `HALO_SERVER_SCORE_LIMIT` |
-| `server.bots`, `server.botDifficulty` | `HALO_SERVER_BOTS`, `HALO_SERVER_BOT_DIFFICULTY` |
+| `server.bots`, `server.botDifficulty`, `server.botSkaters` | `HALO_SERVER_BOTS`, `HALO_SERVER_BOT_DIFFICULTY`, `HALO_SERVER_BOT_SKATERS` |
 | `network.tunnelPort` | `HALO_NET_TUNNEL_PORT` |
 | `network.publicAddress` | `HALO_NET_PUBLIC_ADDRESS` |
 | `network.hostPublic`, `network.serverName` | `HALO_NET_HOST_PUBLIC`, `HALO_NET_SERVER_NAME` |

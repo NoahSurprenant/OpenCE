@@ -48,6 +48,22 @@ customMaps:
   # The server only reads the maps; false lets the volume be written (copying maps in with kubectl cp).
   readOnly: true
 
+# Your own converted Skate 3 data (port/skate/README.md, "What you need": the skate-data folder,
+# the one with assets/ in it), mounted read-only at /skate-data (HALO_SKATE_ASSETS=/skate-data/assets).
+# Optional; at most one source. With it the server's bots ride boards to travel and step off to
+# fight (port/skate/README.md, "Bots on boards"; at most server.botSkaters at once, each about 35 MB
+# of memory); without it they stay on foot. It is never in the image.
+skateData:
+  existingClaim: ""
+  nfs:
+    server: ""
+    path: ""
+  # Any other volume source, as in a pod's volumes (without the name).
+  volume: {}
+  # The folder within the volume that is the skate-data folder (it contains assets/). Empty: the
+  # volume's root.
+  subPath: ""
+
 # The folder of the server's log, debug.txt, mounted at /logs (HALO_LOG_ROOT). Optional. Without
 # one, debug.txt goes to the save root in the state volume (/state/saves/debug.txt). Every line goes
 # to the standard error as well, so `kubectl logs` shows the same either way.
@@ -78,6 +94,8 @@ server:
   bots: 0
   # server.bot_difficulty: peaceful (they never fight), easy, normal, hard or legendary.
   botDifficulty: normal
+  # server.bot_skaters: with skateData, the most bots on boards at once, 0 to 8 (0: always on foot).
+  botSkaters: 4
 
 network:
   # network.tunnel_port: the UDP port of internet play, which the Service exposes.

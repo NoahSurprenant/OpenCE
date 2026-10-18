@@ -1341,9 +1341,10 @@ def test_dedicated_server_after_a_player_leaves(tmp_path):
 
 
 def test_dedicated_server_skaters(tmp_path):
-    """Skate 3 mode on a dedicated server built without it: the server
-    (HALO_TEST_SERVER: a Linux build without --skate, as the server image's)
-    has the Halo maps and no Skate 3 data, and two clients with the mode
+    """Skate 3 mode on a dedicated server without Skate 3 data: the server
+    (HALO_TEST_SERVER: a release build, as the server image's, which has the
+    mode but loads nothing of it without the data) has the Halo maps and no
+    Skate 3 data, and two clients with the mode
     (HALO_TEST_GAME, HALO_SKATE_TEST_ASSETS) join it. The first skates from 15
     seconds in (debug.network_test_skate); the server steps the second, on
     foot, into their way every five seconds (debug.network_test_skate_block on

@@ -68,6 +68,13 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- end }}
 
+{{/* "true" when a Skate 3 data volume is configured. */}}
+{{- define "opence-server.hasSkateData" -}}
+{{- with .Values.skateData -}}
+{{- if or .existingClaim (and .nfs.server .nfs.path) .volume }}true{{ end -}}
+{{- end -}}
+{{- end }}
+
 {{/* "true" when a logs volume is configured. */}}
 {{- define "opence-server.hasLogs" -}}
 {{- with .Values.logs -}}

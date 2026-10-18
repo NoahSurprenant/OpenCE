@@ -7,13 +7,18 @@
 #     -v /path/to/halo:/data:ro --tmpfs /state:uid=10001,gid=10001 opence-server
 #
 # The game data is never in the image: mount the folder that contains maps/ at /data, read-only.
+# Optionally, your own converted Skate 3 data (port/skate/README.md, "What you need": the
+# skate-data folder, with assets/ in it) at /skate-data, read-only too: the server's bots then
+# ride boards (port/skate/README.md, "Bots on boards"); without it they stay on foot. It is never
+# in the image either.
 # /state is the only folder the server writes (config.toml, the save root and its map cache), so
 # the root filesystem can be read-only. The executable is 32-bit x86 and runs on amd64 hosts.
 #
 # A release build (assertions are not checked, as in the retail game and the builds that players
-# download) without Skate 3 mode's engine: a server draws no board, and a build without --skate
-# still relays skaters' states, applies their bounds and decides their hits, with no Skate 3 data
-# (tools/test_linux_port.py's test_dedicated_server_skaters). No link-time or
+# download) with Skate 3 mode's engine (--skate, built by a pinned Rust toolchain): a server draws
+# no board, and with no Skate 3 data it still relays skaters' states, applies their bounds and
+# decides their hits (tools/test_linux_port.py's test_dedicated_server_skaters); with the data its
+# bots skate too, each in a skate session of its own (tools/test_skating_bots.py). No link-time or
 # profile-guided optimisation: the server sleeps most of each frame, and Debian's clang is older
 # than the profiles need.
 #
@@ -27,16 +32,32 @@ FROM debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b0
 RUN dpkg --add-architecture i386 \
  && apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates python3 ninja-build clang lld \
-      gcc-multilib cmake pkgconf libwayland-bin \
+      gcc-multilib cmake pkgconf libwayland-bin curl \
  && rm -rf /var/lib/apt/lists/*
+# The skate engine's Rust (port/skate): rustup's installer, checked against its SHA-256, a pinned
+# toolchain, and the game's 32-bit target.
+ARG RUSTUP_VERSION=1.28.2
+ARG RUSTUP_SHA256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c
+ARG RUST_TOOLCHAIN=1.99.0
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN curl -fsSL -o /tmp/rustup-init \
+      "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" \
+ && echo "${RUSTUP_SHA256}  /tmp/rustup-init" | sha256sum -c - \
+ && chmod +x /tmp/rustup-init \
+ && /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
+      --target i686-unknown-linux-gnu \
+ && rm /tmp/rustup-init
 WORKDIR /src
 COPY . .
 # The run number of a build of main (the workflow passes it), as tools/ci_build.py gives it: the
 # server logs it. 0 for any other build.
 ARG HALO_BUILD_NUMBER=0
-ARG CONFIGURE_FLAGS="--release --lto=off --pgo=off --portable"
+ARG CONFIGURE_FLAGS="--release --lto=off --pgo=off --portable --skate"
+# (the skate engine's debug information, which cargo's release profile keeps, stripped: about 120 MB;
+# the symbols stay, for a crash's backtrace)
 RUN HALO_BUILD_NUMBER="${HALO_BUILD_NUMBER}" python3 configure.py ${CONFIGURE_FLAGS} \
  && ninja linux \
+ && strip --strip-debug build/linux/halo \
  && test -x build/linux/halo && test -f build/linux/brokers.txt
 
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
@@ -48,7 +69,7 @@ RUN dpkg --add-architecture i386 \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 10001 opence \
  && useradd -u 10001 -g 10001 -d /state -M -s /usr/sbin/nologin opence \
- && mkdir -p /data /state \
+ && mkdir -p /data /skate-data /state \
  && chown 10001:10001 /state
 COPY --from=build /src/build/linux/halo /src/build/linux/brokers.txt /opt/opence/
 # config.toml is read and written next to the executable: a link into the writable /state. The
@@ -56,6 +77,7 @@ COPY --from=build /src/build/linux/halo /src/build/linux/brokers.txt /opt/opence
 RUN ln -s /state/config.toml /opt/opence/config.toml
 ENV HALO_DEDICATED=1 \
     HALO_DATA_ROOT=/data \
+    HALO_SKATE_ASSETS=/skate-data/assets \
     HALO_SAVE_ROOT=/state/saves \
     HALO_NET_TUNNEL_PORT=27015 \
     HOME=/state
