@@ -547,6 +547,11 @@ static const struct config_setting config_settings[] =
 		"Skate 3 mode and its data (port/skate/README.md's \"Several skaters\"): each\n"
 		"one's skater is a skate session of its own, about 35 MB and several\n"
 		"seconds to make the first time; 0 to 8, 0 for bots always on foot." },
+	{ "debug.bot_skate", _config_string, "\"\"", "HALO_BOT_SKATE", _environment_value, _platform_all,
+		"How each bot goes about boards (Skate 3 mode), with commas between, one\n"
+		"for each bot in the order they join: \"ram\" (it stays on its board in a\n"
+		"fight and rides at people on foot), \"never\" (it stays on foot) or\n"
+		"anything else (as it sees fit), for the tests. Empty: all as they see fit." },
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
 		"The bots' random numbers start from this, so that a test's bots do the\n"
 		"same each run." },

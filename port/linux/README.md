@@ -1150,6 +1150,9 @@ Co-op games have no bots.
   takes better weapons, powerups and grenades lying about, and fights the
   players of the other team (anyone, without teams) that it sees or hears.
   It plays the other game types too ("Game types", below).
+- With Skate 3 mode and its data a bot rides a board to travel and steps off
+  to fight (`port/skate/README.md`, "Bots on boards"); `server.bot_skaters`
+  sets how many may ride at once.
 
 ### Fighting
 

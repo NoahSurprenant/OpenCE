@@ -38,12 +38,32 @@ skate_bot_drive runs the skate engine for it):
 #include <string.h>
 
 void platform_log(const char *format, ...);
+const char *config_string(const char *name);
+int config_boolean(const char *name);
+
+/* how a bot goes about boards (debug.bot_skate, for the tests) */
+enum
+{
+	_bot_skate_normal,
+	/* it stays on its board in a fight, and rides at people on foot */
+	_bot_skate_ram,
+	/* it never gets on one */
+	_bot_skate_never
+};
 
 /* how far along its path the way must roll for a bot to get on (world
 units: 15, about 46 m); how near its goal (or a part of the way that does
 not roll) it steps off */
 #define BOT_SKATE_BOARD_DISTANCE 15.0f
 #define BOT_SKATE_OFF_DISTANCE 2.5f
+/* ... and how far for a bot that rams (debug.bot_skate) */
+#define BOT_SKATE_RAM_BOARD_DISTANCE 4.0f
+/* a riding bot's path: a node this near is passed (world units), and the
+point it steers for at least this far ahead, further the faster (seconds
+of its speed) */
+#define BOT_SKATE_NODE_PASSED 1.5f
+#define BOT_SKATE_LOOKAHEAD 2.5f
+#define BOT_SKATE_LOOKAHEAD_SECONDS 1.0f
 /* the steepest walk a board goes up and down (rise over run) */
 #define BOT_SKATE_STEEPEST_UP 0.45f
 #define BOT_SKATE_STEEPEST_DOWN 0.8f
@@ -52,8 +72,8 @@ not roll) it steps off */
 /* the ticks a bot stays on foot after stepping off (or failing to get on) */
 #define BOT_SKATE_OFF_TICKS (4 * TICKS_PER_SECOND)
 /* the speeds it rides at: pushing up to the fast one on a straight way, the
-slow one in a turn (world units a second: 7 m/s and 3 m/s) */
-#define BOT_SKATE_FAST_SPEED (7.0f / 3.048f)
+slow one in a turn (world units a second: 9 m/s and 3 m/s) */
+#define BOT_SKATE_FAST_SPEED (9.0f / 3.048f)
 #define BOT_SKATE_SLOW_SPEED (3.0f / 3.048f)
 /* the turn (radians off its heading) the left stick is pushed fully for */
 #define BOT_SKATE_FULL_TURN 0.6f
@@ -79,6 +99,36 @@ within this, is ridden at */
 #define BOT_SKATE_A 0x1000
 #define BOT_SKATE_Y 0x8000
 #define BOT_SKATE_FULL 32767
+
+/* the bot's way with boards: its entry of debug.bot_skate ("ram,never": one
+for each bot, by its place among them), else normal */
+static short bot_skate_mode(
+	struct bot const *bot)
+{
+	char const *list = config_string("debug.bot_skate");
+	char name[16];
+	short index = 0;
+
+	while (list && *list)
+	{
+		short length = 0;
+
+		while (*list == ',' || *list == ' ')
+			list++;
+		while (*list && *list != ',' && length < (short)sizeof(name) - 1)
+			name[length++] = *list++;
+		name[length] = 0;
+		if (length > 0 && index++ == bot->slot)
+		{
+			if (!strcmp(name, "ram"))
+				return _bot_skate_ram;
+			if (!strcmp(name, "never"))
+				return _bot_skate_never;
+			return _bot_skate_normal;
+		}
+	}
+	return _bot_skate_normal;
+}
 
 /* the bot's unit: alive, a biped on foot (none in a vehicle skates) */
 static boolean bot_skate_unit_able(
@@ -145,6 +195,51 @@ static real bot_skate_rolling_distance(
 	return distance;
 }
 
+/* the point a riding bot steers for (pure pursuit): along its path, the
+first node at least lookahead world units away, the nodes it passed within
+BOT_SKATE_NODE_PASSED taken as reached (a board turns too wide to come to a
+node's middle: it would circle it); FALSE without a path, or with its goal
+reached */
+static boolean bot_skate_pursuit(
+	struct bot_brain *brain,
+	struct bots_nav const *nav,
+	real_point3d const *position,
+	real lookahead,
+	struct bots_nav_point *target)
+{
+	long step;
+
+	if (!nav || brain->path_next == NONE || brain->path_next < 0)
+		return FALSE;
+	/* (the nodes passed) */
+	while (brain->path_next >= 0)
+	{
+		struct bots_nav_point const *node = &nav->nodes[nav->edges[brain->path[brain->path_next]].target].point;
+		real dx = node->x - position->x, dy = node->y - position->y;
+
+		if (dx * dx + dy * dy > BOT_SKATE_NODE_PASSED * BOT_SKATE_NODE_PASSED || fabs(node->z - position->z) > 1.0f)
+			break;
+		brain->path_next--;
+	}
+	if (brain->path_next < 0)
+	{
+		brain->statistics.goals_reached++;
+		brain->path_next = NONE;
+		brain->goal_node = NONE;
+		return FALSE;
+	}
+	for (step = brain->path_next; step >= 0; step--)
+	{
+		struct bots_nav_point const *node = &nav->nodes[nav->edges[brain->path[step]].target].point;
+		real dx = node->x - position->x, dy = node->y - position->y;
+
+		*target = *node;
+		if (dx * dx + dy * dy >= lookahead * lookahead)
+			break;
+	}
+	return TRUE;
+}
+
 static real bot_skate_angle(
 	real angle)
 {
@@ -207,6 +302,13 @@ static void bot_skate_pad(
 	memset(pad, 0, sizeof(*pad));
 	/* (the left stick to the right turns right: clockwise, a yaw falling) */
 	pad->left[0] = (short)(-steer * BOT_SKATE_FULL);
+	if (config_boolean("debug.bot_trace") && game_time_get() % 15 == 0)
+	{
+		platform_log("bots: skate trace at tick %ld: %s at (%.2f %.2f %.2f), %.2f world units a second, course %.0f, "
+			"heading %.0f, error %.0f degrees, stick %d, wanted %.2f", game_time_get(), view->state, view->position[0],
+			view->position[1], view->position[2], speed, course * 180.0f / _pi, heading * 180.0f / _pi,
+			error * 180.0f / _pi, pad->left[0], speed_wanted);
+	}
 	/* off the board and walking (a fall): back on */
 	if (view->off_board && !view->bailing)
 	{
@@ -270,9 +372,12 @@ void bot_skate_think(
 	boolean fighting;
 	long ram_unit;
 	real rolling;
+	real board_distance = BOT_SKATE_BOARD_DISTANCE;
 	long now = game_time_get();
 
-	if (!skate_bots_available() || !bot_skate_unit_able(unit_index))
+	short mode = bot_skate_mode(bot);
+
+	if (!skate_bots_available() || !bot_skate_unit_able(unit_index) || mode == _bot_skate_never)
 	{
 		skate->on = FALSE;
 		return;
@@ -281,6 +386,12 @@ void bot_skate_think(
 	rolling = bot_skate_rolling_distance(brain, nav, &position, &to_goal);
 	fighting = brain->combat.target_player != NONE && brain->combat.target_visible;
 	ram_unit = view.skating ? bot_skate_ram_target(bot, &position) : NONE;
+	/* (a bot that rams fights from its board, and gets on one for less) */
+	if (mode == _bot_skate_ram && bot->difficulty != _bot_difficulty_peaceful)
+	{
+		fighting = FALSE;
+		board_distance = BOT_SKATE_RAM_BOARD_DISTANCE;
+	}
 	/* (a life, a game: afresh) */
 	if (skate->unit_index != unit_index || now < skate->changed_tick)
 	{
@@ -299,12 +410,18 @@ void bot_skate_think(
 			reason = "a fight";
 		else if (bot_holds_flag(unit_get(unit_index)))
 			reason = "a flag in hand";
-		else if (ram_unit == NONE && brain->path_next != NONE && rolling < BOT_SKATE_OFF_DISTANCE)
+		else if (ram_unit == NONE && brain->path_next != NONE && rolling < BOT_SKATE_OFF_DISTANCE &&
+			!(to_goal && mode == _bot_skate_ram))
+		{
 			reason = to_goal ? "its goal near" : "the way ahead does not roll";
+		}
 		else if (skate->stuck_ticks > BOT_SKATE_STUCK_TICKS)
 			reason = "stuck";
 		else if (has_skater && !view.skating && !view.ready && now - skate->changed_tick > 30 * TICKS_PER_SECOND)
 			reason = "its skater never got ready";
+		/* (still waiting for its skater, and the way left too short for it) */
+		else if (!view.skating && rolling < board_distance / 2.0f)
+			reason = "the way left is short";
 		if (reason)
 		{
 			skate->on = FALSE;
@@ -316,7 +433,7 @@ void bot_skate_think(
 		}
 	}
 	else if (now >= skate->off_until_tick && !fighting && !bot_holds_flag(unit_get(unit_index)) &&
-		rolling >= BOT_SKATE_BOARD_DISTANCE)
+		rolling >= board_distance)
 	{
 		skate->on = TRUE;
 		skate->changed_tick = now;
@@ -370,11 +487,18 @@ void bot_skate_think(
 		}
 		else
 		{
-			/* where the brain wanted to walk (toward its next point) */
+			/* along its path (pure pursuit), else where the brain wanted to
+			walk */
 			real along = (real)sqrt(action->throttle.i * action->throttle.i + action->throttle.j * action->throttle.j);
+			struct bots_nav_point target;
 
 			skate->ramming = FALSE;
-			if (along > 0.1f)
+			if (bot_skate_pursuit(brain, nav, &position, MAX(BOT_SKATE_LOOKAHEAD, moved * BOT_SKATE_LOOKAHEAD_SECONDS),
+				&target))
+			{
+				heading = (real)atan2(target.y - position.y, target.x - position.x);
+			}
+			else if (along > 0.1f)
 				heading = brain->yaw + (real)atan2(action->throttle.j, action->throttle.i);
 			else
 			{
