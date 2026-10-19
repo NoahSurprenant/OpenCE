@@ -118,7 +118,8 @@ def test_skating_bots_ride_and_fight(tmp_path):
     assert len(sessions) >= 2, f"the bots rode in {sessions} sessions"
     assert "skate: on" in host, "the host's own player never got on a board"
     assert not re.search(r"NOT FINITE|EXCEPTION|fatal error", host), "a pose not finite, or a fatal error"
-    # the normal bots fought; the peaceful one never ran anyone over
+    # the normal bots fought; the peaceful one never rode at anyone on purpose
+    # (a run-over by accident is allowed)
     players = {name: player for player, name in re.findall(r"network test: player (\d+) is named (\[BOT\] \w+)", host)}
     peaceful = [players.get(name) for name in re.findall(r"bots: (\[BOT\] \w+) joined \([^)]*peaceful\)", host)]
     fired = {name: int(n) for name, n in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*?fired (\d+) ticks", host)}
@@ -126,7 +127,8 @@ def test_skating_bots_ride_and_fight(tmp_path):
     print(f"run-overs decided {decided}; fired {fired}; the peaceful bot is player {peaceful}")
     assert peaceful and peaceful[0] is not None, "the peaceful bot was not named"
     assert sum(fired.values()) > 0, f"no bot fired: {fired}"
-    assert not any(skater in peaceful for _, skater, _ in decided), "the peaceful bot ran someone over"
+    rams = re.findall(r"bots: player (\d+) rides at a person on foot", host)
+    assert not set(rams) & set(peaceful), f"the peaceful bot rode at someone: {rams}"
 
 def test_skating_bots_run_over(tmp_path):
     """A bot that rams (debug.bot_skate "ram": it stays on its board in a
@@ -152,23 +154,28 @@ def test_skating_bots_run_over(tmp_path):
 
 def test_skating_bots_harmless(tmp_path):
     """Two peaceful bots told to ram (debug.bot_skate "ram,ram") on Prisoner's
-    dedicated server with Skate 3 data: they get on boards and ride, grind
-    the rails beside their way, but never ride at anyone nor run anyone over,
-    and nobody dies. About three and a half minutes."""
+    dedicated server with Skate 3 data: they get on boards, ride and grind the
+    rails beside their way as any bot, but never ride at anyone on purpose -
+    no ram, though they see each other. What happens by accident is allowed
+    (the owner's call): a run-over decided as any skater's, a fall off a
+    ledge, a bail. About three and a half minutes."""
     _, maps, assets = _needs_skate()
     log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
         "HALO_SERVER_BOTS": "2", "HALO_SERVER_BOT_DIFFICULTY": "peaceful", "HALO_BOT_SKATE": "ram,ram",
         "HALO_BOT_SEED": "1", "HALO_SERVER_MAPS": "prisoner", "HALO_SERVER_TIME_LIMIT": "3"},
         (_test_address(253), _test_address(254)))
     boards = _boards(log)
-    scores = SCORE.findall(log)
-    print(f"boards {boards}; run-overs {RUN_OVER_DECIDED.findall(log)}; scores {scores}")
+    seen = {name: int(n) for name, n in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*?(\d+) targets seen", log)}
+    deaths = re.findall(r"bots: player (\d+) died of (\S+), by player (-?\d+)", log)
+    print(f"boards {boards}; targets seen {seen}; run-overs {RUN_OVER_DECIDED.findall(log)}; deaths {deaths}; "
+          f"scores {SCORE.findall(log)}")
+    assert len(boards) == 2, log[-3000:]
     assert sum(b[0] for b in boards.values()) >= 2 and sum(b[2] for b in boards.values()) >= 30, \
         f"the peaceful bots hardly rode: {boards}"
-    assert all(b[5] == 0 for b in boards.values()), f"a peaceful bot rode at someone: {boards}"
     assert sum(b[7] for b in boards.values()) >= 1, f"no bot grinded a rail: {boards}"
-    assert not RUN_OVER_DECIDED.findall(log), "a peaceful bot ran someone over"
-    assert all(int(kills) == 0 and int(deaths) == 0 for _, _, kills, deaths in scores), f"someone died: {scores}"
+    # never on purpose: no ram, nor riding at anyone (bots_skate.c logs each)
+    assert all(b[5] == 0 for b in boards.values()), f"a peaceful bot rode at someone: {boards}"
+    assert "rides at a person on foot" not in log, "a peaceful bot rode at a person"
 
 
 def test_skating_bots_need_data(tmp_path):
