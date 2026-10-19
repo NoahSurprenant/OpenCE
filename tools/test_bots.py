@@ -283,6 +283,38 @@ def test_bots_on_a_listen_host(tmp_path):
         _stop(games, tmp_path, {"host": game, "join": game})
 
 
+
+def test_bots_start_now_in_a_lobby(tmp_path):
+    """A host that plays too, with two bots in its lobby and nobody else (the
+    owner's game: "[BOT] Alpha, [BOT] Bravo" and the host, Battle Creek,
+    Slayer), started as a person starts it: START NOW pressed once in the
+    lobby (debug.network_test_start_now: the pregame screen's own request),
+    not the tests' start at once. Its countdown starts (a host with bots
+    alone starts as a host alone does - before, START NOW did nothing: the
+    bots made it no longer alone), the game starts within the countdown, and
+    the lobby's reason to wait, if any, is never a bot. About a minute."""
+    maps, paths = _needs("HALO_TEST_GAME")
+    game = paths["HALO_TEST_GAME"]
+    games = {"host": _start(tmp_path, "host", game, maps, {
+        "HALO_NETWORK_TEST": "host:beavercreek", "HALO_NETWORK_TEST_START": "5", "HALO_NETWORK_TEST_START_NOW": "1",
+        "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "4", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+        "HALO_TEST_INPUT": "bot:3", "HALO_NET_ADDRESS": _test_address(209), "HALO_NET_BROADCAST": _test_address(210)})}
+    try:
+        _wait(lambda: "START NOW pressed in the lobby" in _log(tmp_path, "host"), 120, games, tmp_path,
+              "the host never pressed START NOW")
+        _wait(lambda: len(_bots_seen(_log(tmp_path, "host"), 2) or {}) == 2, 70, games, tmp_path,
+              "the game did not start within the countdown after START NOW, with two bots")
+    finally:
+        _stop(games, tmp_path, {"host": game})
+        for cache in tmp_path.rglob("cache*.map"):
+            cache.unlink()
+    log = _log(tmp_path, "host")
+    waits = re.findall(r"server: the game's start waits: (.*)", log)
+    print(f"the start waited on: {waits}")
+    assert "(not sent)" not in log, "START NOW was not sent"
+    assert not any("BOT" in reason for reason in waits), f"the start waited on a bot: {waits}"
+
+
 STOCK_MAPS = ("beavercreek", "bloodgulch", "boardingaction", "carousel", "chillout", "damnation", "hangemhigh",
               "longest", "prisoner", "putput", "ratrace", "sidewinder", "wizard")
 # the multiplayer weapons the walking graph reaches on each stock map, at

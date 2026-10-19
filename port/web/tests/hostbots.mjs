@@ -12,7 +12,9 @@
 // must log both bots joining, the walking
 // graph of Blood Gulch built in the browser (and cached in its private
 // storage), and the bots' reports with a walk each, and its own player and
-// the bots in the game each second.
+// the bots in the game each second. It starts the game as a person does:
+// START NOW pressed once in the lobby (debug.network_test_start_now), which
+// with only bots beside the host once did nothing.
 
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -76,7 +78,7 @@ try {
 
   console.log('a browser hosting Blood Gulch with two bots');
   await page.goto(`${pageUrl}?set=HALO_NETWORK_TEST=host:bloodgulch&set=HALO_NETWORK_TEST_START=8` +
-    '&set=HALO_SERVER_BOTS=2&set=HALO_BOT_SEED=4&set=HALO_NET_ONLINE=false');
+    '&set=HALO_SERVER_BOTS=2&set=HALO_BOT_SEED=4&set=HALO_NET_ONLINE=false&set=HALO_NETWORK_TEST_START_NOW=1');
   await page.waitForFunction(() => !document.querySelector('#play').disabled, null, { timeout: 60000 });
   await page.click('#play');
   const joined = () => new Set(lines.map((line) => /bots: (\[BOT\] \w+) joined/.exec(line)).filter(Boolean)
@@ -92,10 +94,11 @@ try {
     return went;
   };
   const botTicks = () => lines.filter((line) => /network test: tick \d+ .* m127/.test(line)).length;
-  const done = () => joined().size >= 2 && graph() && walked().size >= 2 &&
+  const pressed = () => lines.some((line) => /network test: START NOW pressed in the lobby/.test(line));
+  const done = () => pressed() && joined().size >= 2 && graph() && walked().size >= 2 &&
     [...walked().values()].every((distance) => distance >= 15) && botTicks() >= 5;
   if (!await until(done, 300)) {
-    fail(`the browser's game did not have its two bots play (joined: ${[...joined()].join(', ') || 'none'}; ` +
+    fail(`the browser's game did not have its two bots play (START NOW ${pressed() ? 'pressed' : 'not pressed'}; joined: ${[...joined()].join(', ') || 'none'}; ` +
       `graph: ${graph() ? 'yes' : 'no'}; went: ${JSON.stringify(Object.fromEntries(walked()))}; ` +
       `${botTicks()} seconds with the bot machine's players); the page's last lines:\n` +
       lines.slice(-60).map((line) => `  browser | ${line.slice(0, 240)}`).join('\n'));

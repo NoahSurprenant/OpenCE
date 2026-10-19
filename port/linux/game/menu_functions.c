@@ -2258,6 +2258,7 @@ struct network_game *network_game_client_get_game(void *client);
 struct network_game *network_game_server_get_game(void *server);
 short network_game_client_get_local_machine_index(void);
 short network_game_client_get_seconds_to_game_start(void *client);
+boolean network_game_server_port_start_waits(wchar_t *text, int size);
 boolean network_player_is_valid(struct network_player *player);
 boolean playlist_profile_get(long index, struct game_variant *variant);
 boolean playlist_profile_get_display_name(long index, wchar_t *name);
@@ -4410,14 +4411,20 @@ static void lobby_update(struct widget_instance *list)
 		short seconds = network_game_client_get_seconds_to_game_start(client);
 		char link[TEXT_FIELD_LENGTH];
 		wchar_t gametype[NUMBEROF(game->variant.human_readable_game_description) + 1];
+		/* (the host: what the start waits on, when anything holds it - a
+		machine loading the map, its own map, players missing) */
+		wchar_t waits[64];
+		boolean waiting = global_network_game_server_get() &&
+			network_game_server_port_start_waits(waits, (int)NUMBEROF(waits));
 
 		ustrncpy(gametype, game->variant.human_readable_game_description, NUMBEROF(gametype) - 1);
 		gametype[NUMBEROF(gametype) - 1] = 0;
+
 		usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%s\r\n%d of %d players\r\n\r\n%s", gametype,
 			engine_names[PIN(game->variant.game_engine_index, 0, 5)], lobby_player_count, game->maximum_players,
-			seconds > 0 ? L"Starting in:" : game->machine_count < 2 ? L"Waiting for players" : L"");
+			waiting ? waits : seconds > 0 ? L"Starting in:" : game->machine_count < 2 ? L"Waiting for players" : L"");
 		text[NUMBEROF(text) - 1] = 0;
-		if (seconds > 0)
+		if (seconds > 0 && !waiting)
 		{
 			size_t length = ustrlen(text);
 

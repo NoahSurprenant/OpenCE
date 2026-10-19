@@ -3361,14 +3361,37 @@ boolean server_has_enough_machines(
 	return has_enough_machines;
 }
 
+/* port: the game's people: its players but the host's bots (bots.c), who
+play whenever the host does */
+static long server_people(
+	struct network_game_server *server)
+{
+	long people = 0;
+	long index;
+
+	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+	{
+		struct network_player const *player = &server->game.players[index];
+
+		if (network_player_is_valid(player) && !network_game_server_port_machine_is_bot(player->machine_index))
+			people++;
+	}
+	return people;
+}
+
 /* port: a game's one player, with no one else in it yet, may start it:
-a system link or internet game's host, or split screen's first player */
+a system link or internet game's host, or split screen's first player - and
+with the host's bots beside them (bots join no machine of their own that
+could join, nor wait to be ready: a host with bots alone starts as a host
+alone does, its countdown, START NOW) */
 static boolean server_alone(
 	struct network_game_server *server)
 {
-	return server->game.player_count == 1 ||
+	long people = server_people(server);
+
+	return people == 1 ||
 		/* (or none, on a dedicated server) */
-		(network_game_server_port_playerless && server->game.player_count == 0);
+		(network_game_server_port_playerless && people == 0);
 }
 
 /* port: a machine joining or leaving is in the game before its player is.
@@ -5528,4 +5551,117 @@ boolean network_game_server_reset_to_pregame(
 	}
 
 	return success;
+}
+
+/* port: what the host's game's start waits on, for the host's lobby (its
+panel, where "Starting in" is: menu_functions.c) and its log, into text (size
+characters); FALSE when nothing holds it (counting down, or ready for START
+NOW). Bots (their machines join nothing, and load no map of their own) are
+never what it waits on */
+boolean network_game_server_port_start_waits(
+	wchar_t *text,
+	int size)
+{
+	static long zero_since = NONE;
+	static wchar_t told[96];
+	struct network_game_server *server = global_network_game_server_get();
+	char narrow[96];
+	int index;
+
+	text[0] = 0;
+	if (!server || server->state != _network_game_server_state_pregame || server->sent_start_game_message)
+	{
+		zero_since = NONE;
+		told[0] = 0;
+		return FALSE;
+	}
+	if (server->countdown_state.active)
+	{
+		if (server->countdown_state.paused)
+			usnprintf(text, size - 1, L"Paused while a player chooses a profile");
+		else if (countdown_timer_get_time_remaining(&server->countdown_state.timer) == 0)
+		{
+			long machine_index;
+			long waiting = 0;
+			long first = NONE;
+			long now = (long)system_milliseconds();
+
+			if (zero_since == NONE)
+				zero_since = now;
+			for (machine_index = 0; machine_index < MAXIMUM_NETWORK_MACHINE_COUNT; machine_index++)
+			{
+				struct network_game_server_client_machine *machine = &server->client_machines[machine_index];
+
+				if (network_game_server_client_machine_is_joined_to_game(server, machine) &&
+					!network_game_server_port_machine_is_bot(machine->machine_index) &&
+					network_game_server_machine_has_players(server, machine->machine_index) &&
+					!map_share_machine_needs_map(machine->machine_index) &&
+					!TEST_FLAG(machine->flags, _network_client_machine_precached_bit))
+				{
+					if (first == NONE)
+						first = machine->machine_index;
+					waiting++;
+				}
+			}
+			if (first != NONE)
+			{
+				wchar_t const *name = L"a player";
+
+				for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+				{
+					struct network_player const *player = &server->game.players[index];
+
+					if (network_player_is_valid(player) && player->machine_index == first)
+					{
+						name = player->name;
+						break;
+					}
+				}
+				usnprintf(text, size - 1, L"Waiting for %s%s to load the map%s", name,
+					waiting > 1 ? L" and others" : L"", now - zero_since > 20 * MILLISECONDS_PER_SECOND ?
+					L" (not answering)" : L"");
+			}
+			else if (!cache_files_precache_map_loaded(main_get_multiplayer_map_name()))
+			{
+				real progress = 0.f;
+
+				cache_files_precache_map_status(&progress);
+				if (progress > 0.f && progress <= 1.f)
+					usnprintf(text, size - 1, L"Loading the map (%d%%)", (int)(progress * 100.f));
+				else
+					usnprintf(text, size - 1, L"Loading the map...");
+			}
+		}
+		else
+			zero_since = NONE;
+	}
+	else
+	{
+		zero_since = NONE;
+		if (!server_ok_to_countdown(server))
+		{
+			if (server_needs_more_teams(server) && !server_alone(server))
+				usnprintf(text, size - 1, L"Waiting for players on each team");
+			else if (server->game.player_count < server->game.minimum_players)
+				usnprintf(text, size - 1, L"Waiting for %d more players",
+					(int)(server->game.minimum_players - server->game.player_count));
+			else
+				usnprintf(text, size - 1, L"Waiting for players");
+		}
+	}
+	text[size - 1] = 0;
+	/* (each change told in the log once) */
+	if (ustrcmp(text, told))
+	{
+		ustrncpy(told, text, NUMBEROF(told) - 1);
+		told[NUMBEROF(told) - 1] = 0;
+		for (index = 0; index < (int)NUMBEROF(narrow) - 1 && text[index]; index++)
+			narrow[index] = text[index] < 128 ? (char)text[index] : '?';
+		narrow[index] = 0;
+		if (narrow[0])
+			network_event("server: the game's start waits: %s", narrow);
+		else
+			network_event("server: the game's start waits on nothing now");
+	}
+	return text[0] != 0;
 }

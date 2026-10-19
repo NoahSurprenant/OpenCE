@@ -588,6 +588,10 @@ static const struct config_setting config_settings[] =
 		"co-op, if it can); empty for none." },
 	{ "debug.network_test_start", _config_real, "15.0", "HALO_NETWORK_TEST_START", _environment_value, _platform_all,
 		"Seconds after hosting that an automated test game starts." },
+	{ "debug.network_test_start_now", _config_boolean, "false", "HALO_NETWORK_TEST_START_NOW", _environment_value,
+		_platform_all,
+		"An automated test host starts its game as a person does: START NOW in the\n"
+		"lobby, once (a countdown, shortened), instead of at once." },
 	{ "debug.network_test_kill", _config_real, "0.0", "HALO_NETWORK_TEST_KILL", _environment_value, _platform_all,
 		"Every this many seconds an automated test host kills its last player; 0 never." },
 	{ "debug.network_test_score", _config_integer, "0", "HALO_NETWORK_TEST_SCORE", _environment_value, _platform_all,
