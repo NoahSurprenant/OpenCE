@@ -19,8 +19,9 @@ skate_bot_drive runs the skate engine for it):
 - it steps off for a fight (a target in sight), a ladder, jump or teleporter
   coming, its goal near, a flag or ball in hand, or being stuck;
 - a bot that may fight (not peaceful) rides at a person on foot it sees
-  near, to run them over (skate_authority.c: as a vehicle does), and a
-  peaceful one never runs anyone over (skate_bot_drive's run_over). */
+  near, to run them over (skate_authority.c: as a vehicle does); a peaceful
+  one never rides at anyone on purpose (its run-overs by accident are any
+  skater's). */
 
 #include "cseries.h"
 #include "math/real_math.h"
@@ -647,7 +648,7 @@ void bot_skate_think(
 		/* (its skater, if it has one, off the board; a while on foot, it lets
 		it go for another bot: skate.c gives up one not asked for) */
 		if (has_skater && (view.skating || now - skate->changed_tick < 2 * TICKS_PER_SECOND))
-			skate_bot_drive(player_index, unit_index, FALSE, NULL, FALSE);
+			skate_bot_drive(player_index, unit_index, FALSE, NULL);
 		skate->riding = FALSE;
 		return;
 	}
@@ -754,7 +755,7 @@ void bot_skate_think(
 		else
 			skate->stuck_ticks = 0;
 	}
-	if (!skate_bot_drive(player_index, unit_index, TRUE, &pad, bot->difficulty != _bot_difficulty_peaceful))
+	if (!skate_bot_drive(player_index, unit_index, TRUE, &pad))
 	{
 		/* (no skater to be had: on foot a while) */
 		skate->on = FALSE;

@@ -437,6 +437,19 @@ void bots_note_damage(
 	char const *name;
 	boolean grenade;
 
+	/* (a bot killed, by anything: what killed it, and whose, for the log) */
+	if (killed && global_network_game_server_get() && damage)
+	{
+		long victim = player_index_from_unit_index(object_index);
+		struct player_datum *dead_bot = victim != NONE ? player_try_and_get(victim) : NULL;
+
+		if (dead_bot && bots_of_player(victim))
+		{
+			platform_log("bots: player %ld died of %s, by player %ld", DATUM_INDEX_TO_ABSOLUTE_INDEX(victim),
+				damage->definition_index != NONE ? tag_get_name(damage->definition_index) : "?",
+				damage->owner_player_index == NONE ? -1L : DATUM_INDEX_TO_ABSOLUTE_INDEX(damage->owner_player_index));
+		}
+	}
 	if (!global_network_game_server_get() || !damage || damage->owner_player_index == NONE ||
 		(bot = bots_of_player(damage->owner_player_index)) == NULL)
 	{

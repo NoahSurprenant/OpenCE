@@ -126,10 +126,9 @@ struct skate_skater
 	the skate engine takes it before the next step (skate_apply_blast) */
 	real_vector3d blast;
 	/* (a bot's) its pad this tick (skate_bot_drive), and its step begun
-	(skate_bots_begin_steps); whether it runs nobody over (a peaceful bot) */
+	(skate_bots_begin_steps) */
 	struct halo_skate_pad pad;
 	boolean stepping;
-	boolean no_run_over;
 	/* (a bot's) its board where it was the last two ticks (drawn between
 	them, as another machine's skater's: skate_render_board), and the light
 	there */
@@ -1810,7 +1809,7 @@ the object it is (its triangles made once the nearest are known) */
 are held: their hits the host decides (skate_send_obstacles) */
 static boolean skate_obstacles_held;
 /* ... and whether people on foot are run over by the skater they are sent to
-(riding, and not a peaceful bot's: skate_bot_drive) */
+(riding) */
 static boolean skate_obstacles_run_over;
 
 struct skate_obstacles
@@ -2292,7 +2291,7 @@ static void skate_send_obstacles(struct skate_skater *rider, long unit_index)
 	/* (in a network game the host decides hits on other players, their
 	vehicles and other skaters: skate_authority.c) */
 	skate_obstacles_held = skate_authority_holds();
-	skate_obstacles_run_over = skate_skater_riding(rider) && !rider->no_run_over;
+	skate_obstacles_run_over = skate_skater_riding(rider);
 	object_get_origin(unit_index, &skater);
 	/* (collideable objects only: class bit 0) */
 	count = objects_in_sphere(FLAG(0),
@@ -2505,7 +2504,6 @@ static void skate_bot_release(struct skate_skater *skater, char const *reason)
 	platform_log("skate: bot skater %d given up (%s)", skate_session(skater), reason);
 	skater->player_index = NONE;
 	skater->wanted_time = NONE;
-	skater->no_run_over = FALSE;
 }
 
 /* a skater for the bot: its own, else a free one (its session made, and the
@@ -2553,15 +2551,13 @@ boolean skate_bots_available(void)
 	return skate_bots_data && skate_bots_allowed() > 0;
 }
 
-boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad,
-	boolean run_over)
+boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad)
 {
 	struct skate_skater *skater = on_board ? skate_bot_skater_for(player_index) : skate_bot_skater(player_index);
 
 	if (!skater)
 		return FALSE;
 	skater->wanted_time = game_time_get();
-	skater->no_run_over = !run_over;
 	if (pad)
 		skater->pad = *pad;
 	else
@@ -3358,13 +3354,6 @@ boolean skate_host_skater(long unit_index)
 	return skate_skater_of_unit(unit_index) != NULL;
 }
 
-boolean skate_host_skater_harmless(long unit_index)
-{
-	struct skate_skater *skater = skate_skater_of_unit(unit_index);
-
-	return skater && skater->no_run_over;
-}
-
 boolean skate_force_bail(long unit_index, real closing)
 {
 	struct skate_skater *skater = skate_skater_of_unit(unit_index);
@@ -3580,8 +3569,7 @@ boolean skate_bots_busy(void)
 	return FALSE;
 }
 
-boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad,
-	boolean run_over)
+boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad)
 {
 	return FALSE;
 }
@@ -3603,11 +3591,6 @@ boolean skate_host_skater_riding(long unit_index)
 }
 
 boolean skate_host_skater(long unit_index)
-{
-	return FALSE;
-}
-
-boolean skate_host_skater_harmless(long unit_index)
 {
 	return FALSE;
 }

@@ -920,8 +920,10 @@ is never in the image.
   it sees within 15 world units, a little ahead of where they go: riding into
   them fast enough runs them over, the host deciding it as a vehicle's hit
   and crediting the kill to the bot (above, "Multiplayer"). A **peaceful** bot
-  never rides at anyone, and its skater runs nobody over even by accident
-  (its obstacles are sent without `run_over`).
+  never rides at anyone on purpose (it never rams, nor seeks anyone out); if
+  it rides into someone by accident, the hit is decided as any skater's (a
+  run-over at speed). Bots die as people do: riding off a ledge, a fall or a
+  bail can kill them.
 - The other machines see a bot's skater as any skater (states 90/91, sounds
   94/95, its player's index): nothing new on the wire.
 
@@ -936,7 +938,8 @@ twice a second.
 listen host whose own player skates beside three bots (two normal, one
 peaceful) with a client that sees the bots' skaters posed with their boards;
 a ramming bot running over a bot standing on foot on Blood Gulch, the kill its own; and
-two peaceful bots told to ram that ride and harm nobody.
+two peaceful bots told to ram that ride and grind but never ride at anyone
+(an accident, a fall, is allowed).
 
 ## Multiplayer
 

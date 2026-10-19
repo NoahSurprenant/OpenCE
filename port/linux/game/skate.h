@@ -70,12 +70,11 @@ processors for so many): no more bots get on boards meanwhile */
 boolean skate_bots_busy(void);
 /* (bots_skate.c, before each tick, for every bot that rides or wants to)
 the bot of player_index (a datum) wants to be on a board (on_board; FALSE: off
-it) with its unit, holding pad (NULL: nothing) this tick; run_over: people on
-foot it rides into fast are run over (a peaceful bot's are not). FALSE when it
-has no skater, and none is to be had (all in use, or none allowed); a bot
-that stops asking for a second is given up */
-boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad,
-	boolean run_over);
+it) with its unit, holding pad (NULL: nothing) this tick. FALSE when it has
+no skater, and none is to be had (all in use, or none allowed); a bot that
+stops asking for a second is given up. Its skater's hits are any skater's: a
+person on foot ridden into fast is run over, whether it meant to or not */
+boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad);
 /* the bot's skater as its last step left it, into view; FALSE when it has
 none */
 boolean skate_bot_frame(long player_index, struct skate_bot_view *view);
@@ -89,9 +88,6 @@ int skate_bot_rails(float *points, int point_capacity, int *ends, int end_capaci
 such a skater at all (alive, on foot or riding) */
 boolean skate_host_skater_riding(long unit_index);
 boolean skate_host_skater(long unit_index);
-/* ... and whether it runs nobody over (a peaceful bot's: skate_bot_drive's
-run_over off), whose hits the host takes as bumps */
-boolean skate_host_skater_harmless(long unit_index);
 
 /* hs_compile_and_evaluate: a console command tuning Skate 3 mode, one of
 SKATE_CONSOLE_SETTINGS, with what follows its word: sets the value for the
