@@ -651,7 +651,7 @@ jobs:
           # loopback addresses differ, so they go side by side)
           mkdir -p "$RUNNER_TEMP/bots"
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/a" tools/test_bots.py \
-            -k "dedicated_server or older_client or listen_host or nav_on_every_map or leave_for or rotation" \
+            -k "dedicated_server or older_client or listen_host or nav_on_every_map or leave_for or rotation or start_now" \
             > "$RUNNER_TEMP/bots-a.log" 2>&1 &
           first=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/b" tools/test_bots.py \
@@ -668,10 +668,10 @@ jobs:
           wait $third || true
           wait $fourth || true
           cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log"
-          if ! grep -q '6 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
+          if ! grep -q '7 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
             ! grep -q '1 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" ||
             grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log"; then
-            echo "::error::the thirteen tests of tools/test_bots.py did not all run and pass (6 + 4 + 1 + 2)"
+            echo "::error::the fourteen tests of tools/test_bots.py did not all run and pass (7 + 4 + 1 + 2)"
             exit 1
           fi
 

@@ -1217,8 +1217,21 @@ void network_test_update(
 				host after a game, holds the countdown again: ui_widget.c) */
 				if (global_network_game_server_get())
 					network_game_server_pause_countdown(global_network_game_server_get(), FALSE);
-				network_game_client_request_immediate_start();
-				platform_log("network test: starting the game");
+				/* (debug.network_test_start_now: as a person does, START NOW in
+				the lobby once - the pregame screen's "net game speed start",
+				which asks to start sooner - not a start at once) */
+				if (config_boolean("debug.network_test_start_now"))
+				{
+					boolean asked = global_network_game_client_get() &&
+						network_game_client_request_start_time_change(global_network_game_client_get(), TRUE);
+
+					platform_log("network test: START NOW pressed in the lobby%s", asked ? "" : " (not sent)");
+				}
+				else
+				{
+					network_game_client_request_immediate_start();
+					platform_log("network test: starting the game");
+				}
 			}
 		}
 		break;

@@ -66,6 +66,11 @@ void network_game_server_port_clear_queued_players(
 machine slots of their own that no connection holds. A bot machine's index;
 a bot added to the lobby or the game (added: as the game has it), removed,
 and found */
+/* port: what the host's game's start waits on (the lobby's panel), into text
+(size characters); FALSE for nothing */
+boolean network_game_server_port_start_waits(
+	wchar_t *text,
+	int size);
 boolean network_game_server_port_machine_is_bot(
 	long machine_index);
 boolean network_game_server_port_room_for_person(

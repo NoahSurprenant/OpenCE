@@ -656,45 +656,45 @@
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/multiplayer_type_select/server_settings/bot_options/var_bots_fill">
-		<string text="OFF"/>
-		<string text="ON"/>
+		<string text="BOTS"/>
+		<string text="ALL PLAYERS"/>
 	</strings>
 	<strings name="main_menu/multiplayer_type_select/server_settings/bot_options/bot_options_labels">
 		<string text="BOTS:"/>
 		<string text="DIFFICULTY:"/>
-		<string text="FILL:"/>
+		<string text="COUNT:"/>
 	</strings>
 	<strings name="main_menu/multiplayer_type_select/server_settings/bot_options/cap_bot_options">
 		<string text="No bots."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots join the game, named [BOT] ...: they leave\nfor the people who join a full game."/>
-		<string text="Bots roam and take weapons but never fight."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots join the game, named [BOT] ...: COUNT says\nwhether they make room for people who join."/>
+		<string text="Bots roam, skate and take weapons, but never\nattack anyone."/>
 		<string text="Bots are slow to react, aim poorly and see little."/>
 		<string text="Bots fight about as a fair player does."/>
 		<string text="Bots react fast and aim well."/>
 		<string text="Bots react at once, aim very well and see far."/>
-		<string text="The game has as many bots as BOTS says."/>
-		<string text="BOTS is how many players the game has in all: a\nbot leaves as a person joins, and comes back."/>
+		<string text="BOTS is how many bots join. They stay as people\njoin, while there is room."/>
+		<string text="BOTS is how many players the game keeps: a bot\nleaves as a person joins, and comes back when\nthey leave."/>
 	</strings>
 </menus>

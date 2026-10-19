@@ -1096,18 +1096,18 @@ MAP_SHARE_SETUP = ("map_share_options", "MAP SHARING",
 BOT_COUNTS = list(range(17)) + [20, 24, 32, 48, 64, 96, 127]
 BOT_SETUP = ("bot_options", "BOTS", "Players the game plays itself, and how well they\\nfight, for the games you host.", [
     ("bots", "BOTS:", ["NONE" if count == 0 else str(count) for count in BOT_COUNTS],
-     ["No bots."] + ["Bots join the game, named [BOT] ...: they leave\\nfor the people who join a full game."] *
+     ["No bots."] + ["Bots join the game, named [BOT] ...: COUNT says\\nwhether they make room for people who join."] *
      (len(BOT_COUNTS) - 1)),
     ("bot_difficulty", "DIFFICULTY:", ["PEACEFUL", "EASY", "NORMAL", "HARD", "LEGENDARY"], [
-        "Bots roam and take weapons but never fight.",
+        "Bots roam, skate and take weapons, but never\\nattack anyone.",
         "Bots are slow to react, aim poorly and see little.",
         "Bots fight about as a fair player does.",
         "Bots react fast and aim well.",
         "Bots react at once, aim very well and see far.",
     ]),
-    ("bots_fill", "FILL:", ["OFF", "ON"], [
-        "The game has as many bots as BOTS says.",
-        "BOTS is how many players the game has in all: a\\nbot leaves as a person joins, and comes back.",
+    ("bots_fill", "COUNT:", ["BOTS", "ALL PLAYERS"], [
+        "BOTS is how many bots join. They stay as people\\njoin, while there is room.",
+        "BOTS is how many players the game keeps: a bot\\nleaves as a person joins, and comes back when\\nthey leave.",
     ]),
 ])
 # (Server Setup's place of its options' rows, co-op's or the gametype's: after
