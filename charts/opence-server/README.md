@@ -101,9 +101,13 @@ The log goes to the standard error either way.
 
 `skateData` is your own converted Skate 3 data (`port/skate/README.md`, "What you need": the
 `skate-data` folder, the one with `assets/` in it), never in the image. With it the server's bots
-ride boards to travel and step off to fight (`port/skate/README.md`, "Bots on boards"), at most
-`server.botSkaters` (4) at once, each about 35 MB of memory more and several seconds of a processor
-the first time it rides; the server logs `skate: a dedicated server with Skate 3 data` at start.
+ride boards to travel and step off to fight (`port/skate/README.md`, "Bots on boards"), every bot
+that wants to (`server.botSkaters` can limit them): the first skater about 58 MB of memory and 12
+seconds of a processor, each further one about 10 MB and a few milliseconds, and each about 4.6 ms
+of a processor every tick while it rides (a server short of processors lets its bots skate slower,
+and says so; "Several skaters" in that README has the figures for 32, 64 and 127); raise
+`resources.limits.memory` to match (about 600Mi for 32 riding bots, 900Mi for 64, 1800Mi for 127; the
+512Mi default fits a handful). The server logs `skate: a dedicated server with Skate 3 data` at start.
 Without it the server logs that it has none, and its bots walk. Human skaters joining the server
 skate either way: the server relays them and decides their hits without the data.
 

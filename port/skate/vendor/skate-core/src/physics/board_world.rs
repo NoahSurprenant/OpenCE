@@ -103,6 +103,7 @@ pub struct BoardWorldVolume {
 
 /// World geometry remains in supplied order. Each query reuses output storage;
 /// the returned contacts are valid until the next mutable call.
+#[derive(Clone)]
 pub struct BoardWorld {
     triangles: Vec<WorldTriangle>,
     triangle_bounds: Vec<Bounds>,

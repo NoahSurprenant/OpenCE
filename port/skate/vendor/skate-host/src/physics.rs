@@ -86,7 +86,7 @@ use skate_core::{
 };
 use skate_data::collections::Collections;
 
-#[derive(Resource)]
+#[derive(Clone, Resource)]
 pub(crate) struct GamePhysics {
     pub(crate) network_proxies: network::Proxies,
     pub(crate) network_active: bool,
@@ -158,6 +158,7 @@ pub(crate) struct GamePhysics {
 
 /// Cross-phase records for the current fixed tick. Subsystems retain their
 /// private native-shaped storage; only these buffers cross the coordinator.
+#[derive(Clone)]
 pub(crate) struct SimulationExchange {
     commands: skate_core::physics::phase::PhysicsCommandBuffer,
     events: skate_core::physics::phase::PhysicsEventBuffer,

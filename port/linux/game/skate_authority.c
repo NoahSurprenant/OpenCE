@@ -151,12 +151,14 @@ it is the same collision, decided once */
 #define SKATE_AUTHORITY_MEASURE_TICKS 15
 /* a person run over watched this many ticks for their death (two seconds) */
 #define SKATE_RUN_OVER_WATCH_TICKS (2 * TICKS_PER_SECOND)
-/* the most verdicts a skater's hits get from the host in a second */
+/* the most verdicts a skater's hits get from the host in a second; and the
+hits, verdicts, verdicts heard and pushes or run-overs watched kept at once:
+room for a whole lobby skating (every player, the host's bots too) */
 #define SKATE_AUTHORITY_DECISIONS_PER_SECOND 4
-#define SKATE_AUTHORITY_HITS 8
-#define SKATE_AUTHORITY_COLLISIONS 16
-#define SKATE_AUTHORITY_HEARD 32
-#define SKATE_AUTHORITY_MEASURES 4
+#define SKATE_AUTHORITY_HITS 512
+#define SKATE_AUTHORITY_COLLISIONS 512
+#define SKATE_AUTHORITY_HEARD 256
+#define SKATE_AUTHORITY_MEASURES 64
 #define SKATE_AUTHORITY_NO_PLAYER 0xFF
 
 /* ---------- the verdict

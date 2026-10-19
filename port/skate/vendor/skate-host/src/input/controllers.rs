@@ -18,7 +18,7 @@ pub(crate) enum ControllerStatus {
     Unavailable(DeviceError),
 }
 
-#[derive(Resource)]
+#[derive(Clone, Resource)]
 pub(crate) struct ControllerInput {
     raw: [RawInput; DEVICE_SLOTS],
     cache: [[HistoryRecord; DEVICE_SLOTS]; 2],

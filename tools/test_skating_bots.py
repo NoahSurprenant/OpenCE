@@ -187,3 +187,49 @@ def test_skating_bots_need_data(tmp_path):
     assert "halo-skate" not in log and "gets on a board" not in log, "a skate session without the data"
     assert len(boards) == 2 and all(b[0] == 0 for b in boards.values()), f"a bot rode without the data: {boards}"
     assert all(n >= 20 for n in went.values()) and len(went) == 2, f"the bots hardly moved: {went}"
+
+
+def test_skating_bots_crowd(tmp_path):
+    """A crowd on boards: a dedicated server with Skate 3 data and many bots
+    that all ride (debug.bot_skate "*ram": on a board whenever the way rolls
+    a little, fighting from it), and a client. Nothing caps them: every bot
+    gets a skate session of its own (copies of the first: a few milliseconds
+    each), most ride, the client sees them posed with their boards, and
+    nothing fails; a machine with too few processors for them lets them skate
+    slower, and says so, rather than refusing anyone. HALO_TEST_SKATE_CROWD
+    sets how many bots (16 at first, as the CI runner has room for; 64 or 127
+    to measure a machine: port/skate/README.md, "Several skaters"). About
+    three minutes."""
+    _, maps, assets = _needs_skate()
+    bots = int(os.environ.get("HALO_TEST_SKATE_CROWD", "16"))
+    server = _server()
+    game = os.environ.get("HALO_TEST_GAME")
+    games = {"server": _start(tmp_path, "server", server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SKATE_ASSETS": assets,
+        "HALO_SERVER_BOTS": str(bots), "HALO_SERVER_MAX_PLAYERS": "128", "HALO_BOT_SKATE": "*ram",
+        "HALO_BOT_SEED": "3", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "5",
+        "HALO_NET_ADDRESS": _test_address(255), "HALO_NET_BROADCAST": _test_address(211)})}
+    games["client"] = _start(tmp_path, "client", game, maps, {
+        "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
+        "HALO_SKATE_ASSETS": assets, "HALO_NET_ADDRESS": _test_address(211), "HALO_NET_BROADCAST": _test_address(255)})
+    posed = re.compile(r"skate network: player (\d+) skates on another machine at .*?: posed \d+ nodes, the board drawn")
+    rode = lambda: {player for player, _ in BOARDED.findall(_log(tmp_path, "server"))}
+    try:
+        _wait(lambda: len(rode()) >= bots * 3 // 4 and len(set(posed.findall(_log(tmp_path, "client")))) >= bots // 2,
+              240, games, tmp_path, f"three quarters of the {bots} bots did not ride, or the client saw too few of them")
+    finally:
+        _stop(games, tmp_path, {"server": server, "client": game})
+        for cache in tmp_path.rglob("cache*.map"):
+            cache.unlink()
+    log = _log(tmp_path, "server")
+    sessions = {int(n) for n in re.findall(r"skate: bot skater (\d+) made for player", log)}
+    copied = re.findall(r"preload: session in (\d+)ms \(a copy of the first\)", log)
+    slower = re.findall(r"skate: the bots' skaters take .*", log)
+    seen = set(posed.findall(_log(tmp_path, "client")))
+    print(f"{bots} bots: {len(rode())} rode, {len(sessions)} skate sessions made ({len(copied)} copies, "
+          f"{max(map(int, copied)) if copied else 0} ms at most), the client saw {len(seen)} posed with boards; "
+          f"load: {slower[-1] if slower else 'never slowed'}")
+    assert len(sessions) >= bots * 3 // 4, f"only {len(sessions)} skate sessions for {bots} bots"
+    assert copied and max(map(int, copied)) < 2000, f"sessions were not copied quickly: {copied[:5]}"
+    assert not re.search(r"NOT FINITE|EXCEPTION|fatal error|session could not be made", log), \
+        [line for line in log.splitlines() if re.search(r"NOT FINITE|EXCEPTION|fatal|could not be made", line)][:5]

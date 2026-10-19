@@ -1091,7 +1091,9 @@ MAP_SHARE_SETUP = ("map_share_options", "MAP SHARING",
 # as co-op's options are (its key, its title, its row's help and its rows:
 # menu_functions.c's gametype_options give their settings' values), below the
 # gametype's rows
-BOT_COUNTS = list(range(16))
+# (one by one to 16, then in steps up to every player but one, the bots' most:
+# 127; menu_functions.c's bots_spinner has the same)
+BOT_COUNTS = list(range(17)) + [20, 24, 32, 48, 64, 96, 127]
 BOT_SETUP = ("bot_options", "BOTS", "Players the game plays itself, and how well they\\nfight, for the games you host.", [
     ("bots", "BOTS:", ["NONE" if count == 0 else str(count) for count in BOT_COUNTS],
      ["No bots."] + ["Bots join the game, named [BOT] ...: they leave\\nfor the people who join a full game."] *

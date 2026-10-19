@@ -9,7 +9,7 @@ use skate_core::input::{
     wipeout_intentions,
 };
 
-#[derive(Resource)]
+#[derive(Clone, Resource)]
 pub(crate) struct PlayerControls {
     pub controller: DerivedControllerInput,
     pub offboard_direction: Option<[f32; 4]>,

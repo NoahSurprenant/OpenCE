@@ -816,9 +816,10 @@ either, since it may drive off at any time.
 
 ### Several skaters
 
-The engine can run more than one skater in one game (the host's bots on
-boards): up to `halo_skate_sessions()` sessions,
-each with its own worker thread, collision, skater, pose, hits and sounds.
+The engine runs as many skaters in one game as the game has players (the
+host's bots on boards; every one of 128 may skate at once): up to
+`halo_skate_sessions()` (129) sessions, each with its own collision, skater,
+pose, hits and sounds, made when a skater first needs one.
 Session 0 is this machine's player's, which every call without a number
 drives exactly as before; the others are driven by the `_in` calls of
 `include/halo_skate.h`, which take the session first (`halo_skate_step_in`,
@@ -829,10 +830,22 @@ sounds are mixed here; the others' are kept (`halo_skate_sound_take_in`) for
 the game to send to the other machines and to play as another player's
 (`skate_network.c`). Their log lines say whose: `halo-skate (session 2): ...`.
 
+Session 0 has a worker thread of its own, as it always had. The others share
+a pool (`halo-skate/src/pool.rs`): as many threads as the machine has
+processors, at most 16, each with the engine's 32 MB stack - a thread each
+would run the 32-bit game out of address space long before 128 sessions.
+Each session's jobs run in order, the sessions' side by side.
 `halo_skate_step_begin_in` starts a session's step without waiting, and
 `halo_skate_await_step_in` takes its pose: the game starts each bot's step,
-steps its own player's skater, then takes the bots' poses, so that the
-sessions' workers step side by side. `halo_skate_close_in` ends a session.
+steps its own player's skater, then takes the bots' poses.
+`halo_skate_close_in` ends a session.
+
+A new session is a copy of the first one made from the same data (the
+vendored engine's state is `Clone`: `#[derive(Clone)]` across
+`vendor/skate-core`, `skate-host` and `skate-data`, the one hand-written
+clone being `MotionRandom`'s): about 15 ms instead of 12 seconds, and it
+rides exactly as one made afresh (`real_assets_sessions.rs`). A map is
+prepared (deduplicated, sorted, its rails found) once for every session.
 
 In the game (`../linux/game/skate.c`) each skater is a `struct skate_skater`:
 skater 0 is this machine's player's, skaters 1 on are bots' (the host only),
@@ -844,22 +857,45 @@ they are posed, holstered, drawn and sent to the other machines as the
 host's own skater is (states 90/91 and sounds 94/95 keyed by player index:
 the wire is unchanged).
 
-What a session costs, measured with the real data
-(`halo-skate/tests/real_assets_sessions.rs`, an i686 build in a container
-capped at 1.5 processors): the first session about 57 MB of resident memory
-(the animation banks and the board, once), each further one about 35 MB with
-its worker; making one about 10 seconds of a processor (in the background);
-a step about 4.6 ms of a game tick for each skater, and three skaters side by
-side 9.6 ms. `server.bot_skaters` (4 at first, 8 at most) is how many bots
-may be on boards at once.
+What skaters cost, measured with the real data (i686 builds, a container
+capped at 1.5 processors and 2 GB):
+
+| | resident memory | time |
+| --- | --- | --- |
+| the first session (animation banks, board, the template) | about 58 MB | about 12 s of a processor, in the background |
+| each further session (a copy, with its collision) | about 9-12 MB | about 15 ms |
+| a skater's step | | about 4.6 ms of a processor each game tick (30 a second) |
+| a dedicated server, Blood Gulch, 32 bots on foot, no data | 134 MB | about 1 processor |
+| the same, 32 bots on boards (31 sessions) | 551 MB | |
+| the same, 64 bots on boards (59 sessions) | 853 MB | |
+
+So a server where every one of 127 bots skates at full speed needs about
+1.7 GB of memory and, for their steps alone, about 127 x 4.6 ms = 0.58 s of
+processor time every 33 ms tick: some 18 processors of this kind (plus about
+one for every 32 bots' brains). With fewer, the game slows the bots' skaters
+instead of refusing anyone: past 20 ms of skating steps a tick, each bot's
+skater steps every second tick, then every third, up to every 16th (they
+skate slower; the log says "skate: the bots' skaters take ... each steps
+every N ticks now"), and back as the load eases. On the measuring container
+(about one processor for the game) 64 riding bots slowed the game itself to
+about 20 ticks a second, and nothing failed. Remote human skaters cost the
+host almost nothing (their machines run their engines): it relays their
+states and sounds (far ones less often, as their units) and decides their hits.
+
+`server.bot_skaters` is 0 at first: no limit. A number limits how many bots
+ride at once, -1 keeps them on foot. The mixer plays 32 voices at most; with
+more skaters near than that, the nearest and loudest are heard (a skater
+coming near takes the voice of the furthest), and this machine's own always.
+`tools/test_skating_bots.py`'s test_skating_bots_crowd puts 16 bots on boards
+with a client (HALO_TEST_SKATE_CROWD for more: 64, 127).
 
 ### Bots on boards
 
 A host with Skate 3 mode and its data (a `--skate` build with
 `HALO_SKATE_ASSETS`, a listen host or a dedicated server) puts its bots on
 boards to travel (`port/linux/game/bots_skate.c`): each bot on a board rides
-a skate session of its own (above, "Several skaters"), at most
-`server.bot_skaters` of them at once (4 at first). Without the mode or the
+a skate session of its own (above, "Several skaters"), every bot if it wants
+(`server.bot_skaters` can limit them). Without the mode or the
 data the bots walk, as before.
 The server image (`docker/server/Dockerfile`, chart `charts/opence-server`) is
 such a build: mount your own `skate-data` folder at `/skate-data`, read-only

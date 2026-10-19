@@ -11,8 +11,9 @@ none of this. */
 
 struct player_datum;
 
-/* the most bots a game has (four to a bot machine) */
-#define BOTS_MAXIMUM 16
+/* the most bots a game has (four to a bot machine): all but one of the
+players a game has, so that a person can always join */
+#define BOTS_MAXIMUM (HALO_PORT_MAXIMUM_NETWORK_PLAYERS - 1)
 /* the tag every bot's name starts with, so that people know who is one
 (nothing on the wire says so) */
 #define BOTS_NAME_TAG L"[BOT] "

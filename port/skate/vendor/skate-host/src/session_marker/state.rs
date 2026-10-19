@@ -1,5 +1,5 @@
 //! PlayerUI::UpdateSessionMarker 82898FC8. Time advances in native UI ticks.
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub(super) struct Hold {
     elapsed: f32,
     fired: bool,

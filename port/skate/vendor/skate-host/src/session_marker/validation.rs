@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use skate_core::{math::Vector3, physics::board_world::BoardWorld};
 use skate_data::collections::Collections;
 
-#[derive(Resource)]
+#[derive(Clone, Resource)]
 pub(super) struct Validation {
     slope: f32,
     max_drop: f32,

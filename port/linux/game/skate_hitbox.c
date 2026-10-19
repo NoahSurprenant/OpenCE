@@ -120,8 +120,8 @@ apart for it, and how often a check is written besides each state's first */
 #define SKATE_HITBOX_MAXIMUM_DUMPS 48
 #define SKATE_HITBOX_MAXIMUM_STATES 48
 #define SKATE_HITBOX_DUMP_EVERY 40
-/* the skaters whose last drawn nodes are kept */
-#define SKATE_HITBOX_MAXIMUM_DRAWN 16
+/* the skaters whose last drawn nodes are kept (every player may skate) */
+#define SKATE_HITBOX_MAXIMUM_DRAWN SKATE_NETWORK_PLAYERS
 
 /* each skater's nodes as the last tick left them to be drawn */
 static struct skate_hitbox_drawn

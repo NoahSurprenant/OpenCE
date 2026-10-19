@@ -23,6 +23,7 @@ pub struct Controls {
     pub left: [i16; 2],
     pub right: [i16; 2],
 }
+#[derive(Clone)]
 pub struct Session {
     physics: GamePhysics,
     skater: SkaterRuntime,
