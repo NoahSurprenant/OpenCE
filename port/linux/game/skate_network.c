@@ -57,6 +57,7 @@ they were: the network version is unchanged.
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "units/units.h"
+#include "tag_files/tag_files.h"
 #include "network_distributed.h"
 
 #include "skate.h"
@@ -126,6 +127,11 @@ them over kills them, skate_authority.c) */
 /* ... but not this many ticks either side of the host's own skater's
 teleport (debug.network_test_skate_teleport: a second) */
 #define SKATE_NETWORK_BLOCK_CLEAR TICKS_PER_SECOND
+/* the host's own skater put back on the teleporter's entrance every this many
+ticks, for up to this many, until the teleporter takes them
+(skate_network_test_teleport) */
+#define SKATE_NETWORK_TELEPORT_AGAIN 10
+#define SKATE_NETWORK_TELEPORT_HOLD (2 * TICKS_PER_SECOND)
 /* a spot the watcher is put at has ground this near under it (world units)
 and nothing of the level's between it and the skater */
 #define SKATE_NETWORK_SPOT_GROUND 1.0f
@@ -1699,38 +1705,89 @@ static void skate_network_test_shoot(void)
 /* debug.network_test_skate_teleport: that many seconds into a game a host
 skating itself (debug.network_test_skate_duel) puts its skater on the first
 teleporter's entrance, where Halo's own teleporter
-(game_engine_update_teleporter) takes them to its exit that tick, turned by
-the exit's facing less the entrance's, and the skate engine's skater follows
-(skate.c's skate_follow_teleport); the other machines see them there as the
-host has them */
+(game_engine_update_teleporter) takes them to its exit, turned by the exit's
+facing less the entrance's, and the skate engine's skater follows (skate.c's
+skate_follow_teleport); the other machines see them there as the host has
+them. Halo's teleporter takes nobody while someone stands on its exit (the
+game counts them as blocking it): a skater rolls off the entrance before the
+exit is clear, so the host puts its skater back on the entrance every third
+of a second, for up to SKATE_NETWORK_TELEPORT_HOLD, until it is taken, and
+says what stood on the exit */
 static void skate_network_test_teleport(void)
 {
 	static real start = -1.f;
 	struct scenario *scenario = global_scenario_get();
 	long unit_index = player_control_get_unit_index(0);
+	struct scenario_netgame_flag *entrance = NULL;
+	struct scenario_netgame_flag *exit = NULL;
+	struct object_datum *object;
+	long start_tick;
+	long now = game_time_get();
 	short index;
 
 	if (start < 0.f)
 		start = (real)config_real("debug.network_test_skate_teleport");
 	if (!(start > 0.f) || !game_in_progress() || game_connection() == _game_connection_network_client || !scenario ||
-		game_time_get() != (long)(start * TICKS_PER_SECOND) || unit_index == NONE || !skate_unit_is_skating(unit_index))
+		unit_index == NONE || !skate_unit_is_skating(unit_index))
 	{
 		return;
 	}
-	for (index = 0; index < scenario->netgame_flags.count; index++)
+	start_tick = (long)(start * TICKS_PER_SECOND);
+	if (now < start_tick || now > start_tick + SKATE_NETWORK_TELEPORT_HOLD ||
+		(now - start_tick) % SKATE_NETWORK_TELEPORT_AGAIN != 0)
+	{
+		return;
+	}
+	for (index = 0; index < scenario->netgame_flags.count && !entrance; index++)
 	{
 		struct scenario_netgame_flag *flag = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_flags, index,
 			struct scenario_netgame_flag);
-		struct object_datum *object = object_get(unit_index);
 
-		if (flag->type != _netgame_flag_teleporter_source)
-			continue;
-		platform_log("skate test: this machine's skater put on a teleporter's entrance %.2f world units away, at "
-			"(%.2f %.2f %.2f)", (real)sqrt(distance_squared3d(&object->object.position, &flag->position)),
-			flag->position.x, flag->position.y, flag->position.z);
-		object_set_position(unit_index, &flag->position, &object->object.forward, NULL);
-		return;
+		if (flag->type == _netgame_flag_teleporter_source)
+			entrance = flag;
 	}
+	if (!entrance)
+		return;
+	for (index = 0; index < scenario->netgame_flags.count && !exit; index++)
+	{
+		struct scenario_netgame_flag *flag = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_flags, index,
+			struct scenario_netgame_flag);
+
+		if (flag->type == _netgame_flag_teleporter_target && flag->team_index == entrance->team_index)
+			exit = flag;
+	}
+	object = object_get(unit_index);
+	if (now == start_tick)
+	{
+		platform_log("skate test: this machine's skater put on a teleporter's entrance %.2f world units away, at "
+			"(%.2f %.2f %.2f)", (real)sqrt(distance_squared3d(&object->object.position, &entrance->position)),
+			entrance->position.x, entrance->position.y, entrance->position.z);
+	}
+	else
+	{
+		struct object_iterator units;
+
+		/* (taken: gone from the entrance) */
+		if (distance_squared3d(&object->object.position, &entrance->position) > 3.0f * 3.0f)
+			return;
+		platform_log("skate test: the teleporter has not taken this machine's skater %ld ticks on; put on its entrance again",
+			now - start_tick);
+		object_iterator_new(&units, _object_mask_unit, 0);
+		while (exit && object_iterator_next(&units))
+		{
+			struct object_datum *unit = object_get(units.index);
+
+			if (units.index != unit_index && unit->object.parent_object_index == NONE &&
+				distance_squared3d(&unit->object.position, &exit->position) < 1.5f * 1.5f)
+			{
+				platform_log("skate test: on the teleporter's exit: %s (player %ld), %.2f world units from it",
+					tag_get_name(unit->definition_index), unit_get(units.index)->unit.player_index == NONE ? -1L :
+					(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(unit_get(units.index)->unit.player_index),
+					(real)sqrt(distance_squared3d(&unit->object.position, &exit->position)));
+			}
+		}
+	}
+	object_set_position(unit_index, &entrance->position, &object->object.forward, NULL);
 }
 
 /* debug.network_test_skate_block on a dedicated server (server.dedicated),
@@ -2074,7 +2131,8 @@ boolean skate_network_block_spot(long unit_index, boolean on_board, real_point3d
 		real teleport = (real)config_real("debug.network_test_skate_teleport");
 		long since = game_time_get() - (long)(teleport * TICKS_PER_SECOND);
 
-		if ((teleport > 0.f && since >= -SKATE_NETWORK_BLOCK_CLEAR && since <= SKATE_NETWORK_BLOCK_CLEAR) ||
+		if ((teleport > 0.f && since >= -SKATE_NETWORK_BLOCK_CLEAR &&
+			since <= SKATE_NETWORK_TELEPORT_HOLD + SKATE_NETWORK_BLOCK_CLEAR) ||
 			(skate_shoot.local && (skate_shoot.grenade_index != NONE || skate_shoot.detonated_time != NONE)))
 		{
 			return FALSE;
