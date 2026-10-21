@@ -585,8 +585,11 @@ jobs:
     # (test_bots_ctf), King of the Hill, Oddball, Race and Juggernaut
     # (test_bots_game_types), four throwing grenades in Team
     # Slayer (test_bots_grenades), a bot leaving a full server for a
-    # person (test_bots_leave_for_a_person), and a bot put in a vehicle
-    # getting out again (test_bots_out_of_a_vehicle). They
+    # person (test_bots_leave_for_a_person), a bot put in a vehicle
+    # getting out again (test_bots_out_of_a_vehicle), and bots driving Blood
+    # Gulch's and Sidewinder's Warthogs and Ghosts (test_bots_drive,
+    # test_bots_drive_harmless) and flipping one back over (test_bots_flip).
+    # They
     # need the Halo maps, so on the owner's
     # runner, opence-k8s, only for this repository's own code, as
     # skate-assets. Not needed by release or notify.
@@ -664,15 +667,21 @@ jobs:
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/d" tools/test_bots.py \
             -k "ctf or difficulties" > "$RUNNER_TEMP/bots-d.log" 2>&1 &
           fourth=$!
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/e" tools/test_bots.py \
+            -k "drive or flip" > "$RUNNER_TEMP/bots-e.log" 2>&1 &
+          fifth=$!
           wait $first || true
           wait $second || true
           wait $third || true
           wait $fourth || true
-          cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log"
+          wait $fifth || true
+          cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
+            "$RUNNER_TEMP/bots-e.log"
           if ! grep -q '7 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
-            ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" ||
-            grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log"; then
-            echo "::error::the fifteen tests of tools/test_bots.py did not all run and pass (7 + 4 + 2 + 2)"
+            ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" || ! grep -q '3 passed' "$RUNNER_TEMP/bots-e.log" ||
+            grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
+            "$RUNNER_TEMP/bots-e.log"; then
+            echo "::error::the eighteen tests of tools/test_bots.py did not all run and pass (7 + 4 + 2 + 2 + 3)"
             exit 1
           fi
 
@@ -692,7 +701,7 @@ jobs:
         run: |
           pkill -KILL -f "$RUNNER_TEMP/halo-" || true
           git worktree remove --force "$RUNNER_TEMP/old-client" || true
-          rm -rf "$RUNNER_TEMP/bots" "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" "$RUNNER_TEMP/halo-bots" "$RUNNER_TEMP/halo-old-client" \
+          rm -rf "$RUNNER_TEMP/bots" "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/halo-bots" "$RUNNER_TEMP/halo-old-client" \
             "$RUNNER_TEMP/stall_backtrace.so"
 
   web-dedicated:

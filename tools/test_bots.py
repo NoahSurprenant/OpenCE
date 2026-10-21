@@ -603,6 +603,7 @@ def test_bots_out_of_a_vehicle(tmp_path):
     games = {"server": _start(tmp_path, "server", server, maps, {
         "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "8",
         "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "1", "HALO_NETWORK_TEST_VEHICLE": "8",
+        "HALO_SERVER_BOT_VEHICLES": "-1",
         "HALO_NET_ADDRESS": _test_address(219), "HALO_NET_BROADCAST": _test_address(220)})}
     try:
         _wait(lambda: len(SCORE.findall(_log(tmp_path, "server"))) >= 2, 150, games, tmp_path,
@@ -628,6 +629,91 @@ def test_bots_out_of_a_vehicle(tmp_path):
     assert sorted(c.get("times in a vehicle by mistake") for c in counts.values()) == [0, 1], counts
     went = {m[0]: int(m[1]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*?went (\d+) world units", log)}
     assert len(went) == 2 and all(n >= 20 for n in went.values()), f"a bot hardly moved: {went}"
+
+
+def _drives(log):
+    """each bot's last report of its vehicles: {name: {what: count}} with
+    rides in vehicles, seconds driven, world units driven, reverses, vehicles
+    flipped back, people braked for, people driven at and times in a vehicle
+    by mistake"""
+    keys = ("rides in vehicles", "seconds driven", "world units driven", "reverses", "vehicles flipped back",
+            "people braked for", "people driven at", "times in a vehicle by mistake")
+    return {name: {key: counts.get(key, 0) for key in keys} for name, counts in _reports(log).items()}
+
+
+def test_bots_drive(tmp_path):
+    """Two bots (normal) on Blood Gulch's dedicated server, alone, each
+    driving whenever its goal is a little way off and a Warthog or Ghost is
+    near (debug.bot_vehicle "*drive"): they walk to a driver's door, get in,
+    drive the drive graph (bots_vehicle.c) toward their goals, back up when
+    stuck and get out at their goals. Slayer places Blood Gulch's two
+    Warthogs, one for each: both drive, again and again, a good way between
+    them, neither gets stuck in one for long, and neither drives at anyone
+    on purpose. About two and a half minutes."""
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "21", "HALO_SERVER_BOT_DIFFICULTY": "normal",
+        "HALO_BOT_VEHICLE": "*drive", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(201), "HALO_NET_BROADCAST": _test_address(202)})
+    drives = _drives(log)
+    for name, counts in sorted(drives.items()):
+        print(f"{name}: {counts}")
+    print("\n".join(line for line in log.splitlines() if re.search(r"bots: player \d+ (drives|gets out|got out|is out|flipped)", line)))
+    assert len(drives) == 2, log[-4000:]
+    assert all(c["rides in vehicles"] >= 1 for c in drives.values()), f"a bot did not drive: {drives}"
+    assert sum(c["rides in vehicles"] for c in drives.values()) >= 4, f"the bots hardly drove: {drives}"
+    assert sum(c["world units driven"] for c in drives.values()) >= 150, f"the bots hardly drove: {drives}"
+    assert all(c["people driven at"] == 0 and c["times in a vehicle by mistake"] == 0 for c in drives.values()), drives
+    assert "cannot get out of vehicle" not in log, "a bot could not get out of its vehicle"
+    assert len(re.findall(r"bots: player \d+ gets out of vehicle \w+ \(stuck\)", log)) <= 2, "bots got stuck driving"
+
+
+def test_bots_drive_harmless(tmp_path):
+    """Four peaceful bots drive Sidewinder's Warthogs and Ghosts as
+    test_bots_drive's do: travel is no fight, so they drive, but they brake
+    for anyone on foot ahead and never drive at anyone (a run-over by
+    accident is allowed: none is meant), nor fire. About two and a half
+    minutes."""
+    maps, _ = _needs("HALO_TEST_SERVER")
+    if not Path(maps, "sidewinder.map").is_file():
+        pytest.skip("needs sidewinder.map")
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "22", "HALO_SERVER_BOT_DIFFICULTY": "peaceful",
+        "HALO_BOT_VEHICLE": "*drive", "HALO_SERVER_MAPS": "sidewinder", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(203), "HALO_NET_BROADCAST": _test_address(204)})
+    drives = _drives(log)
+    reports = _reports(log)
+    for name, counts in sorted(drives.items()):
+        print(f"{name}: {counts}; fired {reports[name].get('ticks')}")
+    assert len(drives) == 4, log[-4000:]
+    assert sum(1 for c in drives.values() if c["rides in vehicles"] >= 1) >= 2, f"the peaceful bots did not drive: {drives}"
+    assert sum(c["world units driven"] for c in drives.values()) >= 100, f"the peaceful bots hardly drove: {drives}"
+    assert all(c["people driven at"] == 0 for c in drives.values()), f"a peaceful bot drove at someone: {drives}"
+    fired = {m[0]: int(m[1]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*? fired (\d+) ticks", log)}
+    assert len(fired) == 4 and all(n == 0 for n in fired.values()), f"a peaceful bot fired: {fired}"
+
+
+def test_bots_flip(tmp_path):
+    """One bot that drives (debug.bot_vehicle "drive") on Blood Gulch's
+    dedicated server; 30 seconds in, the host turns the vehicle it drives (or
+    the nearest) over (debug.network_test_vehicle_flip), which puts it out:
+    it walks beside the vehicle, flips it back over with the action button as
+    a person does, and drives on. About a minute and a half."""
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "1", "HALO_BOT_SEED": "23", "HALO_BOT_VEHICLE": "drive",
+        "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "1", "HALO_NETWORK_TEST_VEHICLE_FLIP": "30",
+        "HALO_NET_ADDRESS": _test_address(205), "HALO_NET_BROADCAST": _test_address(206)})
+    print("\n".join(line for line in log.splitlines() if re.search(r"bots: player \d+ (drives|gets out|got out|is out|flipped)|"
+                                                                    r"network test: .*turn", line)))
+    turned = re.search(r"network test: the host turns vehicle (\w+) over at tick (\d+)", log)
+    assert turned, "the host turned no vehicle over:\n" + log[-4000:]
+    flipped = re.findall(r"bots: player \d+ flipped vehicle (\w+) back over at tick (\d+)", log)
+    assert flipped and flipped[0][0] == turned.group(1), f"the bot did not flip the vehicle back: {flipped}"
+    drives = _drives(log)
+    print(drives)
+    (counts,) = drives.values()
+    assert counts["vehicles flipped back"] >= 1 and counts["rides in vehicles"] >= 2, counts
+    assert any(int(tick) > int(flipped[0][1]) for tick in re.findall(r"bots: player \d+ drives vehicle \w+ \(\w+\) at tick (\d+)", log)), \
+        "the bot did not drive again after flipping the vehicle back"
 
 
 def test_bots_grenades(tmp_path):

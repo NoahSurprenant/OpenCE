@@ -363,7 +363,8 @@ static void bots_report(
 			"%ld noises heard, %ld grenades dodged; %ld retreats, %ld covers reached, %ld powerups taken, %ld weapon switches, "
 			"%ld power weapons taken, %ld suicides; %.0f world units from a spawn at most; "
 			"on a board %ld times, %ld seconds, %.0f world units, %ld ollies, %ld bails, %ld people ridden at, "
-			"%ld rails lined up with, %ld grinds; %ld times in a vehicle by mistake",
+			"%ld rails lined up with, %ld grinds; %ld times in a vehicle by mistake; %ld rides in vehicles, %ld seconds driven, "
+			"%.0f world units driven, %ld reverses, %ld vehicles flipped back, %ld people braked for, %ld people driven at",
 			name, now, statistics->goals_reached, statistics->paths_planned, statistics->paths_failed, statistics->stuck,
 			statistics->stuck_ticks / TICKS_PER_SECOND,
 			statistics->travelled, statistics->moves[_bots_nav_drop], statistics->moves[_bots_nav_jump],
@@ -375,9 +376,43 @@ static void bots_report(
 			statistics->weapon_switches, statistics->power_weapons_taken, statistics->suicides, statistics->farthest,
 			statistics->skate_boardings, statistics->skate_ticks / TICKS_PER_SECOND, statistics->skate_travelled,
 			statistics->skate_ollies, statistics->skate_bails, statistics->skate_rams, statistics->skate_grind_tries,
-			statistics->skate_grinds, statistics->vehicle_mistakes);
+			statistics->skate_grinds, statistics->vehicle_mistakes, statistics->vehicle_rides,
+			statistics->vehicle_ticks / TICKS_PER_SECOND, statistics->vehicle_travelled, statistics->vehicle_reverses,
+			statistics->vehicle_flips, statistics->vehicle_braked, statistics->vehicle_rams);
 		bots_report_objective(bot, name, now);
 	}
+}
+
+boolean bots_vehicle_taken(
+	long vehicle_index,
+	struct bot const *except)
+{
+	short index;
+
+	for (index = 0; index < BOTS_MAXIMUM; index++)
+	{
+		struct bot const *bot = &bots_globals.bots[index];
+
+		if (bot->used && bot != except && bot_vehicle_holds(bot, vehicle_index))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+long bots_vehicle_riders(
+	void)
+{
+	long riders = 0;
+	short index;
+
+	for (index = 0; index < BOTS_MAXIMUM; index++)
+	{
+		struct bot const *bot = &bots_globals.bots[index];
+
+		if (bot->used && bot_vehicle_busy(bot))
+			riders++;
+	}
+	return riders;
 }
 
 short bots_team_rank(
@@ -623,7 +658,7 @@ void bots_update(
 		return;
 	count = bots_count();
 	/* (the walking graph of the map being played, once there are bots) */
-	bots_nav_update(count > 0, FALSE);
+	bots_nav_update(count > 0, config_integer("server.bot_vehicles") >= 0);
 	bots_report();
 	wanted = bots_globals.wanted;
 	/* (server.bots_fill: as many as make the players server.bots) */

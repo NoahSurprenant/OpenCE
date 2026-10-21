@@ -128,6 +128,10 @@ static struct
 	real kill_interval;
 	real shoot_interval;
 	real vehicle_time;
+	/* debug.network_test_vehicle_flip, and the game tick it was done at
+	(NONE: not yet this game) */
+	real vehicle_flip_time;
+	long vehicle_flipped_tick;
 	real pickup_time;
 	char pickup_weapon[64];
 	long score_to_win;
@@ -281,6 +285,8 @@ static void network_test_read_settings(
 	network_test.kill_interval = (real)config_real("debug.network_test_kill");
 	network_test.shoot_interval = (real)config_real("debug.network_test_shoot");
 	network_test.vehicle_time = (real)config_real("debug.network_test_vehicle");
+	network_test.vehicle_flip_time = (real)config_real("debug.network_test_vehicle_flip");
+	network_test.vehicle_flipped_tick = NONE;
 	network_test.pickup_time = (real)config_real("debug.network_test_pickup");
 	snprintf(network_test.pickup_weapon, sizeof(network_test.pickup_weapon), "%s",
 		config_string("debug.network_test_pickup_weapon"));
@@ -691,6 +697,64 @@ static void network_test_vehicle(
 	}
 }
 
+/* the host turns over the vehicle the last player rides, else the one
+nearest them, onto its roof (its riders are put out: bipeds.c) */
+static void network_test_vehicle_flip(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *last = NULL;
+	long vehicle_index = NONE;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		last = player;
+	if (!last || last->unit_index == NONE)
+		return;
+	vehicle_index = object_get(last->unit_index)->object.parent_object_index;
+	if (vehicle_index == NONE || object_get(vehicle_index)->object.type != _object_type_vehicle)
+	{
+		struct object_iterator vehicles;
+		real nearest_distance = 0.0f;
+		real_point3d const *position = &object_get(last->unit_index)->object.position;
+
+		vehicle_index = NONE;
+		object_iterator_new(&vehicles, _object_mask_vehicle, 0);
+		while (object_iterator_next(&vehicles))
+		{
+			real distance = distance_squared3d(position, &object_get(vehicles.index)->object.position);
+
+			if (vehicle_index == NONE || distance < nearest_distance)
+			{
+				vehicle_index = vehicles.index;
+				nearest_distance = distance;
+			}
+		}
+	}
+	if (vehicle_index == NONE)
+	{
+		platform_log("network test: no vehicle to turn over");
+		return;
+	}
+	{
+		struct object_datum *vehicle = object_get(vehicle_index);
+		real_point3d position = vehicle->object.position;
+		real_vector3d forward = vehicle->object.forward;
+		real_vector3d down = { 0.0f, 0.0f, -1.0f };
+
+		forward.k = 0.0f;
+		if (normalize3d(&forward) == 0.0f)
+		{
+			forward.i = 1.0f;
+			forward.j = 0.0f;
+		}
+		position.z += 0.5f;
+		object_set_position(vehicle_index, &position, &forward, &down);
+		platform_log("network test: the host turns vehicle %lx over at tick %ld", vehicle_index, game_time_get());
+	}
+}
+
 /* both machines stand the last player at the driver's entrance of the
 nearest vehicle no one rides (a joining machine's player then holds the
 action button, as a player getting in does) */
@@ -908,6 +972,18 @@ void network_test_update(
 				game_time_get() - enter_time - 15 * TICKS_PER_SECOND < TICKS_PER_SECOND)
 			{
 				network_test_vehicle(FALSE);
+			}
+		}
+		/* debug.network_test_vehicle_flip: once a game */
+		if (network_test.mode == _network_test_host && network_test.vehicle_flip_time > 0.0f)
+		{
+			if (network_test.vehicle_flipped_tick != NONE && game_time_get() < network_test.vehicle_flipped_tick)
+				network_test.vehicle_flipped_tick = NONE;
+			if (network_test.vehicle_flipped_tick == NONE &&
+				game_time_get() >= (long)(network_test.vehicle_flip_time * TICKS_PER_SECOND))
+			{
+				network_test.vehicle_flipped_tick = game_time_get();
+				network_test_vehicle_flip();
 			}
 		}
 		/* ... and 20 seconds on, the last player getting in as a player does:

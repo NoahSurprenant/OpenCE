@@ -1289,18 +1289,49 @@ netgame flags. It still fights what it meets on the way.
   enemies (to the place furthest from them of a few). An enemy who has it
   is hunted, a team mate who has it escorted. In Juggernaut and reverse tag
   the bot who is "it" fights, and the others hunt it.
-- **Race:** to the race's flags, each in turn (on foot: bots drive no
-  vehicles).
+- **Race:** to the race's flags, each in turn, driving a Warthog or Ghost
+  where the map has them ("Bots in vehicles").
 - **Team Slayer:** a bot that sees nobody goes over to a team mate now and
   then, so that team mates fight together.
 
-`server.game_types` takes `juggernaut` too. Vehicles are for later.
+`server.game_types` takes `juggernaut` too.
 
-Bots stay out of vehicles for now. A bot's action button, pressed for a
-weapon or a ball, is not pressed where it would get the bot into a vehicle,
-or flip one, instead; a bot that is in one anyway (the host put it there)
-stands still and gets out at once, and the log says so (`bots: player N got
-into vehicle ... by mistake`).
+### Bots in vehicles
+
+Bots drive Warthogs and Ghosts (`game/bots_vehicle.c`) on maps that have
+them: of the stock maps, Blood Gulch and Sidewinder. Everything goes through
+the bot's input, as a person's does, so nothing is new on the wire:
+
+- A bot thinks of a ride when its goal is far (40 world units, about 120 m),
+  it is not fighting and holds no flag or ball: the nearest free Warthog or
+  Ghost within 25 world units that nobody rides, no other bot has, and no
+  person stands near (a person may want it), if riding is quicker than
+  walking.
+- It walks to the driver's door (round the vehicle when it comes from the
+  other side), stops, and presses the action button while the game offers it
+  the driver's seat.
+- It drives along the graph that vehicles drive (below, "The walking
+  graph"), steering for a point a few world units ahead, slower in turns,
+  near its goal, leaning or in the air. It brakes for anyone on foot ahead,
+  bots and people alike, and slows for vehicles: a bot runs nobody over on
+  purpose (accidents happen). Peaceful bots drive too.
+- Getting nowhere, it backs up with the wheels turned and goes round. Stuck
+  again and again on one part of the way, it keeps off it, and after six
+  times in 20 seconds it gets out and walks.
+- It gets out at its goal (stopped first), or when the vehicle turns over. A
+  vehicle on its side or roof it flips back over, as a person does, and gets
+  back in.
+- A bot that is in a vehicle it never chose (the host put it there) gets out
+  at once (`bots: player N got into vehicle ... by mistake`), and a bot on
+  foot presses no action button that would get it into a vehicle by
+  mistake.
+- `server.bot_vehicles` (`HALO_SERVER_BOT_VEHICLES`) is the most bots driving
+  at once: 0 (at first) for no limit, -1 for bots that never get in. The
+  report (`bots: [BOT] ... at tick`) counts each bot's rides, seconds and
+  world units driven, backing up, vehicles flipped back, people braked for
+  and people driven at.
+- Not yet: gunners and passengers, fighting from a vehicle, Scorpions and
+  rocket Warthogs, flying.
 
 Peaceful bots roam, take weapons and play as the others do, but never fight:
 they never aim at a player, shoot, throw a grenade or strike. They can still
@@ -1413,6 +1444,14 @@ taken, no bot stuck more than 12 seconds of 80); and four bots playing a two-min
 (`test_bots_slayer`: each kills and dies, weapons taken). CI runs them in the `bots` job on `opence-k8s`, in about 12
 minutes. `tools/harness/tests/test_bots_nav.py` tests the graph's builder on
 made-up levels, without the game.
+
+On a map that places vehicles, the host builds a second graph the same way,
+for vehicles to drive (`bots_nav_vehicle_parameters`): half a world unit
+from walls and a world unit of room, slopes up to 35 degrees, lips of 0.3 and
+drops of up to 1 driven over, no jumps, ladders or teleporters, tiles of 2
+world units, and the map's vehicles as its seeds. It is cached beside the
+walking graph (`z:\bots_drive_<map>_<key>.nav`). On Blood Gulch and Sidewinder
+it has about 2,200 nodes, and each map's eight vehicles are on its main part.
 
 ## Map checks
 
