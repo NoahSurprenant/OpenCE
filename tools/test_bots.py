@@ -325,6 +325,11 @@ STOCK_MAPS = ("beavercreek", "bloodgulch", "boardingaction", "carousel", "chillo
 # Chillout's, Hang 'Em High's and Rat Race's one each on ledges too narrow
 # for the graph)
 WEAPONS_REACHED_AT_LEAST = {"chillout": 32, "damnation": 41, "hangemhigh": 44, "longest": 36, "ratrace": 29}
+# the stock maps that place vehicles, and how many (each on the drive graph's
+# main part: bots_nav_vehicle_parameters)
+VEHICLES_PLACED = {"bloodgulch": 8, "sidewinder": 8}
+DRIVE_GRAPH = re.compile(r"bots: drive graph of (\w+) (built|read from the cache) in (\d+) ms: (\d+) nodes, (\d+) edges .*?"
+                         r"vehicles (\d+)/(\d+) on its main part")
 GRAPH = re.compile(r"bots: walking graph of (\w+) (built|read from the cache) in (\d+) ms: (\d+) nodes, .*? spawns "
                    r"(\d+)/(\d+) reach the main part, weapons (\d+)/(\d+) are reached from it")
 
@@ -339,8 +344,9 @@ def _nav_check(tmp_path, name, server, maps, map_names):
         "HALO_SERVER_MAPS": ",".join(map_names), "HALO_NET_ADDRESS": _test_address(227),
         "HALO_NET_BROADCAST": _test_address(228)})}
     try:
-        _wait(lambda: {m[0] for m in GRAPH.findall(_log(tmp_path, name))} >= set(map_names), 60 + 30 * len(map_names),
-              games, tmp_path, f"not every map's walking graph was made ({', '.join(map_names)})")
+        _wait(lambda: {m[0] for m in GRAPH.findall(_log(tmp_path, name))} >= set(map_names) and
+              {m[0] for m in DRIVE_GRAPH.findall(_log(tmp_path, name))} >= set(map_names) & set(VEHICLES_PLACED),
+              60 + 30 * len(map_names), games, tmp_path, f"not every map's graphs were made ({', '.join(map_names)})")
     finally:
         _stop(games, tmp_path, {name: server})
         # (the game's own caches of the maps, a gigabyte: not the graphs')
@@ -354,9 +360,11 @@ def test_bots_nav_on_every_map(tmp_path):
     multiplayer map, built by a dedicated server going through all thirteen
     (debug.bot_nav_check): every spawn reaches the spawns' main part (a bot
     spawned anywhere joins the game), and the main part reaches every
-    multiplayer weapon but the few WEAPONS_REACHED_AT_LEAST leaves out. The
-    graphs go to the save root's cache: a second server, on two of the maps,
-    reads them from it, the same. Skips the maps the maps folder lacks.
+    multiplayer weapon but the few WEAPONS_REACHED_AT_LEAST leaves out. On
+    the maps that place vehicles (VEHICLES_PLACED), the graph vehicles drive
+    has each of them on its main part. The graphs go to the save root's
+    cache: a second server, on two of the maps, reads them from it, the
+    same. Skips the maps the maps folder lacks.
     About four minutes."""
     maps, paths = _needs("HALO_TEST_SERVER")
     names = [name for name in STOCK_MAPS if Path(maps, f"{name}.map").is_file()]
@@ -370,6 +378,14 @@ def test_bots_nav_on_every_map(tmp_path):
         assert int(weapons) >= WEAPONS_REACHED_AT_LEAST.get(name, int(weapon_count)), \
             f"{name}: only {weapons} of {weapon_count} weapons are reached:\n" + \
             "\n".join(line for line in _log(tmp_path, "server").splitlines() if f"nav check: {name} " in line)
+    drives = {m[0]: m for m in DRIVE_GRAPH.findall(_log(tmp_path, "server"))}
+    print({name: drives.get(name) for name in names})
+    assert set(drives) == set(names) & set(VEHICLES_PLACED), f"drive graphs: {sorted(drives)}"
+    for name, (_, how, _, nodes, _, on, placed) in drives.items():
+        assert how == "built" and int(nodes) > 100, drives[name]
+        assert int(on) == int(placed) == VEHICLES_PLACED[name], \
+            f"{name}: only {on} of {placed} vehicles on the drive graph:\n" + \
+            "\n".join(line for line in _log(tmp_path, "server").splitlines() if f"nav check: {name} vehicle" in line)
     # the cache: the same graphs, read, not built (its save root moved over)
     second = names[:2]
     (tmp_path / "again").mkdir()
@@ -379,6 +395,9 @@ def test_bots_nav_on_every_map(tmp_path):
     for name in second:
         assert read[name][1] == "read from the cache", read[name]
         assert read[name][3:] == built[name][3:], (read[name], built[name])
+    again = {m[0]: m for m in DRIVE_GRAPH.findall(_log(tmp_path, "again"))}
+    for name in set(second) & set(drives):
+        assert again[name][1] == "read from the cache" and again[name][3:] == drives[name][3:], (again[name], drives[name])
 
 
 def _nav_check_again(tmp_path, server, maps, map_names):
@@ -394,8 +413,9 @@ def _nav_check_again(tmp_path, server, maps, map_names):
         games = {"again": subprocess.Popen([server], cwd=folder, env=_game_env(env), stdout=log,
                                            stderr=subprocess.STDOUT)}
     try:
-        _wait(lambda: {m[0] for m in GRAPH.findall(_log(tmp_path, "again"))} >= set(map_names), 120, games, tmp_path,
-              "the cached graphs were not read")
+        _wait(lambda: {m[0] for m in GRAPH.findall(_log(tmp_path, "again"))} >= set(map_names) and
+              {m[0] for m in DRIVE_GRAPH.findall(_log(tmp_path, "again"))} >= set(map_names) & set(VEHICLES_PLACED),
+              120, games, tmp_path, "the cached graphs were not read")
     finally:
         _stop(games, tmp_path, {"again": server})
         for cache in (folder / "saves").rglob("cache*.map"):

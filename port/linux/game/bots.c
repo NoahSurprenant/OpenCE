@@ -623,7 +623,7 @@ void bots_update(
 		return;
 	count = bots_count();
 	/* (the walking graph of the map being played, once there are bots) */
-	bots_nav_update(count > 0);
+	bots_nav_update(count > 0, FALSE);
 	bots_report();
 	wanted = bots_globals.wanted;
 	/* (server.bots_fill: as many as make the players server.bots) */

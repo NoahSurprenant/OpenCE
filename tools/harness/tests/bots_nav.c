@@ -78,12 +78,18 @@ static long link_count;
 static struct bots_nav_ladder ladders[2];
 static long ladder_count;
 
+/* the graph a vehicle drives, not the walking graph (the drive cases) */
+static int vehicle;
+
 static void build(void)
 {
 	struct bots_nav_input input;
 	struct bots_nav_parameters parameters;
 
-	bots_nav_default_parameters(&parameters);
+	if (vehicle)
+		bots_nav_vehicle_parameters(&parameters);
+	else
+		bots_nav_default_parameters(&parameters);
 	memset(&input, 0, sizeof(input));
 	input.triangles = triangles;
 	input.triangle_count = triangle_count;
@@ -124,6 +130,17 @@ static char const *path(float x0, float y0, float z0, float x1, float y1, float 
 	}
 	text[length] = 0;
 	return length ? text : "walk";
+}
+
+/* the level, the seeds and the graph gone, for another level */
+static void reset(void)
+{
+	bots_nav_free(&nav);
+	triangle_count = 0;
+	seed_count = 0;
+	link_count = 0;
+	ladder_count = 0;
+	wall = 0;
 }
 
 static void seed(float x, float y, float z)
@@ -289,6 +306,100 @@ int main(int argc, char **argv)
 			(nav.nodes[node_at(7, 2, -1.2f)].reach & _bots_nav_reached_bit), "the pit (reached, not reaching back)");
 		CHECK(nav.main_node >= 0 && nav.nodes[nav.main_node].reach == (_bots_nav_reached_bit | _bots_nav_reaches_bit),
 			"the main node");
+	}
+	else if (!strcmp(name, "drive"))
+	{
+		/* (open ground: two by two tiles, driven across) */
+		vehicle = 1;
+		box(0, 0, -1, 20, 10, 0);
+		seed(1, 1, 0);
+		build();
+		CHECK(nav.node_count == 50, "%ld nodes on a floor 20 by 10", nav.node_count);
+		CHECK(!strcmp(path(1, 1, 0, 19, 9, 0), "walk"), "across: %s", path(1, 1, 0, 19, 9, 0));
+		{
+			long node;
+
+			for (node = 0; node < nav.node_count; node++)
+			{
+				struct bots_nav_point const *point = &nav.nodes[node].point;
+
+				CHECK(point->x > 0.45f && point->x < 19.55f && point->y > 0.45f && point->y < 9.55f,
+					"a node within half a world unit of the edge (%g %g)", point->x, point->y);
+			}
+		}
+		/* (a bridge 0.8 wide between two floors: walked over, not driven) */
+		reset();
+		vehicle = 0;
+		box(0, 0, -1, 8, 10, 0);
+		box(8, 4.6f, -1, 12, 5.4f, 0);
+		box(12, 0, -1, 20, 10, 0);
+		seed(1, 1, 0);
+		build();
+		CHECK(!strcmp(path(1, 1, 0, 16, 5, 0), "walk"), "no walk over the bridge: %s", path(1, 1, 0, 16, 5, 0));
+		bots_nav_free(&nav);
+		vehicle = 1;
+		build();
+		CHECK(node_at(1, 1, 0) >= 0 && node_at(16, 5, 0) < 0, "a vehicle over the narrow bridge");
+		/* (a slope of 40 degrees up to a deck: walked up, not driven, and the
+		deck's drop of 1.7 not driven off) */
+		reset();
+		{
+			float a[3] = { 0, 0, 0 }, b[3] = { 4, 0, 0 }, c[3] = { 4, 4, 0 }, d[3] = { 0, 4, 0 };
+			float e[3] = { 4, 0, 0 }, f[3] = { 6, 0, 1.678f }, g[3] = { 6, 4, 1.678f }, h[3] = { 4, 4, 0 };
+			float i[3] = { 6, 0, 1.678f }, j[3] = { 10, 0, 1.678f }, k[3] = { 10, 4, 1.678f }, l[3] = { 6, 4, 1.678f };
+
+			quad(a, b, c, d);
+			quad(e, f, g, h);
+			quad(i, j, k, l);
+		}
+		seed(1, 1, 0);
+		vehicle = 0;
+		build();
+		CHECK(!strcmp(path(1, 1, 0, 8.5f, 2, 1.678f), "walk"), "not walked up 40 degrees: %s",
+			path(1, 1, 0, 8.5f, 2, 1.678f));
+		bots_nav_free(&nav);
+		vehicle = 1;
+		build();
+		{
+			long node;
+
+			for (node = 0; node < nav.node_count; node++)
+				CHECK(nav.nodes[node].point.z < 0.2f, "a node on the slope or the deck (%g %g %g)",
+					nav.nodes[node].point.x, nav.nodes[node].point.y, nav.nodes[node].point.z);
+		}
+		CHECK(node_at(1, 1, 0) >= 0 && node_at(8.5f, 2, 1.678f) < 0, "a vehicle up the slope or off the deck");
+		/* (a step of 0.5: jumped up on foot; driven down off, never up) */
+		reset();
+		box(0, 0, -1, 6, 6, 0);
+		box(6, 0, -1, 12, 6, 0.5f);
+		seed(1, 1, 0);
+		seed(11, 5, 0.5f);
+		vehicle = 0;
+		build();
+		CHECK(!strcmp(path(1, 1, 0, 11, 5, 0.5f), "j"), "not jumped up: %s", path(1, 1, 0, 11, 5, 0.5f));
+		bots_nav_free(&nav);
+		vehicle = 1;
+		build();
+		CHECK(!strcmp(path(1, 1, 0, 11, 5, 0.5f), "none"), "driven up the step: %s", path(1, 1, 0, 11, 5, 0.5f));
+		CHECK(!strcmp(path(11, 5, 0.5f, 1, 1, 0), "d"), "not driven off the step: %s", path(11, 5, 0.5f, 1, 1, 0));
+		CHECK(nav.statistics.jump_edges == 0, "%ld jumps in a drive graph", nav.statistics.jump_edges);
+		/* (and its cache: refused as a walking graph's) */
+		{
+			struct bots_nav loaded;
+			struct bots_nav_parameters parameters;
+			unsigned char *bytes;
+			long size;
+
+			bytes = bots_nav_save(&nav, 99, &size);
+			CHECK(bytes && size > 0, "not saved");
+			bots_nav_vehicle_parameters(&parameters);
+			CHECK(bots_nav_load(&loaded, bytes, size, 99, &parameters), "not loaded");
+			CHECK(loaded.node_count == nav.node_count, "loaded differently");
+			bots_nav_free(&loaded);
+			bots_nav_default_parameters(&parameters);
+			CHECK(!bots_nav_load(&loaded, bytes, size, 99, &parameters), "a drive graph loaded as a walking graph");
+			bots_nav_free_bytes(bytes);
+		}
 	}
 	else if (!strcmp(name, "cache"))
 	{

@@ -454,11 +454,16 @@ void bot_action_idle(
 	real yaw,
 	real pitch);
 /* (bots_nav_game.c) the graph of the map being played (NULL: none), made
-when needed is (bots are in the game) or debug.bot_nav_check asks */
+when needed is (bots are in the game) or debug.bot_nav_check asks; and the
+graph its vehicles drive (NULL: none, or a map without vehicles), made with
+it when drive is (bots may drive) or debug.bot_nav_check asks */
 struct bots_nav *bots_nav_current(
 	void);
+struct bots_nav *bots_nav_drive_current(
+	void);
 void bots_nav_update(
-	boolean needed);
+	boolean needed,
+	boolean drive);
 /* a number in [0, 1) from the brain's own random numbers */
 real bot_random_real(
 	struct bot_brain *brain);

@@ -564,7 +564,8 @@ static const struct config_setting config_settings[] =
 		"time), so that a test's games go the same way each run." },
 	{ "debug.bot_nav_check", _config_boolean, "false", "HALO_BOT_NAV_CHECK", _environment_value, _platform_all,
 		"A host builds (or reads from its cache) the bots' walking graph of each\n"
-		"map it plays, logs how many of the map's spawns and weapons it reaches,\n"
+		"map it plays (and, on a map with vehicles, the graph they drive), logs\n"
+		"how many of the map's spawns, weapons and vehicles it reaches,\n"
 		"and ends the game at once: a dedicated server goes through its map\n"
 		"list a map at a time (tools/test_bots.py)." },
 	{ "debug.bot_trace", _config_boolean, "false", "HALO_BOT_TRACE", _environment_value, _platform_all,

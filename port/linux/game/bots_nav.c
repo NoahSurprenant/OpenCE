@@ -132,6 +132,32 @@ void bots_nav_default_parameters(
 	parameters->seed_margin = 30.0f;
 }
 
+void bots_nav_vehicle_parameters(
+	struct bots_nav_parameters *parameters)
+{
+	bots_nav_default_parameters(parameters);
+	/* (a Warthog is about 0.75 wide and 1.5 long, a Ghost narrower: half a
+	world unit keeps either off walls and out of doors) */
+	parameters->agent_radius = 0.5f;
+	/* (a Warthog with its gunner standing) */
+	parameters->agent_height = 1.0f;
+	/* (cos 35 degrees: wheels slide back down steeper grass) */
+	parameters->walkable_normal_z = 0.8192f;
+	/* (lips and kerbs driven over; nothing jumped: a jump no higher than a
+	step is none) */
+	parameters->step_height = 0.3f;
+	parameters->jump_height = 0.3f;
+	/* (a small drop driven off, one way; no cliffs) */
+	parameters->drop_height = 1.0f;
+	/* (across the two radii between the cells either side of a drop) */
+	parameters->link_reach = 1.5f;
+	/* (open ground: bigger tiles, fewer nodes) */
+	parameters->tile_size = 2.0f;
+	/* (the whole level: the vehicles stand at the bases, and the ways between
+	them reach far past them on Sidewinder) */
+	parameters->seed_margin = 0.0f;
+}
+
 /* ---------- 1. rasterisation */
 
 /* the polygon's points on the side of the axis-aligned line where
