@@ -420,7 +420,7 @@ the setting for one start of the game. It has priority over the file.
 | `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 127. Refer to "Bots". |
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.game_seed` | `0` | `HALO_GAME_SEED` | The start of the game's random numbers instead of the time (0: the time), so that a test's games go the same way each run. |
-| `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays, logs how much of the map it reaches, and ends the game. Refer to "Bots". |
+| `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays (and, on a map with vehicles, the graph that vehicles drive), logs how much of the map it reaches, and ends the game. Refer to "Bots". |
 | `debug.bot_trace` | `false` | `HALO_BOT_TRACE` | Each bot's way in the log every second. |
 | `debug.bot_difficulties` | `""` | `HALO_BOT_DIFFICULTIES` | The difficulty of each bot that `server.bots` adds, in the order they join, with commas between them (`"easy,normal,hard,legendary"`), for games of bots of each difficulty against each other. Past the end of the list: `server.bot_difficulty`. |
 | `debug.bot_goal` | `""` | `HALO_BOT_GOAL` | `"x y z"`: every bot goes again and again to the walking graph's node at this point, and logs each arrival. Use it to check a map's links. |

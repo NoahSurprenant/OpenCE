@@ -168,6 +168,12 @@ struct bots_nav
 0.2, height 0.7, 45 degree slopes, a jump about 0.69 high) */
 void bots_nav_default_parameters(
 	struct bots_nav_parameters *parameters);
+/* the parameters of the graph a vehicle drives (a Warthog's or a Ghost's:
+half a world unit from walls, a world unit of room, slopes of 35 degrees,
+lips of 0.3 and drops of 1 driven over, no jumps; tiles of 2), whose seeds
+are the level's vehicles */
+void bots_nav_vehicle_parameters(
+	struct bots_nav_parameters *parameters);
 /* the graph of a level; 0 (and nav empty) when it cannot be built (no
 memory, no triangles) */
 int bots_nav_build(

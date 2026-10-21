@@ -33,6 +33,7 @@ server goes through its map list a map at a time
 #include "main/main.h"
 #include "objects/object_definitions.h"
 #include "objects/objects.h"
+#include "objects/object_types.h"
 #include "physics/bsp3d.h"
 #include "physics/collision_bsp.h"
 #include "physics/collision_bsp_definitions.h"
@@ -82,6 +83,17 @@ static struct
 	/* debug.bot_nav_check's game ended for this map */
 	boolean checked;
 } bots_nav_game;
+
+/* the graph the map's vehicles drive (bots_nav_vehicle_parameters), made
+with the walking graph when needed, on a map that places vehicles (none: no
+graph) */
+static struct
+{
+	boolean built;
+	long scenario_index;
+	short structure_bsp_index;
+	struct bots_nav nav;
+} bots_nav_drive;
 
 /* ---------- the level's triangles */
 
@@ -377,15 +389,20 @@ static void bots_nav_map_name(
 	snprintf(name, (size_t)size, "%s", slash ? slash + 1 : path ? path : "");
 }
 
+/* the cache of a graph of the map: the walking graph's (kind "nav"), the
+drive graph's ("drive") */
 static void bots_nav_cache_path(
 	char *path,
-	int size)
+	int size,
+	char const *kind)
 {
-	snprintf(path, (size_t)size, "z:\\bots_nav_%s_%08lx.nav", bots_nav_game.map, bots_nav_game.key);
+	snprintf(path, (size_t)size, "z:\\bots_%s_%s_%08lx.nav", kind, bots_nav_game.map, bots_nav_game.key);
 }
 
 static boolean bots_nav_cache_read(
-	struct bots_nav_parameters const *parameters)
+	struct bots_nav *nav,
+	struct bots_nav_parameters const *parameters,
+	char const *kind)
 {
 	char path[160];
 	FILE *file;
@@ -393,7 +410,7 @@ static boolean bots_nav_cache_read(
 	long size = 0;
 	boolean loaded = FALSE;
 
-	bots_nav_cache_path(path, (int)sizeof(path));
+	bots_nav_cache_path(path, (int)sizeof(path), kind);
 	file = fopen(path, "rb");
 	if (!file)
 		return FALSE;
@@ -401,7 +418,7 @@ static boolean bots_nav_cache_read(
 		fseek(file, 0, SEEK_SET) == 0 && (bytes = (unsigned char *)malloc((size_t)size)) != NULL &&
 		fread(bytes, 1, (size_t)size, file) == (size_t)size)
 	{
-		loaded = bots_nav_load(&bots_nav_game.nav, bytes, size, bots_nav_game.key, parameters) != 0;
+		loaded = bots_nav_load(nav, bytes, size, bots_nav_game.key, parameters) != 0;
 	}
 	fclose(file);
 	free(bytes);
@@ -409,22 +426,23 @@ static boolean bots_nav_cache_read(
 }
 
 static void bots_nav_cache_write(
-	void)
+	struct bots_nav const *nav,
+	char const *kind)
 {
 	char path[160];
 	unsigned char *bytes;
 	long size;
 	FILE *file;
 
-	bots_nav_cache_path(path, (int)sizeof(path));
-	bytes = bots_nav_save(&bots_nav_game.nav, bots_nav_game.key, &size);
+	bots_nav_cache_path(path, (int)sizeof(path), kind);
+	bytes = bots_nav_save(nav, bots_nav_game.key, &size);
 	if (!bytes)
 		return;
 	file = fopen(path, "wb");
 	if (file)
 	{
 		if (fwrite(bytes, 1, (size_t)size, file) != (size_t)size)
-			platform_log("bots: could not write the walking graph's cache %s", path);
+			platform_log("bots: could not write the graph's cache %s", path);
 		fclose(file);
 	}
 	bots_nav_free_bytes(bytes);
@@ -436,6 +454,7 @@ teleporter is its only way down is one), a weapon whose node the main part
 reaches (a bot goes and takes it); with debug.bot_nav_check, each it does
 not, said */
 static long bots_nav_reached(
+	struct bots_nav const *nav,
 	struct bots_nav_point const *points,
 	long count,
 	char const *kind,
@@ -447,15 +466,15 @@ static long bots_nav_reached(
 
 	for (index = 0; index < count; index++)
 	{
-		long node = bots_nav_locate(&bots_nav_game.nav, points[index].x, points[index].y, points[index].z);
+		long node = bots_nav_locate(nav, points[index].x, points[index].y, points[index].z);
 
-		if (node >= 0 && (bots_nav_game.nav.nodes[node].reach & needed) == needed)
+		if (node >= 0 && (nav->nodes[node].reach & needed) == needed)
 		{
 			reached++;
 		}
 		else if (check)
 		{
-			struct bots_nav_point const *at = node >= 0 ? &bots_nav_game.nav.nodes[node].point : NULL;
+			struct bots_nav_point const *at = node >= 0 ? &nav->nodes[node].point : NULL;
 			struct collision_result collision;
 			real_point3d from;
 			real_vector3d up = { 0.0f, 0.0f, 3.0f };
@@ -476,8 +495,8 @@ static long bots_nav_reached(
 				tag_get_name(object_get(collision.object_index)->definition_index) : above ? "(the level)" : "");
 			platform_log("bots: nav check: %s %s %ld at (%.2f %.2f %.2f) not reached: %s (%.2f %.2f %.2f); %s",
 				bots_nav_game.map, kind, index, points[index].x, points[index].y, points[index].z,
-				!at ? "no node" : bots_nav_game.nav.nodes[node].reach == _bots_nav_reached_bit ? "its node is reached, not reaching back" :
-				bots_nav_game.nav.nodes[node].reach == _bots_nav_reaches_bit ? "its node reaches the main part, not reached" : "node",
+				!at ? "no node" : nav->nodes[node].reach == _bots_nav_reached_bit ? "its node is reached, not reaching back" :
+				nav->nodes[node].reach == _bots_nav_reaches_bit ? "its node reaches the main part, not reached" : "node",
 				at ? at->x : 0.0f, at ? at->y : 0.0f, at ? at->z : 0.0f, what);
 		}
 	}
@@ -567,7 +586,7 @@ static void bots_nav_make(
 			links[link_count++] = bots_nav_overrides[index].link;
 	}
 
-	cached = bots_nav_cache_read(&parameters);
+	cached = bots_nav_cache_read(&bots_nav_game.nav, &parameters, "nav");
 	if (!cached)
 	{
 		csmemset(&triangles, 0, sizeof(triangles));
@@ -585,7 +604,7 @@ static void bots_nav_make(
 			input.ladder_count = ladder_count;
 			input.clear = bots_nav_clear;
 			if (bots_nav_build(&input, &parameters, &bots_nav_game.nav))
-				bots_nav_cache_write();
+				bots_nav_cache_write(&bots_nav_game.nav, "nav");
 		}
 		free(triangles.points);
 	}
@@ -603,8 +622,8 @@ static void bots_nav_make(
 			bots_nav_game.map, cached ? "read from the cache" : "built", system_milliseconds() - started,
 			bots_nav_game.nav.node_count, bots_nav_game.nav.edge_count, statistics->walk_edges, statistics->drop_edges,
 			statistics->jump_edges, statistics->teleport_edges, statistics->climb_edges, statistics->link_edges, statistics->rejected_links, statistics->triangles, pieces,
-			bots_nav_reached(seeds, seed_count, "spawn", _bots_nav_reaches_bit), seed_count,
-			bots_nav_reached(weapons, weapon_count, "weapon", _bots_nav_reached_bit),
+			bots_nav_reached(&bots_nav_game.nav, seeds, seed_count, "spawn", _bots_nav_reaches_bit), seed_count,
+			bots_nav_reached(&bots_nav_game.nav, weapons, weapon_count, "weapon", _bots_nav_reached_bit),
 			weapon_count);
 		/* (each teleporter and given link, where its ends are on the graph) */
 		if (config_boolean("debug.bot_nav_check"))
@@ -637,6 +656,93 @@ static void bots_nav_make(
 	free(weapons);
 }
 
+/* the drive graph of the map being played, from the cache or built: its
+seeds the level's vehicles (their placements, whichever the game type
+leaves), whose part of the level is kept */
+static void bots_nav_make_drive(
+	void)
+{
+	struct scenario *scenario = global_scenario_get();
+	struct collision_bsp *bsp = global_collision_bsp_get();
+	struct tag_block *placements;
+	struct bots_nav_parameters parameters;
+	struct bots_nav_point *seeds;
+	long element_size = 0;
+	long seed_count = 0, pieces = 0;
+	unsigned long started = system_milliseconds();
+	boolean cached;
+	long index;
+
+	bots_nav_free(&bots_nav_drive.nav);
+	bots_nav_drive.built = TRUE;
+	bots_nav_drive.scenario_index = global_scenario_index;
+	bots_nav_drive.structure_bsp_index = global_structure_bsp_index;
+	bots_nav_vehicle_parameters(&parameters);
+	if (!scenario || !bsp)
+		return;
+	placements = scenario_get_object_type_scenario_datums(scenario, _object_type_vehicle, &element_size);
+	if (!placements || placements->count <= 0)
+	{
+		if (config_boolean("debug.bot_nav_check"))
+			platform_log("bots: no drive graph for %s: it places no vehicles", bots_nav_game.map);
+		return;
+	}
+	seeds = (struct bots_nav_point *)malloc((size_t)placements->count * sizeof(*seeds));
+	if (!seeds)
+		return;
+	for (index = 0; index < placements->count; index++)
+	{
+		struct scenario_object_datum const *placement = (struct scenario_object_datum const *)
+			tag_block_get_element_with_size(placements, index, element_size);
+
+		bots_nav_point_from(&seeds[seed_count++], &placement->position);
+	}
+	cached = bots_nav_cache_read(&bots_nav_drive.nav, &parameters, "drive");
+	if (!cached)
+	{
+		struct bots_nav_triangles triangles;
+
+		csmemset(&triangles, 0, sizeof(triangles));
+		if (bots_nav_add_bsp(&triangles, bsp, NULL) && bots_nav_add_scenery(&triangles, &pieces))
+		{
+			struct bots_nav_input input;
+
+			/* (no teleporters, ladders or a map's links: a vehicle takes none) */
+			csmemset(&input, 0, sizeof(input));
+			input.triangles = triangles.points;
+			input.triangle_count = triangles.count;
+			input.seeds = seeds;
+			input.seed_count = seed_count;
+			input.clear = bots_nav_clear;
+			if (bots_nav_build(&input, &parameters, &bots_nav_drive.nav))
+				bots_nav_cache_write(&bots_nav_drive.nav, "drive");
+		}
+		free(triangles.points);
+	}
+	if (!bots_nav_drive.nav.nodes)
+	{
+		platform_log("bots: no drive graph for %s", bots_nav_game.map);
+	}
+	else
+	{
+		struct bots_nav_statistics const *statistics = &bots_nav_drive.nav.statistics;
+
+		platform_log("bots: drive graph of %s %s in %lu ms: %ld nodes, %ld edges (%ld drives, %ld drops), %ld triangles; "
+			"vehicles %ld/%ld on its main part",
+			bots_nav_game.map, cached ? "read from the cache" : "built", system_milliseconds() - started,
+			bots_nav_drive.nav.node_count, bots_nav_drive.nav.edge_count, statistics->walk_edges, statistics->drop_edges,
+			statistics->triangles, bots_nav_reached(&bots_nav_drive.nav, seeds, seed_count, "vehicle",
+			_bots_nav_reached_bit | _bots_nav_reaches_bit), seed_count);
+	}
+	free(seeds);
+}
+
+struct bots_nav *bots_nav_drive_current(
+	void)
+{
+	return bots_nav_drive.built && bots_nav_drive.nav.nodes ? &bots_nav_drive.nav : NULL;
+}
+
 struct bots_nav *bots_nav_current(
 	void)
 {
@@ -644,7 +750,8 @@ struct bots_nav *bots_nav_current(
 }
 
 void bots_nav_update(
-	boolean needed)
+	boolean needed,
+	boolean drive)
 {
 	boolean check = config_boolean("debug.bot_nav_check") != 0;
 
@@ -656,12 +763,24 @@ void bots_nav_update(
 			bots_nav_free(&bots_nav_game.nav);
 			bots_nav_game.built = FALSE;
 		}
+		if (bots_nav_drive.built)
+		{
+			bots_nav_free(&bots_nav_drive.nav);
+			bots_nav_drive.built = FALSE;
+		}
 		return;
 	}
 	if ((needed || check) && (!bots_nav_game.built || bots_nav_game.scenario_index != global_scenario_index ||
 		bots_nav_game.structure_bsp_index != global_structure_bsp_index))
 	{
 		bots_nav_make();
+	}
+	/* (the drive graph, after the walking graph: its map name and key) */
+	if (bots_nav_game.built && (drive || check) && (!bots_nav_drive.built ||
+		bots_nav_drive.scenario_index != global_scenario_index ||
+		bots_nav_drive.structure_bsp_index != global_structure_bsp_index))
+	{
+		bots_nav_make_drive();
 	}
 	/* (debug.bot_nav_check: on to the next map) */
 	if (check && bots_nav_game.built && !bots_nav_game.checked && game_engine_running())
