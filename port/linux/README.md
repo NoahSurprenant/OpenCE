@@ -1296,6 +1296,12 @@ netgame flags. It still fights what it meets on the way.
 
 `server.game_types` takes `juggernaut` too. Vehicles are for later.
 
+Bots stay out of vehicles for now. A bot's action button, pressed for a
+weapon or a ball, is not pressed where it would get the bot into a vehicle,
+or flip one, instead; a bot that is in one anyway (the host put it there)
+stands still and gets out at once, and the log says so (`bots: player N got
+into vehicle ... by mistake`).
+
 Peaceful bots roam, take weapons and play as the others do, but never fight:
 they never aim at a player, shoot, throw a grenade or strike. They can still
 die (a fall, another player, a skater running them over), and they are on
