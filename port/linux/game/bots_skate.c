@@ -610,6 +610,8 @@ void bot_skate_think(
 
 		if (fighting && ram_unit == NONE)
 			reason = "a fight";
+		else if (bot_vehicle_busy(bot))
+			reason = "a vehicle";
 		else if (bot_holds_flag(unit_get(unit_index)))
 			reason = "a flag in hand";
 		else if (ram_unit == NONE && brain->path_next != NONE && rolling < BOT_SKATE_OFF_DISTANCE &&
@@ -634,7 +636,7 @@ void bot_skate_think(
 					reason, now);
 		}
 	}
-	else if (now >= skate->off_until_tick && !fighting && !bot_holds_flag(unit_get(unit_index)) &&
+	else if (now >= skate->off_until_tick && !fighting && !bot_holds_flag(unit_get(unit_index)) && !bot_vehicle_busy(bot) &&
 		rolling >= board_distance)
 	{
 		skate->on = TRUE;

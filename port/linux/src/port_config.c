@@ -549,6 +549,18 @@ static const struct config_setting config_settings[] =
 		"bots always on foot. Each bot's skater is a skate session of its own,\n"
 		"about 9 MB; with more than the machine's processors keep up with, they\n"
 		"skate slower (the log says so)." },
+	{ "server.bot_vehicles", _config_integer, "0", "HALO_SERVER_BOT_VEHICLES", _environment_value, _platform_all,
+		"The most bots driving vehicles at once, in a game this machine hosts\n"
+		"(port/linux/README.md's \"Bots in vehicles\": Warthogs and Ghosts, on a\n"
+		"map that has them): 0 (at first) for no limit, a number, or -1 for bots\n"
+		"that never get into one." },
+	{ "debug.bot_vehicle", _config_string, "\"\"", "HALO_BOT_VEHICLE", _environment_value, _platform_all,
+		"How each bot goes about vehicles, with commas between, one for each bot\n"
+		"in the order they join: \"drive\" (it drives whenever its goal is a\n"
+		"little way off and a vehicle is near), \"never\" (it stays on foot),\n"
+		"\"stand\" (it stands still on foot) or anything else (as it sees fit);\n"
+		"one entry after a star (\"*drive\") is every bot's. For the tests.\n"
+		"Empty: all as they see fit." },
 	{ "debug.bot_skate", _config_string, "\"\"", "HALO_BOT_SKATE", _environment_value, _platform_all,
 		"How each bot goes about boards (Skate 3 mode), with commas between, one\n"
 		"for each bot in the order they join: \"ram\" (it stays on its board in a\n"
@@ -610,6 +622,11 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_vehicle", _config_real, "0.0", "HALO_NETWORK_TEST_VEHICLE", _environment_value, _platform_all,
 		"This many seconds into an automated test game the host seats its last\n"
 		"player as a vehicle's driver (and out 15 seconds on); 0 never." },
+	{ "debug.network_test_vehicle_flip", _config_real, "0.0", "HALO_NETWORK_TEST_VEHICLE_FLIP", _environment_value,
+		_platform_all,
+		"This many seconds into an automated test game the host turns the vehicle\n"
+		"its last player rides (else the nearest to them) onto its roof, once; 0\n"
+		"never." },
 	{ "debug.network_test_pickup", _config_real, "0.0", "HALO_NETWORK_TEST_PICKUP", _environment_value, _platform_all,
 		"This many seconds into an automated test game the host stands its last\n"
 		"player on a weapon, which a joining player then picks up; 0 never." },

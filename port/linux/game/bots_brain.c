@@ -1512,6 +1512,15 @@ void bot_brain_think(
 	/* (the game type's objective, a few times a second) */
 	if ((game_time_get() + bot->slot) % 10 == 0)
 		bot_objective_update(bot, player_index, unit_index, &brain->objective);
+	/* (a vehicle: on its way to its door, in it, getting out, flipping it
+	over: bots_vehicle.c; standing at a door is getting somewhere) */
+	if (bot_vehicle_think(bot, player_index, unit_index, &position, action))
+	{
+		brain->check_position = position;
+		brain->check_ticks = BOT_CHECK_TICKS;
+		brain->progress_ticks = 0;
+		return;
+	}
 	if (bot_combat_engaged(bot, player_index, unit_index, bot->slot))
 	{
 		struct bots_nav_point goal_point;

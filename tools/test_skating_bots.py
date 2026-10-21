@@ -58,6 +58,7 @@ def _bots_alone(tmp_path, name, game, maps, assets, settings, addresses, done=No
     bots = int(settings["HALO_SERVER_BOTS"])
     games = {name: _start(tmp_path, name, game, maps, {
         "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SKATE_ASSETS": assets,
+        "HALO_SERVER_BOT_VEHICLES": "-1",
         "HALO_NET_ADDRESS": addresses[0], "HALO_NET_BROADCAST": addresses[1], **settings})}
     try:
         _wait(lambda: len(SCORE.findall(_log(tmp_path, name))) >= bots or (done and done(_log(tmp_path, name))), 400,
@@ -82,7 +83,7 @@ def test_skating_bots_ride_and_fight(tmp_path):
     games = {"host": _start(tmp_path, "host", game, maps, {
         "HALO_NETWORK_TEST": "host:bloodgulch", "HALO_NETWORK_TEST_START": "8", "HALO_SERVER_BOTS": "3",
         "HALO_BOT_DIFFICULTIES": "normal,normal,peaceful", "HALO_BOT_SEED": "11", "HALO_SKATE_ASSETS": assets,
-        "HALO_NETWORK_TEST_SKATE": "20", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+        "HALO_NETWORK_TEST_SKATE": "20", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_SERVER_BOT_VEHICLES": "-1",
         "HALO_NET_ADDRESS": host_address, "HALO_NET_BROADCAST": join_address})}
     games["join"] = _start(tmp_path, "join", game, maps, {
         "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
@@ -215,6 +216,7 @@ def test_skating_bots_crowd(tmp_path):
         "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SKATE_ASSETS": assets,
         "HALO_SERVER_BOTS": str(bots), "HALO_SERVER_MAX_PLAYERS": "128", "HALO_BOT_SKATE": "*ram",
         "HALO_BOT_SEED": "3", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "5",
+        "HALO_SERVER_BOT_VEHICLES": "-1",
         "HALO_NET_ADDRESS": _test_address(255), "HALO_NET_BROADCAST": _test_address(211)})}
     games["client"] = _start(tmp_path, "client", game, maps, {
         "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",

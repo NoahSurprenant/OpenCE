@@ -77,6 +77,67 @@ struct bot_statistics
 	/* the times it found itself in a vehicle it never meant to get into
 	(bots_brain.c's bot_vehicle_keep_out) */
 	long vehicle_mistakes;
+	/* in vehicles (bots_vehicle.c): the times it drove one, the ticks it
+	drove, how far (world units), its backing up when stuck, the vehicles it
+	flipped back over, the people on foot it braked for, and the people it
+	drove at (never yet: bots run nobody over on purpose) */
+	long vehicle_rides;
+	long vehicle_ticks;
+	real vehicle_travelled;
+	long vehicle_reverses;
+	long vehicle_flips;
+	long vehicle_braked;
+	long vehicle_rams;
+};
+
+/* a bot and a vehicle (bots_vehicle.c) */
+struct bot_vehicle
+{
+	/* the unit it is (another: a new life, afresh) */
+	long unit_index;
+	/* what it is about (bots_vehicle.c's phases), since when; when it next
+	thinks of a ride; when it last pressed the action button */
+	short phase;
+	long phase_tick;
+	long look_tick;
+	long press_tick;
+	/* the tick by which it is at the door, or gives the vehicle up */
+	long approach_until_tick;
+	/* the vehicle and its driver's seat; the vehicle it keeps off, until
+	when */
+	long vehicle_index;
+	short seat_index;
+	long avoided_vehicle;
+	long avoided_until_tick;
+	/* the goal it rides toward (its walking brain's), the drive graph's node
+	nearest it, and its way there along the drive graph (edges backwards,
+	the next at path_next) */
+	struct bots_nav_point goal;
+	long drive_goal_node;
+	long path[BOT_PATH_MAXIMUM];
+	long path_next;
+	long path_count;
+	/* driving: where the vehicle was last tick, and at the last look at how
+	far it had come (when); the throttle it last gave; braking for someone */
+	real_point3d last_position;
+	real_point3d check_position;
+	long check_tick;
+	real last_throttle;
+	boolean braking;
+	/* getting nowhere: backing up until when; the times in the window
+	(since when), the edge it was on last time and how many times running */
+	long reverse_until_tick;
+	real reverse_side;
+	long detour_until_tick;
+	long stuck_events;
+	long stuck_window_tick;
+	long stuck_edge;
+	long edge_stuck;
+	/* the ticks the vehicle has been on its side or roof; whether it flips
+	it after getting out, and its presses at one */
+	long overturned_ticks;
+	boolean flip_after;
+	long flip_presses;
 };
 
 /* a bot on a board (bots_skate.c) */
@@ -301,6 +362,8 @@ struct bot_brain
 	struct bot_skate skate;
 	/* in a vehicle's seat it never meant to take, last tick */
 	boolean in_vehicle;
+	/* a vehicle it goes to, drives, gets out of or flips (bots_vehicle.c) */
+	struct bot_vehicle vehicle;
 };
 
 /* a bot of the host's (bots.c) */
@@ -333,6 +396,32 @@ void bot_skate_think(
 	long player_index,
 	long unit_index,
 	struct player_action *action);
+/* (bots_vehicle.c, in bot_brain_think before it fights or walks) the bot on
+its way to a vehicle, in one, getting out or flipping one: TRUE when its
+action is that (on its way along the walking graph it walks as the brain
+has it, its goal the vehicle's door: FALSE); whether the bot has the vehicle
+(goes to it, gets in, drives it, gets out, flips it); whether it is about
+any vehicle; whether it drives one */
+boolean bot_vehicle_think(
+	struct bot *bot,
+	long player_index,
+	long unit_index,
+	real_point3d const *position,
+	struct player_action *action);
+boolean bot_vehicle_holds(
+	struct bot const *bot,
+	long vehicle_index);
+boolean bot_vehicle_busy(
+	struct bot const *bot);
+boolean bot_vehicle_riding(
+	struct bot const *bot);
+/* (bots.c) whether a bot other than except has the vehicle; how many bots
+drive vehicles */
+boolean bots_vehicle_taken(
+	long vehicle_index,
+	struct bot const *except);
+long bots_vehicle_riders(
+	void);
 /* (bots_combat.c) a fight afresh; whether the bot fights now (it looks
 around every few ticks); the goal it heads for fighting (NULL: it holds its
 ground); its aim, fire and moves fighting (moving: the walking set its

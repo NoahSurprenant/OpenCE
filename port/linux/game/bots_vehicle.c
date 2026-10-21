@@ -1,0 +1,1211 @@
+/* bots_vehicle.c: bots that drive vehicles (bots_internal.h;
+port/linux/README.md, "Bots in vehicles")
+
+A bot drives a Warthog or a Ghost to travel, as its driver, on a map whose
+vehicles have a drive graph (bots_nav_game.c's, bots_nav_vehicle_parameters).
+Everything goes through the bot's input, as a person's does: the action
+button gets it in, out, and flips a vehicle over; its facing steers the
+vehicle (units.c copies the driver's facing and throttle into the vehicle,
+vehicles.c steers toward it) and its throttle drives it on or back. So every
+machine sees a bot drive as it sees anyone drive, and nothing is new on the
+wire.
+
+- It thinks of a ride a few times a second, when its brain's goal is far
+  (40 world units, about 120 m), no fight is on, it holds no flag or ball:
+  the nearest free Warthog or Ghost within 25 world units that no other bot
+  has, that nobody rides, that no person stands by (a person may want it),
+  on the drive graph's main part, if riding (walking there, driving at about
+  three times walking speed, walking on from where the drive graph ends) is
+  quicker than walking.
+- It walks to the driver's door along the walking graph, stops (the game
+  takes no one in moving), and presses the action button while the game
+  offers it the driver's seat.
+- It drives the drive graph to the node nearest its goal: it steers for a
+  point a few world units ahead along the way (further the faster), slows
+  for turns and near its goal, holds off the throttle in the air, brakes for
+  anyone on foot ahead (bots, people, skaters: running someone over is an
+  accident, never a bot's aim) and slows for vehicles ahead.
+- Getting nowhere, it backs up a second with the wheels turned the other way
+  and drives on; stuck three times on one part of the way it keeps off that
+  part, and six times in 20 seconds it gets out and walks.
+- It gets out at its goal (stopped first), when the vehicle has turned over,
+  or stuck; then walks on to its goal. A vehicle on its side or roof it
+  flips back over (the action button beside it, as a person does) and gets
+  back in.
+- A bot in a vehicle it never chose (one put there) gets out at once
+  (bots_brain.c's bot_vehicle_keep_out).
+
+server.bot_vehicles limits how many bots ride at once (0 any number, -1
+none); debug.bot_vehicle sets each bot's way for the tests. */
+
+#include "cseries.h"
+#include "math/real_math.h"
+#include "memory/data.h"
+#include "game/game.h"
+#include "game/players.h"
+#include "objects/objects.h"
+#include "tag_files/tag_files.h"
+#include "units/units.h"
+#include "units/unit_definitions.h"
+
+#include "bots_internal.h"
+
+#include <math.h>
+#include <string.h>
+
+void platform_log(const char *format, ...);
+const char *config_string(const char *name);
+long config_integer(const char *name);
+int config_boolean(const char *name);
+
+/* how a bot goes about vehicles (debug.bot_vehicle, for the tests) */
+enum
+{
+	_bot_vehicle_normal,
+	/* it rides whenever its goal is a little way off and a vehicle is near */
+	_bot_vehicle_drive,
+	/* it never gets into one */
+	_bot_vehicle_never,
+	/* it stands still on foot (something for a driver to brake for) */
+	_bot_vehicle_stand
+};
+
+/* what a bot is about with a vehicle */
+enum
+{
+	_bot_vehicle_phase_none,
+	/* walking to the driver's door */
+	_bot_vehicle_phase_approach,
+	/* at the door, getting in */
+	_bot_vehicle_phase_board,
+	/* driving */
+	_bot_vehicle_phase_ride,
+	/* getting out */
+	_bot_vehicle_phase_leave,
+	/* flipping the vehicle back over */
+	_bot_vehicle_phase_flip
+};
+
+/* the furthest its goal must be for a ride (world units: 40, about 120 m;
+for a bot that drives whenever it can, 10), the furthest a vehicle may be
+from it (for one that drives whenever it can, 60), and how much quicker than walking a ride must be (a fraction) */
+#define BOT_VEHICLE_TRIP 40.0f
+#define BOT_VEHICLE_DRIVER_TRIP 10.0f
+#define BOT_VEHICLE_REACH 25.0f
+#define BOT_VEHICLE_DRIVER_REACH 60.0f
+#define BOT_VEHICLE_QUICKER 0.75f
+/* a vehicle drives about this many times as fast as a bot walks, and getting
+in and out costs about this much (world units of walking) */
+#define BOT_VEHICLE_SPEED_FACTOR 3.0f
+#define BOT_VEHICLE_OVERHEAD 6.0f
+/* nobody (a person) this near a vehicle: they may want it */
+#define BOT_VEHICLE_COURTESY 6.0f
+/* the ticks between its thoughts of a ride, and after giving one up */
+#define BOT_VEHICLE_LOOK_TICKS (TICKS_PER_SECOND / 2)
+#define BOT_VEHICLE_AVOID_TICKS (20 * TICKS_PER_SECOND)
+/* walking to a door: how near it walks along the walking graph (then
+straight on), how near it stands; how long it may take (ticks, and more a
+world unit), how long it tries at the door */
+#define BOT_VEHICLE_DOOR_NEAR 4.0f
+#define BOT_VEHICLE_DOOR_STAND 0.6f
+#define BOT_VEHICLE_APPROACH_TICKS (10 * TICKS_PER_SECOND)
+#define BOT_VEHICLE_APPROACH_TICKS_PER_UNIT TICKS_PER_SECOND
+#define BOT_VEHICLE_BOARD_TICKS (6 * TICKS_PER_SECOND)
+/* how far outside a vehicle's door it steps first (world units) */
+#define BOT_VEHICLE_DOOR_OUTSIDE 1.0f
+/* the ticks between presses of the action button (one press is a press) */
+#define BOT_VEHICLE_PRESS_TICKS 10
+/* driving: a node this near is passed; the point it steers for, at least
+this far ahead and further the faster (seconds of its speed), at most this
+far; how near its goal it gets out */
+#define BOT_VEHICLE_NODE_PASSED 2.5f
+/* how many nodes ahead along its way it looks for the nearest (one passed
+wide is passed) */
+#define BOT_VEHICLE_SKIP_NODES 10
+#define BOT_VEHICLE_LOOKAHEAD 3.0f
+#define BOT_VEHICLE_LOOKAHEAD_SECONDS 0.6f
+#define BOT_VEHICLE_LOOKAHEAD_MAXIMUM 10.0f
+#define BOT_VEHICLE_ARRIVED 4.0f
+#define BOT_VEHICLE_SLOW_NEAR 8.0f
+/* the most it turns its facing in a tick (radians) */
+#define BOT_VEHICLE_TURN_RATE (_pi / 10.0f)
+/* getting nowhere: how often it looks (ticks) and how far it must have
+come; how long it backs up; how many times on a part of the way before it
+keeps off it, and in the window before it gets out */
+#define BOT_VEHICLE_CHECK_TICKS 45
+#define BOT_VEHICLE_PROGRESS 0.6f
+#define BOT_VEHICLE_REVERSE_TICKS 36
+/* ... facing this far to a side (radians), then on straight this long */
+#define BOT_VEHICLE_REVERSE_TURN 1.0f
+#define BOT_VEHICLE_DETOUR_TICKS 25
+#define BOT_VEHICLE_EDGE_STUCK 3
+#define BOT_VEHICLE_STUCK_LIMIT 6
+#define BOT_VEHICLE_STUCK_WINDOW (20 * TICKS_PER_SECOND)
+/* overturned: a vehicle whose up is lower than this, this many ticks */
+#define BOT_VEHICLE_OVERTURNED 0.35f
+/* leaning: eased off */
+#define BOT_VEHICLE_LEANING 0.9f
+#define BOT_VEHICLE_OVERTURNED_TICKS 30
+/* ... and upright again (and enterable) */
+#define BOT_VEHICLE_UPRIGHT 0.7f
+/* flipping one: how near it walks along the graph, how long it tries */
+#define BOT_VEHICLE_FLIP_NEAR 2.5f
+#define BOT_VEHICLE_FLIP_TICKS (8 * TICKS_PER_SECOND)
+/* getting out: the most it tries */
+#define BOT_VEHICLE_LEAVE_TICKS (5 * TICKS_PER_SECOND)
+/* braking for someone on foot ahead: how wide the way ahead is (world units
+either side), how far ahead (and seconds of its speed more) */
+#define BOT_VEHICLE_CORRIDOR 1.0f
+#define BOT_VEHICLE_AHEAD 1.5f
+#define BOT_VEHICLE_AHEAD_SECONDS 1.2f
+
+/* ---------- small things */
+
+static real bot_vehicle_angle(
+	real angle)
+{
+	while (angle > _pi)
+		angle -= 2.0f * _pi;
+	while (angle < -_pi)
+		angle += 2.0f * _pi;
+	return angle;
+}
+
+static real bot_vehicle_distance2d(
+	real_point3d const *a,
+	real x,
+	real y)
+{
+	real dx = a->x - x, dy = a->y - y;
+
+	return (real)sqrt(dx * dx + dy * dy);
+}
+
+/* the bot's way with vehicles: its entry of debug.bot_vehicle ("drive,never":
+one each, in the order they join; "*drive": every bot) */
+static short bot_vehicle_mode(
+	struct bot const *bot)
+{
+	char const *list = config_string("debug.bot_vehicle");
+	char name[16];
+	short index = 0;
+	boolean every = list && *list == '*';
+
+	if (every)
+		list++;
+	while (list && *list)
+	{
+		short length = 0;
+
+		while (*list == ',' || *list == ' ')
+			list++;
+		while (*list && *list != ',' && length < (short)sizeof(name) - 1)
+			name[length++] = *list++;
+		name[length] = 0;
+		if (length > 0 && (every || index++ == bot->slot))
+		{
+			if (!strcmp(name, "drive"))
+				return _bot_vehicle_drive;
+			if (!strcmp(name, "never"))
+				return _bot_vehicle_never;
+			if (!strcmp(name, "stand"))
+				return _bot_vehicle_stand;
+			return _bot_vehicle_normal;
+		}
+	}
+	return _bot_vehicle_normal;
+}
+
+/* the vehicles bots drive (now): a Warthog (not a rocket Warthog) or a
+Ghost, by its tag's name, as game_engine.c's vehicle types fall back to */
+static char const *bot_vehicle_kind(
+	long vehicle_index)
+{
+	char const *name = tag_get_name(object_get(vehicle_index)->definition_index);
+
+	if (!name || strstr(name, "rwarthog") || strstr(name, "rocket"))
+		return NULL;
+	if (strstr(name, "warthog"))
+		return "warthog";
+	if (strstr(name, "ghost"))
+		return "ghost";
+	return NULL;
+}
+
+/* the vehicle's driver's seat (NONE: none) */
+static short bot_vehicle_driver_seat(
+	long vehicle_index)
+{
+	short count = unit_definition_get(object_get(vehicle_index)->definition_index)->unit.seats.count;
+	short seat;
+
+	for (seat = 0; seat < count; seat++)
+	{
+		if (unit_seat_is_driver(vehicle_index, seat))
+			return seat;
+	}
+	return NONE;
+}
+
+/* whether anyone rides the vehicle */
+static boolean bot_vehicle_ridden(
+	long vehicle_index)
+{
+	long child = object_get(vehicle_index)->object.first_child_object_index;
+
+	while (child != NONE)
+	{
+		struct object_datum *object = object_get(child);
+
+		if (TEST_FLAG(_object_mask_unit, object->object.type))
+			return TRUE;
+		child = object->object.next_object_index;
+	}
+	return FALSE;
+}
+
+/* a vehicle still there and not destroyed */
+static boolean bot_vehicle_alive(
+	long vehicle_index)
+{
+	struct object_datum *object = vehicle_index != NONE ? object_try_and_get(vehicle_index) : NULL;
+
+	return object && object->object.type == _object_type_vehicle && !TEST_FLAG(object->object.damage_flags, _object_dead_bit);
+}
+
+/* whether a person (not a bot) on foot or riding is this near the point */
+static boolean bot_vehicle_person_near(
+	real_point3d const *point,
+	real distance)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		real_point3d position;
+
+		if (player->unit_index == NONE || bots_player_is_bot(player))
+			continue;
+		object_get_origin(player->unit_index, &position);
+		if (distance_squared3d(&position, point) < distance * distance)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* the drive graph's node of the main part nearest the point (NONE: none) */
+static long bot_vehicle_nearest_node(
+	struct bots_nav const *drive,
+	real x,
+	real y,
+	real z)
+{
+	long best = NONE;
+	real best_distance = 0.0f;
+	long node;
+
+	for (node = 0; node < drive->node_count; node++)
+	{
+		struct bots_nav_node const *here = &drive->nodes[node];
+		real dx, dy, dz, distance;
+
+		if (here->reach != (_bots_nav_reached_bit | _bots_nav_reaches_bit))
+			continue;
+		dx = here->point.x - x;
+		dy = here->point.y - y;
+		dz = here->point.z - z;
+		distance = dx * dx + dy * dy + dz * dz * 4.0f;
+		if (best == NONE || distance < best_distance)
+		{
+			best = node;
+			best_distance = distance;
+		}
+	}
+	return best;
+}
+
+/* the throttle it drives at, at most (a fraction of the vehicle's own) */
+static real bot_vehicle_throttle_cap(
+	struct bot const *bot)
+{
+	switch (bot->difficulty)
+	{
+	case _bot_difficulty_peaceful:
+	case _bot_difficulty_easy:
+		return 0.55f;
+	case _bot_difficulty_normal:
+		return 0.65f;
+	case _bot_difficulty_hard:
+		return 0.75f;
+	default:
+		return 0.85f;
+	}
+}
+
+/* ---------- phases */
+
+static void bot_vehicle_set_phase(
+	struct bot_vehicle *vehicle,
+	short phase)
+{
+	vehicle->phase = phase;
+	vehicle->phase_tick = game_time_get();
+	vehicle->press_tick = game_time_get() - BOT_VEHICLE_PRESS_TICKS;
+}
+
+/* the vehicle given up: kept off a while, and on foot */
+static void bot_vehicle_give_up(
+	struct bot_vehicle *vehicle,
+	long ticks,
+	char const *reason)
+{
+	if (config_boolean("debug.bot_trace"))
+		platform_log("bots: trace vehicle %lx given up (%s), phase %d", vehicle->vehicle_index, reason, vehicle->phase);
+	vehicle->avoided_vehicle = vehicle->vehicle_index;
+	vehicle->avoided_until_tick = game_time_get() + ticks;
+	vehicle->vehicle_index = NONE;
+	bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_none);
+}
+
+/* on foot again: the walking brain heads for the goal the ride was for */
+static void bot_vehicle_walk_on(
+	struct bot_brain *brain)
+{
+	struct bots_nav *nav = bots_nav_current();
+
+	brain->path_next = NONE;
+	brain->stuck_count = 0;
+	if (nav)
+	{
+		long node = bots_nav_locate(nav, brain->vehicle.goal.x, brain->vehicle.goal.y, brain->vehicle.goal.z + 0.5f);
+
+		if (node != NONE)
+			brain->goal_node = node;
+	}
+}
+
+/* the walking brain heads for the point: its goal the walking graph's node
+there (FALSE: no node there) */
+static boolean bot_vehicle_head_for(
+	struct bot_brain *brain,
+	real_point3d const *point)
+{
+	struct bots_nav *nav = bots_nav_current();
+	long node = nav ? bots_nav_locate(nav, point->x, point->y, point->z + 0.5f) : NONE;
+
+	if (node == NONE)
+		return FALSE;
+	if (node != brain->goal_node)
+	{
+		brain->goal_node = node;
+		brain->path_next = NONE;
+	}
+	/* (no weapon on the way to fetch first) */
+	brain->pickup_object = NONE;
+	brain->pickup_look_tick = game_time_get() + TICKS_PER_SECOND;
+	return TRUE;
+}
+
+/* facing the point, standing still, or stepping toward it */
+static void bot_vehicle_step_to(
+	struct bot_brain *brain,
+	real_point3d const *position,
+	real_point3d const *point,
+	real throttle,
+	struct player_action *action)
+{
+	real yaw = (real)atan2(point->y - position->y, point->x - position->x);
+	real turn = bot_vehicle_angle(yaw - brain->yaw);
+
+	if (turn > BOT_VEHICLE_TURN_RATE)
+		turn = BOT_VEHICLE_TURN_RATE;
+	else if (turn < -BOT_VEHICLE_TURN_RATE)
+		turn = -BOT_VEHICLE_TURN_RATE;
+	brain->yaw = bot_vehicle_angle(brain->yaw + turn);
+	brain->pitch = 0.0f;
+	bot_action_idle(action, brain->yaw, brain->pitch);
+	/* (forward along where it means to go, whichever way it faces yet) */
+	if (throttle > 0.0f)
+	{
+		real off = bot_vehicle_angle(yaw - brain->yaw);
+
+		action->throttle.i = (real)cos(off) * throttle;
+		action->throttle.j = (real)sin(off) * throttle;
+	}
+}
+
+/* where a bot near a vehicle steps for its door: the door from outside it
+(a point a world unit out from the vehicle through the door), round the
+vehicle's body when it stands on the other side; the door itself from there */
+static void bot_vehicle_door_way(
+	long vehicle_index,
+	real_point3d const *position,
+	real_point3d const *door,
+	real_point3d *target)
+{
+	struct object_datum *vehicle = object_get(vehicle_index);
+	real_point3d const *center = &vehicle->object.position;
+	real radius = vehicle->object.bounding_sphere_radius * 0.8f;
+	real ox = door->x - center->x, oy = door->y - center->y;
+	real length = (real)sqrt(ox * ox + oy * oy);
+	real_point3d outside;
+	real sx, sy, dx, dy, t, cx, cy;
+
+	*target = *door;
+	if (length < 0.01f)
+		return;
+	ox /= length;
+	oy /= length;
+	outside = *door;
+	outside.x += ox * BOT_VEHICLE_DOOR_OUTSIDE;
+	outside.y += oy * BOT_VEHICLE_DOOR_OUTSIDE;
+	/* (at the door's outside, or in front of the door: in) */
+	if (bot_vehicle_distance2d(position, outside.x, outside.y) < 0.5f ||
+		(position->x - door->x) * ox + (position->y - door->y) * oy > 0.2f)
+	{
+		return;
+	}
+	*target = outside;
+	/* (the way to the outside crosses the vehicle: round its side, the
+	bot's side of the line from its middle out through the door) */
+	sx = position->x;
+	sy = position->y;
+	dx = outside.x - sx;
+	dy = outside.y - sy;
+	t = dx * dx + dy * dy > 0.0001f ? ((center->x - sx) * dx + (center->y - sy) * dy) / (dx * dx + dy * dy) : 0.0f;
+	if (t < 0.0f)
+		t = 0.0f;
+	else if (t > 1.0f)
+		t = 1.0f;
+	cx = sx + dx * t - center->x;
+	cy = sy + dy * t - center->y;
+	if (cx * cx + cy * cy < radius * radius)
+	{
+		real side = (position->x - center->x) * -oy + (position->y - center->y) * ox >= 0.0f ? 1.0f : -1.0f;
+
+		target->x = center->x - oy * side * (radius + 0.6f);
+		target->y = center->y + ox * side * (radius + 0.6f);
+		target->z = position->z;
+	}
+}
+
+/* a ride chosen, if one is worth it: the vehicle, its driver's seat, the goal
+it rides toward; its walk to the door begun (TRUE) */
+static boolean bot_vehicle_choose(
+	struct bot *bot,
+	long unit_index,
+	real_point3d const *position,
+	short mode)
+{
+	struct bot_brain *brain = &bot->brain;
+	struct bot_vehicle *vehicle = &brain->vehicle;
+	struct bots_nav *nav = bots_nav_current();
+	struct bots_nav *drive = bots_nav_drive_current();
+	long limit = config_integer("server.bot_vehicles");
+	struct object_iterator iterator;
+	struct bots_nav_point goal;
+	long best = NONE;
+	short best_seat = NONE;
+	real best_distance = 0.0f;
+	real trip, ride;
+	long goal_node;
+	struct bots_nav_node const *end;
+
+	if (mode == _bot_vehicle_never || limit < 0 || !nav || !drive || brain->goal_node == NONE ||
+		brain->goal_node >= nav->node_count)
+	{
+		return FALSE;
+	}
+	if (limit > 0 && bots_vehicle_riders() >= limit)
+		return FALSE;
+	if (bot_holds_flag(unit_get(unit_index)) || (brain->combat.target_visible &&
+		bot->difficulty != _bot_difficulty_peaceful && mode != _bot_vehicle_drive))
+	{
+		return FALSE;
+	}
+	goal = nav->nodes[brain->goal_node].point;
+	trip = bot_vehicle_distance2d(position, goal.x, goal.y);
+	if (trip < (mode == _bot_vehicle_drive ? BOT_VEHICLE_DRIVER_TRIP : BOT_VEHICLE_TRIP))
+		return FALSE;
+	object_iterator_new(&iterator, _object_mask_vehicle, 0);
+	while (object_iterator_next(&iterator))
+	{
+		struct object_datum *object = object_get(iterator.index);
+		real distance = (real)sqrt(distance_squared3d(position, &object->object.position));
+		short seat;
+		long node;
+
+		if (distance > (mode == _bot_vehicle_drive ? BOT_VEHICLE_DRIVER_REACH : BOT_VEHICLE_REACH) ||
+			(best != NONE && distance >= best_distance))
+			continue;
+		if (!bot_vehicle_alive(iterator.index) || !bot_vehicle_kind(iterator.index) ||
+			(iterator.index == vehicle->avoided_vehicle && game_time_get() < vehicle->avoided_until_tick))
+		{
+			continue;
+		}
+		seat = bot_vehicle_driver_seat(iterator.index);
+		if (seat == NONE || bot_vehicle_ridden(iterator.index) || bots_vehicle_taken(iterator.index, bot) ||
+			bot_vehicle_person_near(&object->object.position, BOT_VEHICLE_COURTESY))
+		{
+			continue;
+		}
+		node = bots_nav_locate(drive, object->object.position.x, object->object.position.y,
+			object->object.position.z + 0.5f);
+		if (node == NONE || drive->nodes[node].reach != (_bots_nav_reached_bit | _bots_nav_reaches_bit))
+			continue;
+		best = iterator.index;
+		best_seat = seat;
+		best_distance = distance;
+	}
+	if (best == NONE)
+		return FALSE;
+	goal_node = bot_vehicle_nearest_node(drive, goal.x, goal.y, goal.z);
+	if (goal_node == NONE)
+		return FALSE;
+	end = &drive->nodes[goal_node];
+	{
+		real_point3d const *at = &object_get(best)->object.position;
+
+		ride = best_distance + bot_vehicle_distance2d(at, end->point.x, end->point.y) / BOT_VEHICLE_SPEED_FACTOR +
+			(real)sqrt((end->point.x - goal.x) * (end->point.x - goal.x) + (end->point.y - goal.y) * (end->point.y - goal.y)) +
+			BOT_VEHICLE_OVERHEAD;
+	}
+	if (mode != _bot_vehicle_drive && ride > BOT_VEHICLE_QUICKER * trip)
+		return FALSE;
+	vehicle->vehicle_index = best;
+	vehicle->seat_index = best_seat;
+	vehicle->goal.x = goal.x;
+	vehicle->goal.y = goal.y;
+	vehicle->goal.z = goal.z;
+	vehicle->drive_goal_node = goal_node;
+	vehicle->path_next = NONE;
+	vehicle->overturned_ticks = 0;
+	vehicle->stuck_events = 0;
+	vehicle->edge_stuck = 0;
+	vehicle->stuck_edge = NONE;
+	vehicle->reverse_until_tick = 0;
+	bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_approach);
+	vehicle->approach_until_tick = game_time_get() + BOT_VEHICLE_APPROACH_TICKS +
+		(long)(best_distance * BOT_VEHICLE_APPROACH_TICKS_PER_UNIT);
+	return TRUE;
+}
+
+/* getting out, for a reason (said), and then on foot (or to flip it over) */
+static void bot_vehicle_leave(
+	struct bot_vehicle *vehicle,
+	long player_index,
+	char const *reason,
+	boolean flip)
+{
+	platform_log("bots: player %ld gets out of vehicle %lx (%s) at tick %ld",
+		(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index, reason, game_time_get());
+	vehicle->flip_after = flip;
+	bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_leave);
+}
+
+/* whether someone on foot (or a vehicle) is in the way ahead of the vehicle,
+within the corridor it drives; a vehicle: slowed for, not braked */
+static boolean bot_vehicle_way_blocked(
+	long vehicle_index,
+	real speed,
+	boolean *vehicle_ahead)
+{
+	struct object_datum *vehicle = object_get(vehicle_index);
+	real ahead = BOT_VEHICLE_AHEAD + speed * BOT_VEHICLE_AHEAD_SECONDS + vehicle->object.bounding_sphere_radius;
+	real fx = vehicle->object.forward.i, fy = vehicle->object.forward.j;
+	real length = (real)sqrt(fx * fx + fy * fy);
+	struct object_iterator iterator;
+	boolean person = FALSE;
+
+	*vehicle_ahead = FALSE;
+	if (length < 0.01f)
+		return FALSE;
+	fx /= length;
+	fy /= length;
+	object_iterator_new(&iterator, _object_mask_biped | _object_mask_vehicle, 0);
+	while (object_iterator_next(&iterator))
+	{
+		struct object_datum *object = object_get(iterator.index);
+		real dx, dy, along, across;
+
+		if (iterator.index == vehicle_index || object->object.parent_object_index != NONE ||
+			TEST_FLAG(object->object.damage_flags, _object_dead_bit))
+		{
+			continue;
+		}
+		dx = object->object.position.x - vehicle->object.position.x;
+		dy = object->object.position.y - vehicle->object.position.y;
+		if (fabs(object->object.position.z - vehicle->object.position.z) > 2.0f)
+			continue;
+		along = dx * fx + dy * fy;
+		across = (real)fabs(dy * fx - dx * fy);
+		if (along <= 0.0f || along > ahead + object->object.bounding_sphere_radius ||
+			across > BOT_VEHICLE_CORRIDOR + object->object.bounding_sphere_radius)
+		{
+			continue;
+		}
+		if (object->object.type == _object_type_biped)
+			person = TRUE;
+		else
+			*vehicle_ahead = TRUE;
+	}
+	return person;
+}
+
+/* driving: the bot's input as its vehicle's driver */
+static void bot_vehicle_drive(
+	struct bot *bot,
+	long player_index,
+	struct player_action *action)
+{
+	struct bot_brain *brain = &bot->brain;
+	struct bot_vehicle *vehicle = &brain->vehicle;
+	struct bots_nav *drive = bots_nav_drive_current();
+	struct object_datum *object = object_get(vehicle->vehicle_index);
+	real_point3d at = object->object.position;
+	real speed = (real)sqrt(object->object.translational_velocity.i * object->object.translational_velocity.i +
+		object->object.translational_velocity.j * object->object.translational_velocity.j) * TICKS_PER_SECOND;
+	real forward_speed = (object->object.translational_velocity.i * object->object.forward.i +
+		object->object.translational_velocity.j * object->object.forward.j) * TICKS_PER_SECOND;
+	real heading = (real)atan2(object->object.forward.j, object->object.forward.i);
+	long now = game_time_get();
+	real throttle, yaw, off, turn, remaining;
+	boolean vehicle_ahead = FALSE;
+	boolean blocked;
+	struct bots_nav_point target;
+
+	/* (how far, how long) */
+	{
+		real dx = at.x - vehicle->last_position.x, dy = at.y - vehicle->last_position.y;
+		real step = (real)sqrt(dx * dx + dy * dy);
+
+		if (step < 3.0f)
+			brain->statistics.vehicle_travelled += step;
+		vehicle->last_position = at;
+		brain->statistics.vehicle_ticks++;
+	}
+	/* (turned over: out, and flipped back) */
+	vehicle->overturned_ticks = object->object.up.k < BOT_VEHICLE_OVERTURNED ? vehicle->overturned_ticks + 1 : 0;
+	if (vehicle->overturned_ticks > BOT_VEHICLE_OVERTURNED_TICKS)
+	{
+		bot_vehicle_leave(vehicle, player_index, "it turned over", TRUE);
+		bot_action_idle(action, brain->yaw, 0.0f);
+		return;
+	}
+	/* (a race's next flag: its goal) */
+	if (brain->objective.kind == _bot_objective_go &&
+		bot_vehicle_distance2d((real_point3d const *)&brain->objective.point, vehicle->goal.x, vehicle->goal.y) > 5.0f)
+	{
+		long node = bot_vehicle_nearest_node(drive, brain->objective.point.x, brain->objective.point.y,
+			brain->objective.point.z);
+
+		vehicle->goal.x = brain->objective.point.x;
+		vehicle->goal.y = brain->objective.point.y;
+		vehicle->goal.z = brain->objective.point.z;
+		if (node != NONE)
+		{
+			vehicle->drive_goal_node = node;
+			vehicle->path_next = NONE;
+		}
+	}
+	/* (its way along the drive graph) */
+	if (vehicle->path_next == NONE)
+	{
+		long from = bots_nav_locate(drive, at.x, at.y, at.z + 0.5f);
+		long count;
+
+		if (from == NONE)
+			from = bot_vehicle_nearest_node(drive, at.x, at.y, at.z);
+		count = from == NONE ? -1 : bots_nav_find_path(drive, from, vehicle->drive_goal_node, vehicle->path,
+			BOT_PATH_MAXIMUM);
+		if (count < 0)
+		{
+			bot_vehicle_leave(vehicle, player_index, "no way on", FALSE);
+			bot_action_idle(action, brain->yaw, 0.0f);
+			return;
+		}
+		vehicle->path_next = count - 1;
+		vehicle->path_count = count;
+	}
+	/* (the nearest of the next few nodes along its way: one it went past
+	wide, fast, is not turned back for) */
+	{
+		long index, best = vehicle->path_next;
+		real best_distance = 1.0e30f;
+
+		for (index = vehicle->path_next; index >= 0 && index > vehicle->path_next - BOT_VEHICLE_SKIP_NODES; index--)
+		{
+			struct bots_nav_point const *point = &drive->nodes[drive->edges[vehicle->path[index]].target].point;
+			real distance = bot_vehicle_distance2d(&at, point->x, point->y);
+
+			if (distance < best_distance)
+			{
+				best_distance = distance;
+				best = index;
+			}
+		}
+		vehicle->path_next = best;
+	}
+	while (vehicle->path_next >= 0)
+	{
+		struct bots_nav_point const *point = &drive->nodes[drive->edges[vehicle->path[vehicle->path_next]].target].point;
+
+		if (bot_vehicle_distance2d(&at, point->x, point->y) >= BOT_VEHICLE_NODE_PASSED)
+			break;
+		vehicle->path_next--;
+	}
+	{
+		struct bots_nav_point const *end = &drive->nodes[vehicle->drive_goal_node].point;
+
+		remaining = bot_vehicle_distance2d(&at, end->x, end->y);
+		if (vehicle->path_next < 0 || remaining < BOT_VEHICLE_ARRIVED)
+		{
+			bot_vehicle_leave(vehicle, player_index, "there", FALSE);
+			bot_action_idle(action, brain->yaw, 0.0f);
+			return;
+		}
+	}
+	/* (the point it steers for: the first node ahead along its way at least
+	the look-ahead off, else the last) */
+	{
+		real lookahead = BOT_VEHICLE_LOOKAHEAD + BOT_VEHICLE_LOOKAHEAD_SECONDS * speed;
+		long index;
+
+		if (lookahead > BOT_VEHICLE_LOOKAHEAD_MAXIMUM)
+			lookahead = BOT_VEHICLE_LOOKAHEAD_MAXIMUM;
+		target = drive->nodes[drive->edges[vehicle->path[0]].target].point;
+		for (index = vehicle->path_next; index >= 0; index--)
+		{
+			struct bots_nav_point const *point = &drive->nodes[drive->edges[vehicle->path[index]].target].point;
+
+			if (bot_vehicle_distance2d(&at, point->x, point->y) >= lookahead)
+			{
+				target = *point;
+				break;
+			}
+		}
+	}
+	yaw = (real)atan2(target.y - at.y, target.x - at.x);
+	off = bot_vehicle_angle(yaw - heading);
+	/* (how fast: slower in a turn, near its goal; nothing in the air) */
+	throttle = bot_vehicle_throttle_cap(bot);
+	if (fabs(off) > 1.2f)
+		throttle = 0.45f;
+	else if (fabs(off) > 0.6f)
+		throttle *= 0.7f;
+	if (remaining < BOT_VEHICLE_SLOW_NEAR && throttle > 0.5f)
+		throttle = 0.5f;
+	/* (leaning - over a bump, on a side slope, a wheel up: eased off, before
+	it rolls) */
+	if (object->object.up.k < BOT_VEHICLE_LEANING && throttle > 0.4f)
+		throttle = 0.4f;
+	if (!TEST_FLAG(object->object.flags, _object_on_ground_bit))
+		throttle = 0.0f;
+	/* (someone on foot ahead: braked for, whoever they are; a vehicle:
+	slowed for) */
+	blocked = bot_vehicle_way_blocked(vehicle->vehicle_index, speed, &vehicle_ahead);
+	if (blocked)
+	{
+		if (!vehicle->braking)
+			brain->statistics.vehicle_braked++;
+		vehicle->braking = TRUE;
+		throttle = forward_speed > 0.5f ? -1.0f : 0.0f;
+	}
+	else
+	{
+		vehicle->braking = FALSE;
+		if (vehicle_ahead && throttle > 0.3f)
+			throttle = 0.3f;
+	}
+	/* (getting nowhere: back up, the wheels the other way) */
+	if (now - vehicle->check_tick >= BOT_VEHICLE_CHECK_TICKS)
+	{
+		real moved = bot_vehicle_distance2d(&at, vehicle->check_position.x, vehicle->check_position.y);
+
+		if (moved < BOT_VEHICLE_PROGRESS && vehicle->last_throttle > 0.3f && !blocked && now >= vehicle->reverse_until_tick)
+		{
+			long edge = vehicle->path[vehicle->path_next];
+
+			brain->statistics.vehicle_reverses++;
+			vehicle->reverse_until_tick = now + BOT_VEHICLE_REVERSE_TICKS;
+			/* (each time the other way round what is in the way) */
+			vehicle->reverse_side = vehicle->reverse_side > 0.0f ? -1.0f : 1.0f;
+			if (now - vehicle->stuck_window_tick > BOT_VEHICLE_STUCK_WINDOW)
+			{
+				vehicle->stuck_window_tick = now;
+				vehicle->stuck_events = 0;
+			}
+			vehicle->stuck_events++;
+			vehicle->edge_stuck = edge == vehicle->stuck_edge ? vehicle->edge_stuck + 1 : 1;
+			vehicle->stuck_edge = edge;
+			if (vehicle->stuck_events >= BOT_VEHICLE_STUCK_LIMIT)
+			{
+				bot_vehicle_leave(vehicle, player_index, "stuck", FALSE);
+				bot_action_idle(action, brain->yaw, 0.0f);
+				return;
+			}
+			/* (stuck again and again on this part of the way: kept off it) */
+			if (vehicle->edge_stuck >= BOT_VEHICLE_EDGE_STUCK && edge >= 0 && edge < drive->edge_count)
+			{
+				if (drive->edges[edge].cost < 500.0f)
+					drive->edges[edge].cost += drive->edges[edge].failed ? 1000.0f : 40.0f;
+				drive->edges[edge].failed = 1;
+				vehicle->path_next = NONE;
+				vehicle->edge_stuck = 0;
+			}
+		}
+		vehicle->check_tick = now;
+		vehicle->check_position = at;
+	}
+	if (now < vehicle->reverse_until_tick)
+	{
+		/* (backing up, facing to a side: the vehicle steers as its driver
+		looks going back too, so its nose comes round that way; then on
+		straight a while, past what was in the way) */
+		yaw = bot_vehicle_angle(heading + vehicle->reverse_side * BOT_VEHICLE_REVERSE_TURN);
+		throttle = -1.0f;
+		vehicle->detour_until_tick = vehicle->reverse_until_tick + BOT_VEHICLE_DETOUR_TICKS;
+	}
+	else if (now < vehicle->detour_until_tick && !blocked)
+	{
+		yaw = heading;
+		if (throttle > 0.6f)
+			throttle = 0.6f;
+	}
+	vehicle->last_throttle = throttle;
+	if (config_boolean("debug.bot_trace") && now % TICKS_PER_SECOND == 0)
+		platform_log("bots: trace drive: player %ld at (%.1f %.1f %.1f) up %.2f speed %.1f (forward %.1f) throttle %.2f off %.0f step %ld/%ld %.0f to go%s%s",
+			(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), at.x, at.y, at.z, object->object.up.k, speed, forward_speed,
+			throttle, off * 180.0f / _pi, vehicle->path_next, vehicle->path_count, remaining, blocked ? " braking" : "",
+			now < vehicle->reverse_until_tick ? " reversing" : "");
+	/* (the facing turned toward where it steers, a turn a tick at most) */
+	turn = bot_vehicle_angle(yaw - brain->yaw);
+	if (turn > BOT_VEHICLE_TURN_RATE)
+		turn = BOT_VEHICLE_TURN_RATE;
+	else if (turn < -BOT_VEHICLE_TURN_RATE)
+		turn = -BOT_VEHICLE_TURN_RATE;
+	brain->yaw = bot_vehicle_angle(brain->yaw + turn);
+	brain->pitch = 0.0f;
+	bot_action_idle(action, brain->yaw, brain->pitch);
+	action->throttle.i = throttle;
+}
+
+/* ---------- the bot's turn */
+
+boolean bot_vehicle_think(
+	struct bot *bot,
+	long player_index,
+	long unit_index,
+	real_point3d const *position,
+	struct player_action *action)
+{
+	struct bot_brain *brain = &bot->brain;
+	struct bot_vehicle *vehicle = &brain->vehicle;
+	struct player_datum *player = player_get(player_index);
+	long parent = object_get(unit_index)->object.parent_object_index;
+	long now = game_time_get();
+	short mode = bot_vehicle_mode(bot);
+
+	/* (a life, a game: afresh) */
+	if (vehicle->unit_index != unit_index || now < vehicle->phase_tick)
+	{
+		csmemset(vehicle, 0, sizeof(*vehicle));
+		vehicle->unit_index = unit_index;
+		vehicle->vehicle_index = NONE;
+		vehicle->avoided_vehicle = NONE;
+		vehicle->seat_index = NONE;
+		vehicle->stuck_edge = NONE;
+		vehicle->path_next = NONE;
+		vehicle->look_tick = now + TICKS_PER_SECOND + bot->slot % BOT_VEHICLE_LOOK_TICKS;
+		bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_none);
+	}
+	if (mode == _bot_vehicle_stand)
+	{
+		if (parent != NONE)
+			return FALSE;
+		bot_action_idle(action, brain->yaw, brain->pitch);
+		return TRUE;
+	}
+	/* (its vehicle gone, or destroyed: on foot) */
+	if (vehicle->phase != _bot_vehicle_phase_none && !bot_vehicle_alive(vehicle->vehicle_index))
+	{
+		if (parent != NONE)
+		{
+			bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_none);
+			return FALSE;
+		}
+		vehicle->vehicle_index = NONE;
+		bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_none);
+		bot_vehicle_walk_on(brain);
+		return FALSE;
+	}
+	switch (vehicle->phase)
+	{
+	case _bot_vehicle_phase_none:
+		/* (in a vehicle it never chose: bot_vehicle_keep_out takes it out) */
+		if (parent != NONE || now < vehicle->look_tick)
+			return FALSE;
+		vehicle->look_tick = now + BOT_VEHICLE_LOOK_TICKS;
+		if (!bot_vehicle_choose(bot, unit_index, position, mode))
+			return FALSE;
+		/* (on to the door) */
+
+	case _bot_vehicle_phase_approach:
+	{
+		real_point3d door, seat;
+		real distance;
+
+		if (parent != NONE)
+		{
+			bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS, "in a seat walking there");
+			return FALSE;
+		}
+		{
+			char const *reason = NULL;
+
+			if (bot_vehicle_ridden(vehicle->vehicle_index))
+				reason = "someone got in";
+			else if (object_get(vehicle->vehicle_index)->object.up.k < BOT_VEHICLE_UPRIGHT)
+			{
+				/* (on its side or roof: flipped back over first) */
+				bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_flip);
+				vehicle->flip_presses = 0;
+				return FALSE;
+			}
+			else if (!unit_get_seat_entrance_point(unit_index, vehicle->vehicle_index, vehicle->seat_index, &door, &seat, NULL))
+				reason = "no door";
+			else if (brain->combat.target_visible && bot->difficulty != _bot_difficulty_peaceful && mode != _bot_vehicle_drive)
+				reason = "a fight";
+			else if (bot_vehicle_person_near(&object_get(vehicle->vehicle_index)->object.position, BOT_VEHICLE_COURTESY))
+				reason = "a person near it";
+			if (reason)
+			{
+				bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS / 3, reason);
+				bot_vehicle_walk_on(brain);
+				return FALSE;
+			}
+		}
+		distance = bot_vehicle_distance2d(position, door.x, door.y);
+		if (now > vehicle->approach_until_tick && vehicle->phase == _bot_vehicle_phase_approach)
+		{
+			bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS, "too long getting there");
+			bot_vehicle_walk_on(brain);
+			return FALSE;
+		}
+		if (distance > BOT_VEHICLE_DOOR_NEAR)
+		{
+			/* (along the walking graph: the brain walks there) */
+			if (!bot_vehicle_head_for(brain, &door))
+			{
+				bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS, "no way there");
+				bot_vehicle_walk_on(brain);
+			}
+			return FALSE;
+		}
+		bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_board);
+	}
+		/* (at the door) */
+
+	case _bot_vehicle_phase_board:
+	{
+		real_point3d door, seat;
+		real distance;
+
+		if (parent == vehicle->vehicle_index && object_get(unit_index)->object.parent_object_index != NONE &&
+			unit_get(unit_index)->unit.parent_seat_index == vehicle->seat_index)
+		{
+			brain->statistics.vehicle_rides++;
+			platform_log("bots: player %ld drives vehicle %lx (%s) at tick %ld",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index,
+				bot_vehicle_kind(vehicle->vehicle_index), now);
+			vehicle->last_position = object_get(vehicle->vehicle_index)->object.position;
+			vehicle->check_position = vehicle->last_position;
+			vehicle->check_tick = now;
+			vehicle->path_next = NONE;
+			vehicle->last_throttle = 0.0f;
+			vehicle->braking = FALSE;
+			brain->yaw = (real)atan2(object_get(vehicle->vehicle_index)->object.forward.j,
+				object_get(vehicle->vehicle_index)->object.forward.i);
+			bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_ride);
+			bot_action_idle(action, brain->yaw, 0.0f);
+			return TRUE;
+		}
+		if (parent != NONE)
+		{
+			/* (another seat, or another vehicle: out) */
+			bot_vehicle_leave(vehicle, player_index, "the wrong seat", FALSE);
+			bot_action_idle(action, brain->yaw, brain->pitch);
+			return TRUE;
+		}
+		if (now - vehicle->phase_tick > BOT_VEHICLE_BOARD_TICKS || bot_vehicle_ridden(vehicle->vehicle_index) ||
+			!unit_get_seat_entrance_point(unit_index, vehicle->vehicle_index, vehicle->seat_index, &door, &seat, NULL))
+		{
+			bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS, "not in at the door");
+			bot_vehicle_walk_on(brain);
+			return FALSE;
+		}
+		distance = bot_vehicle_distance2d(position, door.x, door.y);
+		if (config_boolean("debug.bot_trace") && (now - vehicle->phase_tick) % 10 == 0)
+			platform_log("bots: trace door: player %ld result %d object %lx seat %d (wants %d) at %.2f from the door, speed %.3f",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), player->action_result, player->action_object_index,
+				player->action_seat_index, vehicle->seat_index, distance,
+				(real)sqrt(magnitude_squared3d(&object_get(unit_index)->object.translational_velocity)));
+		/* (still: the game takes nobody in moving; stepping closer while the
+		game offers another seat or none) */
+		if (player->action_result == _player_action_result_enter_vehicle &&
+			player->action_object_index == vehicle->vehicle_index && player->action_seat_index == vehicle->seat_index)
+		{
+			bot_vehicle_step_to(brain, position, &object_get(vehicle->vehicle_index)->object.position, 0.0f, action);
+			if (now - vehicle->press_tick >= BOT_VEHICLE_PRESS_TICKS)
+			{
+				SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
+				vehicle->press_tick = now;
+			}
+		}
+		else
+		{
+			real_point3d target;
+
+			bot_vehicle_door_way(vehicle->vehicle_index, position, &door, &target);
+			bot_vehicle_step_to(brain, position, &target, distance > BOT_VEHICLE_DOOR_STAND ? 0.6f : 0.25f, action);
+		}
+		return TRUE;
+	}
+
+	case _bot_vehicle_phase_ride:
+		if (parent != vehicle->vehicle_index)
+		{
+			/* (thrown out: turned over, the game puts its riders out) */
+			boolean overturned = object_get(vehicle->vehicle_index)->object.up.k < BOT_VEHICLE_UPRIGHT;
+
+			platform_log("bots: player %ld is out of vehicle %lx (%s) at tick %ld",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index,
+				overturned ? "it turned over" : "put out", now);
+			if (overturned)
+			{
+				bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_flip);
+				vehicle->flip_presses = 0;
+			}
+			else
+			{
+				bot_vehicle_give_up(vehicle, 3 * TICKS_PER_SECOND, "put out");
+			}
+			bot_vehicle_walk_on(brain);
+			return FALSE;
+		}
+		bot_vehicle_drive(bot, player_index, action);
+		return TRUE;
+
+	case _bot_vehicle_phase_leave:
+	{
+		struct object_datum *object = object_get(vehicle->vehicle_index);
+		real forward_speed = (object->object.translational_velocity.i * object->object.forward.i +
+			object->object.translational_velocity.j * object->object.forward.j) * TICKS_PER_SECOND;
+
+		if (parent == NONE)
+		{
+			platform_log("bots: player %ld got out of vehicle %lx at tick %ld",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index, now);
+			if (vehicle->flip_after)
+			{
+				bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_flip);
+				vehicle->flip_presses = 0;
+			}
+			else
+			{
+				bot_vehicle_give_up(vehicle, 6 * TICKS_PER_SECOND, "got out");
+			}
+			bot_vehicle_walk_on(brain);
+			return FALSE;
+		}
+		bot_action_idle(action, brain->yaw, 0.0f);
+		/* (stopped first, braking against the way it goes) */
+		if (parent == vehicle->vehicle_index && fabs(forward_speed) > 1.0f && now - vehicle->phase_tick < 3 * TICKS_PER_SECOND)
+		{
+			action->throttle.i = forward_speed > 0.0f ? -1.0f : 1.0f;
+			return TRUE;
+		}
+		if (now - vehicle->press_tick >= BOT_VEHICLE_PRESS_TICKS / 2)
+		{
+			SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
+			vehicle->press_tick = now;
+		}
+		if (now - vehicle->phase_tick > BOT_VEHICLE_LEAVE_TICKS)
+			platform_log("bots: player %ld cannot get out of vehicle %lx", (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index),
+				vehicle->vehicle_index);
+		return TRUE;
+	}
+
+	case _bot_vehicle_phase_flip:
+	{
+		struct object_datum *object = object_get(vehicle->vehicle_index);
+		real distance;
+
+		if (parent != NONE)
+		{
+			bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS, "in a seat flipping it");
+			return FALSE;
+		}
+		/* (upright again: in again, if the ride is still worth it) */
+		if (object->object.up.k > BOT_VEHICLE_UPRIGHT)
+		{
+			if (vehicle->flip_presses > 0)
+			{
+				brain->statistics.vehicle_flips++;
+				platform_log("bots: player %ld flipped vehicle %lx back over at tick %ld",
+					(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index, now);
+			}
+			vehicle->avoided_vehicle = NONE;
+			vehicle->vehicle_index = NONE;
+			vehicle->look_tick = now;
+			bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_none);
+			return FALSE;
+		}
+		if (now - vehicle->phase_tick > BOT_VEHICLE_FLIP_TICKS)
+		{
+			bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS, "not flipped");
+			bot_vehicle_walk_on(brain);
+			return FALSE;
+		}
+		if (player->action_result == _player_action_result_flip_vehicle &&
+			player->action_object_index == vehicle->vehicle_index)
+		{
+			bot_vehicle_step_to(brain, position, &object->object.position, 0.0f, action);
+			if (now - vehicle->press_tick >= 2 * BOT_VEHICLE_PRESS_TICKS)
+			{
+				SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
+				vehicle->press_tick = now;
+				vehicle->flip_presses++;
+			}
+			return TRUE;
+		}
+		distance = bot_vehicle_distance2d(position, object->object.position.x, object->object.position.y);
+		if (distance > BOT_VEHICLE_FLIP_NEAR && bot_vehicle_head_for(brain, &object->object.position))
+			return FALSE;
+		bot_vehicle_step_to(brain, position, &object->object.position, 0.6f, action);
+		return TRUE;
+	}
+	}
+	return FALSE;
+}
+
+boolean bot_vehicle_holds(
+	struct bot const *bot,
+	long vehicle_index)
+{
+	return bot->brain.vehicle.phase != _bot_vehicle_phase_none && bot->brain.vehicle.vehicle_index == vehicle_index;
+}
+
+boolean bot_vehicle_busy(
+	struct bot const *bot)
+{
+	return bot->brain.vehicle.phase != _bot_vehicle_phase_none;
+}
+
+boolean bot_vehicle_riding(
+	struct bot const *bot)
+{
+	return bot->brain.vehicle.phase == _bot_vehicle_phase_ride || bot->brain.vehicle.phase == _bot_vehicle_phase_leave;
+}
