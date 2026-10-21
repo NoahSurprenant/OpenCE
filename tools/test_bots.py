@@ -569,6 +569,47 @@ def test_bots_peaceful(tmp_path):
     assert all(count == 0 for count in thrown.values()) and len(thrown) == 4, f"a peaceful bot threw a grenade: {thrown}"
 
 
+def test_bots_out_of_a_vehicle(tmp_path):
+    """A bot that finds itself in a vehicle (the action button it presses for
+    a weapon or a ball gets a player into a vehicle near instead) gets out
+    again at once and plays on: two bots on Blood Gulch's dedicated server,
+    the last of them seated as a Warthog's or Ghost's driver eight seconds in
+    by the host (debug.network_test_vehicle, which would take it out itself
+    fifteen seconds on). The bot is out within five seconds, says so, never
+    gets into one again (the host stands it at a vehicle's driver's door
+    twenty seconds on), and walks on. About a minute and a half."""
+    maps, paths = _needs("HALO_TEST_SERVER")
+    server = paths["HALO_TEST_SERVER"]
+    games = {"server": _start(tmp_path, "server", server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "8",
+        "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "1", "HALO_NETWORK_TEST_VEHICLE": "8",
+        "HALO_NET_ADDRESS": _test_address(219), "HALO_NET_BROADCAST": _test_address(220)})}
+    try:
+        _wait(lambda: len(SCORE.findall(_log(tmp_path, "server"))) >= 2, 150, games, tmp_path,
+              "the bots' game did not end with their scores")
+    finally:
+        _stop(games, tmp_path, {"server": server})
+        for cache in (tmp_path / "server" / "saves").rglob("cache*.map"):
+            cache.unlink()
+    log = _log(tmp_path, "server")
+    seated = re.search(r"network test: the last player drives vehicle", log)
+    assert seated, "the host seated no bot in a vehicle:\n" + log[-4000:]
+    mistakes = re.findall(r"bots: player (\d+) got into vehicle \w+ by mistake at tick (\d+)", log)
+    outs = re.findall(r"bots: player (\d+) got out of the vehicle at tick (\d+)", log)
+    print(f"mistakes {mistakes}, out {outs}")
+    assert len(mistakes) == 1, f"the seated bot did not notice, or got into a vehicle again: {mistakes}"
+    assert outs and outs[0][0] == mistakes[0][0], f"the bot never got out: {outs}"
+    assert int(outs[0][1]) - int(mistakes[0][1]) <= 5 * 30, f"the bot took more than five seconds to get out: {outs}"
+    # (out before the host would have taken it out: the host's own line is
+    # only for a player still in a vehicle)
+    assert "network test: the last player leaves the vehicle" not in log, "the bot stayed in the vehicle"
+    counts = _reports(log)
+    print({name: c.get("times in a vehicle by mistake") for name, c in counts.items()})
+    assert sorted(c.get("times in a vehicle by mistake") for c in counts.values()) == [0, 1], counts
+    went = {m[0]: int(m[1]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*?went (\d+) world units", log)}
+    assert len(went) == 2 and all(n >= 20 for n in went.values()), f"a bot hardly moved: {went}"
+
+
 def test_bots_grenades(tmp_path):
     """Six legendary bots play a two-minute Team Slayer on Beaver Creek, three
     against three (everyone spawns with frag grenades there): they throw

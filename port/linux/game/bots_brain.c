@@ -1398,6 +1398,60 @@ static void bot_stuck(
 	}
 }
 
+/* ---------- vehicles: kept out of */
+
+/* a bot in a vehicle's seat it never meant to take (the action button,
+pressed to pick up a weapon or a ball, gets a player into a vehicle near
+instead: players.c's action results put a vehicle's seat over a weapon), or
+put there: it stands still in it and presses the action button, which takes
+it out (bipeds.c), and says so (TRUE: its action is that). On foot, it
+presses no action button that would get it into a vehicle, nor flip one: its
+press for a weapon or a ball goes, its swap button stays (a weapon taken in
+place of the one in hand, players.c's player_handle_weapon_swap) */
+static boolean bot_vehicle_keep_out(
+	struct bot *bot,
+	long player_index,
+	long unit_index,
+	struct player_action *action)
+{
+	struct bot_brain *brain = &bot->brain;
+	struct player_datum *player = player_get(player_index);
+	long vehicle_index = object_get(unit_index)->object.parent_object_index;
+
+	if (vehicle_index != NONE)
+	{
+		if (!brain->in_vehicle)
+		{
+			brain->in_vehicle = TRUE;
+			brain->statistics.vehicle_mistakes++;
+			platform_log("bots: player %ld got into vehicle %lx by mistake at tick %ld",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle_index, game_time_get());
+		}
+		/* (still - no throttle, no trigger - and a press every few ticks:
+		one press is a press, and a held button would take it out and in
+		again) */
+		bot_action_idle(action, brain->yaw, brain->pitch);
+		if ((game_time_get() + bot->slot) % 8 == 0)
+			SET_FLAG(action->control_flags, _unit_control_action_bit, TRUE);
+		brain->path_next = NONE;
+		return TRUE;
+	}
+	if (brain->in_vehicle)
+	{
+		brain->in_vehicle = FALSE;
+		brain->path_next = NONE;
+		platform_log("bots: player %ld got out of the vehicle at tick %ld",
+			(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), game_time_get());
+	}
+	if (player->action_result == _player_action_result_enter_vehicle ||
+		player->action_result == _player_action_result_evict_from_vehicle ||
+		player->action_result == _player_action_result_flip_vehicle)
+	{
+		SET_FLAG(action->control_flags, _unit_control_action_bit, FALSE);
+	}
+	return FALSE;
+}
+
 void bot_brain_think(
 	struct bot *bot,
 	long player_index,
@@ -1407,13 +1461,16 @@ void bot_brain_think(
 	struct bot_brain *brain = &bot->brain;
 	struct object_datum *object = object_get(unit_index);
 	struct bots_nav *nav = bots_nav_current();
-	real_point3d position = object->object.position;
+	real_point3d position;
 
 	if (!bot_trace_checked)
 	{
 		bot_trace_checked = TRUE;
 		bot_trace = config_boolean("debug.bot_trace") != 0;
 	}
+	/* (where it is in the world: a rider's own position is its seat's, from
+	its vehicle) */
+	object_get_origin(unit_index, &position);
 
 	/* (a new life: it faces where its unit spawned facing, and plans afresh) */
 	if (brain->unit_index != unit_index)
@@ -1551,6 +1608,10 @@ void bot_brain_think(
 		SET_FLAG(action->control_flags, _unit_control_swap_weapons_bit, FALSE);
 		action->desired_weapon_index = NONE;
 	}
+	/* (in a vehicle - bots drive none - out again; and no press that gets it
+	into one) */
+	if (bot_vehicle_keep_out(bot, player_index, unit_index, action))
+		return;
 	/* (on a board to travel, off it to fight: bots_skate.c) */
 	bot_skate_think(bot, player_index, unit_index, action);
 }

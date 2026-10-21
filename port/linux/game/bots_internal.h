@@ -74,6 +74,9 @@ struct bot_statistics
 	/* ... the rails it lined up with, and its grinds */
 	long skate_grind_tries;
 	long skate_grinds;
+	/* the times it found itself in a vehicle it never meant to get into
+	(bots_brain.c's bot_vehicle_keep_out) */
+	long vehicle_mistakes;
 };
 
 /* a bot on a board (bots_skate.c) */
@@ -296,6 +299,8 @@ struct bot_brain
 	boolean run_up_done;
 	/* on a board (bots_skate.c) */
 	struct bot_skate skate;
+	/* in a vehicle's seat it never meant to take, last tick */
+	boolean in_vehicle;
 };
 
 /* a bot of the host's (bots.c) */
