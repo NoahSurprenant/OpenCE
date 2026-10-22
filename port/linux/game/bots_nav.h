@@ -174,6 +174,11 @@ lips of 0.3 and drops of 1 driven over, no jumps; tiles of 2), whose seeds
 are the level's vehicles */
 void bots_nav_vehicle_parameters(
 	struct bots_nav_parameters *parameters);
+/* ... and the graph a tank drives (a Scorpion's: 0.8 from walls, 1.3 of
+room, slopes of 30 degrees, lips of 0.4 driven over, drops of 1), whose
+seeds are the level's tanks */
+void bots_nav_tank_parameters(
+	struct bots_nav_parameters *parameters);
 /* the graph of a level; 0 (and nav empty) when it cannot be built (no
 memory, no triangles) */
 int bots_nav_build(

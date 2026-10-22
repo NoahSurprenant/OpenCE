@@ -328,6 +328,10 @@ WEAPONS_REACHED_AT_LEAST = {"chillout": 32, "damnation": 41, "hangemhigh": 44, "
 # the stock maps that place vehicles, and how many (each on the drive graph's
 # main part: bots_nav_vehicle_parameters)
 VEHICLES_PLACED = {"bloodgulch": 8, "sidewinder": 8}
+# ... and the Scorpions of each, on the tanks' graph
+TANKS_PLACED = {"bloodgulch": 2, "sidewinder": 2}
+TANK_GRAPH = re.compile(r"bots: tank graph of (\w+) (built|read from the cache) in (\d+) ms: (\d+) nodes, (\d+) edges .*?"
+                        r"tanks (\d+)/(\d+) on its main part")
 DRIVE_GRAPH = re.compile(r"bots: drive graph of (\w+) (built|read from the cache) in (\d+) ms: (\d+) nodes, (\d+) edges .*?"
                          r"vehicles (\d+)/(\d+) on its main part")
 GRAPH = re.compile(r"bots: walking graph of (\w+) (built|read from the cache) in (\d+) ms: (\d+) nodes, .*? spawns "
@@ -345,7 +349,8 @@ def _nav_check(tmp_path, name, server, maps, map_names):
         "HALO_NET_BROADCAST": _test_address(228)})}
     try:
         _wait(lambda: {m[0] for m in GRAPH.findall(_log(tmp_path, name))} >= set(map_names) and
-              {m[0] for m in DRIVE_GRAPH.findall(_log(tmp_path, name))} >= set(map_names) & set(VEHICLES_PLACED),
+              {m[0] for m in DRIVE_GRAPH.findall(_log(tmp_path, name))} >= set(map_names) & set(VEHICLES_PLACED) and
+              {m[0] for m in TANK_GRAPH.findall(_log(tmp_path, name))} >= set(map_names) & set(TANKS_PLACED),
               60 + 30 * len(map_names), games, tmp_path, f"not every map's graphs were made ({', '.join(map_names)})")
     finally:
         _stop(games, tmp_path, {name: server})
@@ -362,7 +367,8 @@ def test_bots_nav_on_every_map(tmp_path):
     spawned anywhere joins the game), and the main part reaches every
     multiplayer weapon but the few WEAPONS_REACHED_AT_LEAST leaves out. On
     the maps that place vehicles (VEHICLES_PLACED), the graph vehicles drive
-    has each of them on its main part. The graphs go to the save root's
+    has each of them on its main part, and the tanks' graph each Scorpion.
+    The graphs go to the save root's
     cache: a second server, on two of the maps, reads them from it, the
     same. Skips the maps the maps folder lacks.
     About four minutes."""
@@ -386,6 +392,12 @@ def test_bots_nav_on_every_map(tmp_path):
         assert int(on) == int(placed) == VEHICLES_PLACED[name], \
             f"{name}: only {on} of {placed} vehicles on the drive graph:\n" + \
             "\n".join(line for line in _log(tmp_path, "server").splitlines() if f"nav check: {name} vehicle" in line)
+    tanks = {m[0]: m for m in TANK_GRAPH.findall(_log(tmp_path, "server"))}
+    print({name: tanks.get(name) for name in names})
+    assert set(tanks) == set(names) & set(TANKS_PLACED), f"tank graphs: {sorted(tanks)}"
+    for name, (_, how, _, nodes, _, on, placed) in tanks.items():
+        assert how == "built" and int(nodes) > 100, tanks[name]
+        assert int(on) == int(placed) == TANKS_PLACED[name], f"{name}: only {on} of {placed} tanks on the tank graph"
     # the cache: the same graphs, read, not built (its save root moved over)
     second = names[:2]
     (tmp_path / "again").mkdir()
@@ -414,7 +426,8 @@ def _nav_check_again(tmp_path, server, maps, map_names):
                                            stderr=subprocess.STDOUT)}
     try:
         _wait(lambda: {m[0] for m in GRAPH.findall(_log(tmp_path, "again"))} >= set(map_names) and
-              {m[0] for m in DRIVE_GRAPH.findall(_log(tmp_path, "again"))} >= set(map_names) & set(VEHICLES_PLACED),
+              {m[0] for m in DRIVE_GRAPH.findall(_log(tmp_path, "again"))} >= set(map_names) & set(VEHICLES_PLACED) and
+              {m[0] for m in TANK_GRAPH.findall(_log(tmp_path, "again"))} >= set(map_names) & set(TANKS_PLACED),
               120, games, tmp_path, "the cached graphs were not read")
     finally:
         _stop(games, tmp_path, {"again": server})
@@ -851,6 +864,36 @@ def test_bots_share_with_a_person(tmp_path):
     later = [int(t) for t in re.findall(rf"bots: player \d+ drives vehicle {left.group(1)} \(\w+\) at tick (\d+)", server)]
     assert not [t for t in later if int(left.group(2)) < t < int(left.group(2)) + 10 * 30], \
         f"a bot drove the Warthog a person stood by: {later}"
+
+
+def test_bots_tank(tmp_path):
+    """Scorpions (bots_vehicle.c: the tanks' own drive graph, bots_nav_game.c):
+    on Blood Gulch's dedicated server with every vehicle the map places, a
+    hard bot and a peaceful one that drive only Scorpions ("tank"), and two
+    normal bots on foot. A Scorpion's cannon is its driver's: the hard bot
+    fights from it (aiming as it steers, firing nothing at what is near
+    enough for the shell's blast to reach the tank, and hunting people on
+    foot, as hard bots do) and never kills itself; the peaceful one drives
+    one too and never fires. About two and a half minutes."""
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "63", "HALO_BOT_DIFFICULTIES": "hard,peaceful,normal,normal",
+        "HALO_BOT_VEHICLE": "tank,tank,never,never", "HALO_NETWORK_TEST_VEHICLES": "all",
+        "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(193), "HALO_NET_BROADCAST": _test_address(194)})
+    drives = _drives(log)
+    counts = _reports(log)
+    for name, c in sorted(drives.items()):
+        print(f"{name}: {c}; fired {counts[name].get('ticks')}, suicides {counts[name].get('suicides')}")
+    tanks = {m for m in re.findall(r"bots: player (\d+) drives vehicle \w+ \(scorpion\)", log)}
+    print(f"Scorpion drivers: {tanks}")
+    assert len(drives) == 4, log[-4000:]
+    assert tanks >= {"0", "1"}, f"the hard and the peaceful bot did not both drive a Scorpion: {tanks}"
+    hard, peaceful = drives["[BOT] Alpha"], drives["[BOT] Bravo"]
+    assert hard["ticks fired riding"] >= 30, f"the hard bot hardly fired from its Scorpion: {hard}"
+    assert counts["[BOT] Alpha"].get("suicides", 0) == 0, f"the hard bot killed itself: {counts['[BOT] Alpha']}"
+    fired = {m[0]: int(m[1]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*? fired (\d+) ticks", log)}
+    assert fired["[BOT] Bravo"] == 0 and peaceful["ticks fired riding"] == 0, f"the peaceful bot fired: {fired}, {peaceful}"
+    assert peaceful["people driven at"] == 0, f"the peaceful bot drove at someone: {peaceful}"
 
 
 def test_bots_flip(tmp_path):

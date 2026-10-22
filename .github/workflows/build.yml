@@ -592,7 +592,7 @@ jobs:
     # crews of a driver and a gunner (test_bots_warthog_crew) and fighting
     # from Ghosts (test_bots_ghost_fight), and running people over by
     # difficulty (test_bots_ram), and sharing vehicles with a person
-    # (test_bots_share_with_a_person).
+    # (test_bots_share_with_a_person), and Scorpions (test_bots_tank).
     # They
     # need the Halo maps, so on the owner's
     # runner, opence-k8s, only for this repository's own code, as
@@ -675,7 +675,7 @@ jobs:
             -k "drive or flip or crew" > "$RUNNER_TEMP/bots-e.log" 2>&1 &
           fifth=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/f" tools/test_bots.py \
-            -k "ghost or ram or share" > "$RUNNER_TEMP/bots-f.log" 2>&1 &
+            -k "ghost or ram or share or tank" > "$RUNNER_TEMP/bots-f.log" 2>&1 &
           sixth=$!
           wait $first || true
           wait $second || true
@@ -686,10 +686,10 @@ jobs:
           cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log"
           if ! grep -q '7 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
-            ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-e.log" || ! grep -q '3 passed' "$RUNNER_TEMP/bots-f.log" ||
+            ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-e.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-f.log" ||
             grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log"; then
-            echo "::error::the twenty-two tests of tools/test_bots.py did not all run and pass (7 + 4 + 2 + 2 + 4 + 3)"
+            echo "::error::the twenty-three tests of tools/test_bots.py did not all run and pass (7 + 4 + 2 + 2 + 4 + 4)"
             exit 1
           fi
 

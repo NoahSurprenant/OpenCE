@@ -46,6 +46,7 @@ All of it set by the difficulty (bot_skills). */
 #include "bots_internal.h"
 
 #include <math.h>
+#include <string.h>
 
 /* ---------- difficulty */
 
@@ -94,6 +95,8 @@ that hurt it is known of */
 /* ... a vehicle's gun (a Warthog's chaingun spins up): longer */
 #define BOT_TURRET_BURST_TICKS 40
 #define BOT_TURRET_PAUSE_TICKS 8
+/* a vehicle's gun whose shots blast fires at nothing nearer (world units) */
+#define BOT_VEHICLE_BLAST_RANGE 6.0f
 /* the range it keeps from a target, and at hand */
 #define BOT_NEAR_RANGE 4.0f
 #define BOT_FAR_RANGE 12.0f
@@ -233,6 +236,19 @@ static real bot_projectile_speed(
 		}
 	}
 	return 0.0f;
+}
+
+/* whether a vehicle's gun's shot (a Scorpion's shell, a rocket Warthog's
+rockets: by the weapon's tag's name) would blast its own vehicle at the
+distance */
+static boolean bot_vehicle_weapon_blasts_near(
+	long weapon_index,
+	real distance)
+{
+	char const *name = tag_get_name(object_get(weapon_index)->definition_index);
+
+	return name && (strstr(name, "scorpion") || strstr(name, "rocket") || strstr(name, "rwarthog")) &&
+		distance < BOT_VEHICLE_BLAST_RANGE;
 }
 
 /* whether a team mate (alive, a person too) stands near the line of fire
@@ -722,7 +738,7 @@ void bot_combat_act(
 	aim_off = (real)fabs(bot_angle_difference(combat->aim_yaw, (real)atan2(dy, dx))) +
 		(real)fabs(combat->aim_pitch - (real)atan2(dz, MAX(horizontal, 0.01f)));
 	if (combat->target_visible && now >= combat->fire_after_tick && aim_off < cone && weapon_index != NONE &&
-		!bot_weapon_blasts_near(weapon_index, distance) &&
+		!bot_weapon_blasts_near(weapon_index, distance) && !(shooter != unit && bot_vehicle_weapon_blasts_near(weapon_index, distance)) &&
 		!bot_team_mate_in_the_way(unit->unit.player_index, unit_index, &eye, &aim_point))
 	{
 		if (combat->burst_ticks < burst)

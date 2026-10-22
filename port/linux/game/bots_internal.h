@@ -601,6 +601,9 @@ struct bots_nav *bots_nav_current(
 	void);
 struct bots_nav *bots_nav_drive_current(
 	void);
+/* (bots_nav_game.c) the graph the map's tanks drive (NULL: none) */
+struct bots_nav *bots_nav_tank_current(
+	void);
 void bots_nav_update(
 	boolean needed,
 	boolean drive);
