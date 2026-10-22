@@ -773,6 +773,86 @@ def test_bots_ram(tmp_path):
     assert drives["[BOT] Delta"]["people driven at"] == 0 and drives["[BOT] Echo"]["people driven at"] == 0, drives
 
 
+def _riding(log, index):
+    """the player's places every second the machine's log has them riding
+    (network_test.c): [(tick, x, y)]"""
+    places = []
+    for line in log.splitlines():
+        tick = re.search(r"network test: tick (\d+)", line)
+        if not tick:
+            continue
+        for segment in line.split(" player ")[1:]:
+            place = re.match(rf"{index}: \((-?[\d.]+) (-?[\d.]+) (-?[\d.]+)\) [^|]*? riding", segment)
+            if place:
+                places.append((int(tick[1]), float(place[1]), float(place[2])))
+    return places
+
+
+def test_bots_share_with_a_person(tmp_path):
+    """Bots and a person share vehicles (bots_vehicle.c; the wire is
+    unchanged): a dedicated server with three bots in Team Slayer on Blood
+    Gulch and a client: whether the client joins before the bots or after,
+    the smaller team rule puts it with the second bot, who drives whenever
+    it can. The host shares vehicles between the
+    client's player and the Blue bot (debug.network_test_vehicle_share):
+    - it seats the person at the gun of the Warthog the bot drives: the bot
+      drives with them aboard, on and on (it does not get out at its goal),
+      and the client sees itself carried about;
+    - then seats the person as the driver of a Warthog near the bot on foot:
+      the bot takes its gun ("a person driving");
+    - then stands the person beside it: no bot drives that Warthog while a
+      person stands by it.
+    About four minutes."""
+    maps, paths = _needs("HALO_TEST_SERVER", "HALO_TEST_GAME")
+    games = {"server": _start(tmp_path, "server", paths["HALO_TEST_SERVER"], maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "8", "HALO_SERVER_BOTS": "3", "HALO_BOT_SEED": "51",
+        "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_GAME_TYPES": "team_slayer", "HALO_SERVER_TIME_LIMIT": "4",
+        "HALO_BOT_VEHICLE": "never,drive,never", "HALO_NETWORK_TEST_VEHICLE_SHARE": "10",
+        "HALO_NET_ADDRESS": _test_address(195), "HALO_NET_BROADCAST": _test_address(196)})}
+    games["client"] = _start(tmp_path, "client", paths["HALO_TEST_GAME"], maps, {
+        "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+        "HALO_NET_ADDRESS": _test_address(196), "HALO_NET_BROADCAST": _test_address(195)})
+    stood = re.compile(r"network test: the person gets out of vehicle (\w+) and stands by it at tick (\d+)")
+    seen = []
+
+    def done():
+        # (12 seconds on from the person standing by the Warthog)
+        if stood.search(_log(tmp_path, "server")) and not seen:
+            seen.append(time.monotonic())
+        return bool(seen) and time.monotonic() - seen[0] > 12
+
+    try:
+        _wait(done, 330, games, tmp_path, "the host did not get through the vehicle sharing")
+    finally:
+        _stop(games, tmp_path, {"server": paths["HALO_TEST_SERVER"], "client": paths["HALO_TEST_GAME"]})
+        for name in ("server", "client"):
+            for cache in (tmp_path / name / "saves").rglob("cache*.map"):
+                cache.unlink()
+    server, client = _log(tmp_path, "server"), _log(tmp_path, "client")
+    print("\n".join(line for line in server.splitlines()
+                    if re.search(r"network test: the person|bots: player \d+ (drives|guns|gets out)|joined", line)))
+    gunned = re.search(r"network test: the person \(player (\d+)\) guns vehicle (\w+), a bot driving, at tick (\d+)", server)
+    assert gunned, "the person was never seated at a bot's gun:\n" + server[-4000:]
+    assert re.search(r"bots: player \d+ drives with a person aboard", server), "the bot did not notice its gunner"
+    assert not re.search(rf"bots: player \d+ gets out of vehicle {gunned.group(2)} \(there\)",
+                         server[server.index(gunned.group(0)):server.index("the person leaves the gun")]), \
+        "the bot got out at its goal with a person aboard"
+    # (the client carried about: its own player riding, the places it has)
+    person = int(gunned.group(1))
+    rides = _riding(client, person)
+    went = sum(((b[1] - a[1]) ** 2 + (b[2] - a[2]) ** 2) ** 0.5 for a, b in zip(rides, rides[1:]))
+    print(f"the client saw itself riding {len(rides)} seconds, {went:.0f} world units")
+    assert len(rides) >= 15 and went >= 15, f"the client was not carried about: {len(rides)} seconds, {went:.0f} world units"
+    driven = re.search(r"network test: the person drives vehicle (\w+), a team mate bot", server)
+    assert driven, "the person was never seated as a driver near the bot:\n" + server[-4000:]
+    assert re.search(rf"bots: player \d+ guns vehicle {driven.group(1)} \(warthog\), a person driving", server), \
+        "the bot did not take the gun of the person's Warthog"
+    left = stood.search(server)
+    later = [int(t) for t in re.findall(rf"bots: player \d+ drives vehicle {left.group(1)} \(\w+\) at tick (\d+)", server)]
+    assert not [t for t in later if int(left.group(2)) < t < int(left.group(2)) + 10 * 30], \
+        f"a bot drove the Warthog a person stood by: {later}"
+
+
 def test_bots_flip(tmp_path):
     """One bot that drives (debug.bot_vehicle "drive") on Blood Gulch's
     dedicated server; 30 seconds in, the host turns the vehicle it drives (or

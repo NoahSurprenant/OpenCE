@@ -109,6 +109,7 @@ it takes; the fastest a vehicle whose driver is a person may go for it to
 get in (world units a second) */
 #define BOT_VEHICLE_FIGHT_REACH 15.0f
 #define BOT_VEHICLE_GUNNER_REACH 15.0f
+#define BOT_VEHICLE_PERSON_GUNNER_REACH 25.0f
 #define BOT_VEHICLE_GUNNER_BOARD_SPEED 1.0f
 /* a driver waits this long for a team mate going for its gun */
 #define BOT_VEHICLE_CREW_WAIT_TICKS (6 * TICKS_PER_SECOND)
@@ -140,8 +141,15 @@ a person driving and nobody to shoot at */
 in and out costs about this much (world units of walking) */
 #define BOT_VEHICLE_SPEED_FACTOR 3.0f
 #define BOT_VEHICLE_OVERHEAD 6.0f
-/* nobody (a person) this near a vehicle: they may want it */
+/* nobody (a person) this near a vehicle: they may want it; nor this near
+and coming to it faster than this (world units a second) */
 #define BOT_VEHICLE_COURTESY 6.0f
+#define BOT_VEHICLE_COURTESY_FAR 15.0f
+#define BOT_VEHICLE_COURTESY_CLOSING 0.5f
+/* a person this near its driver's door this long, the vehicle slow: a bot
+gives them the seat */
+#define BOT_VEHICLE_DOOR_WAITING 1.5f
+#define BOT_VEHICLE_DOOR_WAITING_TICKS (3 * TICKS_PER_SECOND / 2)
 /* the ticks between its thoughts of a ride, and after giving one up */
 #define BOT_VEHICLE_LOOK_TICKS (TICKS_PER_SECOND / 2)
 #define BOT_VEHICLE_AVOID_TICKS (20 * TICKS_PER_SECOND)
@@ -369,6 +377,70 @@ static boolean bot_vehicle_person_near(
 		object_get_origin(player->unit_index, &position);
 		if (distance_squared3d(&position, point) < distance * distance)
 			return TRUE;
+		/* (further, but coming to it on foot: they may want it too) */
+		if (distance_squared3d(&position, point) < BOT_VEHICLE_COURTESY_FAR * BOT_VEHICLE_COURTESY_FAR &&
+			object_get(player->unit_index)->object.parent_object_index == NONE)
+		{
+			real_vector3d const *velocity = &object_get(player->unit_index)->object.translational_velocity;
+			real dx = point->x - position.x, dy = point->y - position.y;
+			real length = (real)sqrt(dx * dx + dy * dy);
+
+			if (length > 0.01f && (velocity->i * dx + velocity->j * dy) / length * TICKS_PER_SECOND > BOT_VEHICLE_COURTESY_CLOSING)
+				return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* a person (not a bot) who rides the vehicle (NONE: none) */
+static long bot_vehicle_person_aboard(
+	long vehicle_index)
+{
+	long child = object_get(vehicle_index)->object.first_child_object_index;
+
+	while (child != NONE)
+	{
+		struct object_datum *object = object_get(child);
+
+		if (TEST_FLAG(_object_mask_unit, object->object.type) && unit_get(child)->unit.player_index != NONE &&
+			!bots_player_is_bot(player_get(unit_get(child)->unit.player_index)))
+		{
+			return unit_get(child)->unit.player_index;
+		}
+		child = object->object.next_object_index;
+	}
+	return NONE;
+}
+
+/* a person (not a bot) on foot standing at the vehicle's driver's door, of
+the bot's team in a team game (anyone, else) */
+static boolean bot_vehicle_person_at_door(
+	long unit_index,
+	long vehicle_index,
+	short seat_index)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	real_point3d door, seat;
+
+	if (!unit_get_seat_entrance_point(unit_index, vehicle_index, seat_index, &door, &seat, NULL))
+		return FALSE;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct object_datum *object;
+
+		if (player->unit_index == NONE || bots_player_is_bot(player))
+			continue;
+		object = object_get(player->unit_index);
+		if (object->object.parent_object_index != NONE || TEST_FLAG(object->object.damage_flags, _object_dead_bit) ||
+			(game_engine_has_teams() && game_team_is_enemy(object_get(unit_index)->object.owner_team_index,
+			object->object.owner_team_index)))
+		{
+			continue;
+		}
+		if (distance_squared3d(&object->object.position, &door) < BOT_VEHICLE_DOOR_WAITING * BOT_VEHICLE_DOOR_WAITING)
+			return TRUE;
 	}
 	return FALSE;
 }
@@ -594,6 +666,7 @@ static boolean bot_vehicle_choose_gun(
 	long unit_index,
 	real_point3d const *position,
 	short mode,
+	boolean people_only,
 	struct bots_nav_point const *goal)
 {
 	struct bot_vehicle *vehicle = &bot->brain.vehicle;
@@ -611,9 +684,13 @@ static boolean bot_vehicle_choose_gun(
 		real speed = (real)sqrt(magnitude_squared3d(&object->object.translational_velocity)) * TICKS_PER_SECOND;
 		short seat;
 
-		if (distance > reach || (best != NONE && distance >= best_distance) || !bot_vehicle_alive(iterator.index) ||
-			!bot_vehicle_kind(iterator.index) || object->object.up.k < BOT_VEHICLE_UPRIGHT ||
-			(iterator.index == vehicle->avoided_vehicle && game_time_get() < vehicle->avoided_until_tick))
+		/* (a person driving: from further, and a vehicle it gave up on before
+		is another matter now) */
+		boolean person = bot_vehicle_alive(iterator.index) && bot_vehicle_person_aboard(iterator.index) != NONE;
+
+		if (distance > (person ? BOT_VEHICLE_PERSON_GUNNER_REACH : reach) || (best != NONE && distance >= best_distance) ||
+			!bot_vehicle_alive(iterator.index) || !bot_vehicle_kind(iterator.index) || object->object.up.k < BOT_VEHICLE_UPRIGHT ||
+			(!person && iterator.index == vehicle->avoided_vehicle && game_time_get() < vehicle->avoided_until_tick))
 		{
 			continue;
 		}
@@ -623,6 +700,9 @@ static boolean bot_vehicle_choose_gun(
 		{
 			continue;
 		}
+		/* (a person driving it, for one that otherwise only drives) */
+		if (people_only && !person)
+			continue;
 		/* (moving off: a person's that drives away is not run after; a bot
 		driver waits) */
 		if (speed > BOT_VEHICLE_GUNNER_BOARD_SPEED && bot_vehicle_seat_rider(iterator.index,
@@ -684,7 +764,7 @@ static boolean bot_vehicle_choose(
 		return FALSE;
 	goal = nav->nodes[brain->goal_node].point;
 	/* (a team mate's vehicle near with its gun free: its gunner's seat) */
-	if (mode != _bot_vehicle_drive && bot_vehicle_choose_gun(bot, unit_index, position, mode, &goal))
+	if (bot_vehicle_choose_gun(bot, unit_index, position, mode, mode == _bot_vehicle_drive, &goal))
 		return TRUE;
 	if (mode == _bot_vehicle_gun)
 		return FALSE;
@@ -1066,6 +1146,9 @@ static void bot_vehicle_drive(
 	boolean direct = FALSE;
 	boolean hold = FALSE;
 	boolean ram = FALSE;
+	/* (a person aboard - its gunner, a passenger: it drives them, and gets
+	out only when it must) */
+	long person = bot_vehicle_person_aboard(vehicle->vehicle_index);
 	struct bots_nav_point direct_point;
 
 	/* (how far, how long) */
@@ -1085,6 +1168,30 @@ static void bot_vehicle_drive(
 		bot_vehicle_leave(vehicle, player_index, "it turned over", TRUE);
 		bot_action_idle(action, brain->yaw, 0.0f);
 		return;
+	}
+	if ((person != NONE) != vehicle->person_aboard)
+	{
+		vehicle->person_aboard = person != NONE;
+		platform_log("bots: player %ld drives %s at tick %ld", (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index),
+			person != NONE ? "with a person aboard" : "with no person aboard", now);
+	}
+	if (person != NONE)
+		brain->statistics.person_ticks++;
+	/* (a person waiting at its door, the vehicle slow: given the seat) */
+	if (person == NONE && speed < 1.0f &&
+		bot_vehicle_person_at_door(vehicle->unit_index, vehicle->vehicle_index, vehicle->seat_index))
+	{
+		if (++vehicle->door_waiting_ticks > BOT_VEHICLE_DOOR_WAITING_TICKS)
+		{
+			vehicle->yielded = TRUE;
+			bot_vehicle_leave(vehicle, player_index, "a person wants it", FALSE);
+			bot_action_idle(action, brain->yaw, 0.0f);
+			return;
+		}
+	}
+	else
+	{
+		vehicle->door_waiting_ticks = 0;
 	}
 	/* (what it sees from its seat, fighting: a bot that may fight) */
 	fighting = bot->difficulty != _bot_difficulty_peaceful &&
@@ -1119,7 +1226,8 @@ static void bot_vehicle_drive(
 		return;
 	}
 	/* (one on foot it may run over, by its difficulty: bot_vehicle_may_ram) */
-	ram = fighting && bot_vehicle_may_ram(bot, vehicle->vehicle_index, target_unit, &at, heading, target_distance);
+	ram = fighting && (ghost || !gunner_aboard) &&
+		bot_vehicle_may_ram(bot, vehicle->vehicle_index, target_unit, &at, heading, target_distance);
 	if (ram != vehicle->ramming)
 	{
 		vehicle->ramming = ram;
@@ -1158,7 +1266,7 @@ static void bot_vehicle_drive(
 		direct_point.y = target_at.y + rammed->object.translational_velocity.j * TICKS_PER_SECOND * MIN(lead, 1.5f);
 		direct_point.z = target_at.z;
 	}
-	else if (fighting && !gunner_aboard && target_distance < BOT_VEHICLE_FIGHT_ON_FOOT)
+	else if (fighting && !gunner_aboard && person == NONE && target_distance < BOT_VEHICLE_FIGHT_ON_FOOT)
 	{
 		bot_vehicle_leave(vehicle, player_index, "a fight", FALSE);
 		bot_action_idle(action, brain->yaw, 0.0f);
@@ -1269,7 +1377,7 @@ static void bot_vehicle_drive(
 				hold = TRUE;
 				vehicle->path_next = vehicle->path_next < 0 ? 0 : vehicle->path_next;
 			}
-			else if (gunner_aboard && bot_vehicle_new_goal(brain, drive, &at))
+			else if ((gunner_aboard || person != NONE) && bot_vehicle_new_goal(brain, drive, &at))
 			{
 				bot_action_idle(action, brain->yaw, 0.0f);
 				return;
@@ -1485,6 +1593,16 @@ boolean bot_vehicle_think(
 			bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS, "in a seat walking there");
 			return FALSE;
 		}
+		/* (on its way to drive, a person's vehicle near with its gun free: that
+		gun first, a person's ride before its own) */
+		if (vehicle->role == _bot_vehicle_role_driver && (now + bot->slot) % BOT_VEHICLE_LOOK_TICKS == 0)
+		{
+			struct bots_nav_point goal;
+
+			goal = vehicle->goal;
+			if (bot_vehicle_choose_gun(bot, unit_index, position, mode, TRUE, &goal))
+				return FALSE;
+		}
 		{
 			char const *reason = NULL;
 
@@ -1677,7 +1795,8 @@ boolean bot_vehicle_think(
 			}
 			else
 			{
-				bot_vehicle_give_up(vehicle, 6 * TICKS_PER_SECOND, "got out");
+				bot_vehicle_give_up(vehicle, vehicle->yielded ? BOT_VEHICLE_AVOID_TICKS : 6 * TICKS_PER_SECOND, "got out");
+				vehicle->yielded = FALSE;
 			}
 			bot_vehicle_walk_on(brain);
 			return FALSE;

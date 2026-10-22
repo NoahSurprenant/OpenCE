@@ -622,6 +622,13 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_vehicle", _config_real, "0.0", "HALO_NETWORK_TEST_VEHICLE", _environment_value, _platform_all,
 		"This many seconds into an automated test game the host seats its last\n"
 		"player as a vehicle's driver (and out 15 seconds on); 0 never." },
+	{ "debug.network_test_vehicle_share", _config_real, "0.0", "HALO_NETWORK_TEST_VEHICLE_SHARE", _environment_value,
+		_platform_all,
+		"From this many seconds into an automated test game the host shares\n"
+		"vehicles between its last player and the bots of their team: seats them\n"
+		"at the gun of a vehicle a bot drives, 25 seconds on takes them out, then\n"
+		"seats them as the driver of a vehicle near a bot on foot, and 30 seconds\n"
+		"on stands them beside it; 0 never." },
 	{ "debug.network_test_vehicles", _config_string, "\"\"", "HALO_NETWORK_TEST_VEHICLES", _environment_value,
 		_platform_all,
 		"The vehicles of an automated test host's games: \"all\" (every vehicle\n"
