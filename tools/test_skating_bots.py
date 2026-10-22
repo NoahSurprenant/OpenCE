@@ -179,6 +179,33 @@ def test_skating_bots_harmless(tmp_path):
     assert "rides at a person on foot" not in log, "a peaceful bot rode at a person"
 
 
+def test_skating_bots_take_a_vehicle(tmp_path):
+    """Boards and vehicles together (bots_vehicle.c weighs walking, a board and
+    a vehicle: port/linux/README.md, "Bots in vehicles"): the dedicated server
+    with Skate 3 data, four normal bots on Blood Gulch, three minutes of Slayer
+    with every vehicle the map places (debug.network_test_vehicles "all"). Outside a fight, a bot takes a Warthog only where it is
+    quicker than its board would be (each choice logged with both), steps off its board for one
+    ("a vehicle") when on it, and the bots both ride boards and drive. About
+    three and a half minutes."""
+    _, maps, assets = _needs_skate()
+    log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "73", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "3",
+        "HALO_SERVER_BOT_VEHICLES": "0", "HALO_NETWORK_TEST_VEHICLES": "all"}, (_test_address(189), _test_address(190)))
+    boards = _boards(log)
+    choices = re.findall(r"bots: player \d+ takes vehicle \w+: (\d+) world units of walking by it, (\d+) (on a board|on foot)",
+                         log)
+    fights = re.findall(r"bots: player \d+ takes vehicle \w+ in a fight", log)
+    drove = re.findall(r"bots: player (\d+) drives vehicle", log)
+    stepped = STEPPED_OFF.findall(log)
+    print(f"boards {boards}\nvehicle choices {choices} (and {len(fights)} in fights)\ndrives {drove}\nsteps off {stepped}")
+    assert sum(b[0] for b in boards.values()) >= 1, f"no bot rode a board: {boards}"
+    assert drove, "no bot drove"
+    assert choices or fights, "no vehicle chosen"
+    assert all(kind == "on a board" for _, _, kind in choices), f"a vehicle chosen without weighing a board: {choices}"
+    assert all(int(by_vehicle) <= 0.75 * int(by_board) for by_vehicle, by_board, _ in choices), \
+        f"a vehicle chosen though a board was quicker: {choices}"
+
+
 def test_skating_bots_need_data(tmp_path):
     """The same dedicated server without Skate 3 data (HALO_SKATE_ASSETS names
     no folder, as the server image without its skate-data volume): it says

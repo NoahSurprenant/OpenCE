@@ -896,6 +896,32 @@ def test_bots_tank(tmp_path):
     assert peaceful["people driven at"] == 0, f"the peaceful bot drove at someone: {peaceful}"
 
 
+def test_bots_vehicle_objectives(tmp_path):
+    """Game types with vehicles (bots_vehicle.c: a bot's goal while it drives
+    is its game type's objective, bots_objectives.c): four normal bots on
+    Blood Gulch's dedicated server, two minutes of Capture the Flag, then two
+    of King of the Hill (its Warthogs placed). In each game bots drive toward
+    their objectives, and in King of the Hill they spend time on the hill
+    (getting out there: no ride to a Warthog standing in the hill). About
+    five minutes."""
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "71", "HALO_SERVER_BOT_DIFFICULTY": "normal",
+        "HALO_SERVER_MAPS": "bloodgulch:ctf,bloodgulch:king", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(191), "HALO_NET_BROADCAST": _test_address(192)}, games_over=2, seconds=420)
+    # (Capture the Flag is a team game: "ctf (teams) on bloodgulch")
+    parts = re.split(r"server: the game starts: (\w+)(?: \(teams\))? on (\w+)", log)
+    games = [(parts[index], parts[index + 1], parts[index + 2]) for index in range(1, len(parts) - 2, 3)]
+    print([(kind, name) for kind, name, _ in games])
+    assert [kind for kind, _, _ in games][:2] == ["ctf", "king"], [(kind, name) for kind, name, _ in games]
+    for kind, _, text in games[:2]:
+        drove = re.findall(r"bots: player (\d+) drives vehicle \w+ \(\w+\)", text)
+        objectives = _objectives(text)
+        print(f"{kind}: drives by players {drove}; objectives {objectives}")
+        assert drove, f"no bot drove in {kind}"
+        if kind == "king":
+            assert sum(o[3] for o in objectives.values()) >= 10, f"the bots hardly held the hill: {objectives}"
+
+
 def test_bots_flip(tmp_path):
     """One bot that drives (debug.bot_vehicle "drive") on Blood Gulch's
     dedicated server; 30 seconds in, the host turns the vehicle it drives (or

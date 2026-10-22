@@ -159,6 +159,14 @@ static short bot_skate_mode(
 	return _bot_skate_normal;
 }
 
+boolean bot_skate_possible(
+	struct bot const *bot)
+{
+	short mode = bot_skate_mode(bot);
+
+	return skate_bots_available() && mode != _bot_skate_never && mode != _bot_skate_stand;
+}
+
 /* the bot's unit: alive, a biped on foot (none in a vehicle skates) */
 static boolean bot_skate_unit_able(
 	long unit_index)

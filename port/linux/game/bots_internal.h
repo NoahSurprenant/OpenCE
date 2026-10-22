@@ -417,6 +417,10 @@ void bot_brain_think(
 	struct player_action *action);
 /* (bots_skate.c, last in bot_brain_think) the bot on a board or off it, and
 on one its pad, its action made what a skater does (no fire, no move) */
+/* (bots_skate.c) whether the bot may skate here (the host has Skate 3 mode,
+its data and a session to spare; the bot is not kept off boards) */
+boolean bot_skate_possible(
+	struct bot const *bot);
 void bot_skate_think(
 	struct bot *bot,
 	long player_index,
