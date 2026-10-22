@@ -2791,6 +2791,40 @@ static boolean network_game_server_machine_has_players(
 	return FALSE;
 }
 
+/* port: how long a machine joining the game in progress may say it has the
+map with no player of its own (milliseconds) before it is started as a
+spectator */
+#define SPECTATOR_LATE_JOINER_MILLISECONDS 3000
+
+/* port: a machine joining the game in progress said it has the game's map
+precached (it says so again each second while it waits). One that brings
+players asks for them as soon as it has the settings, and is started once
+they are in; one that has asked for none for a while is a spectator
+(port/linux/game/spectate.c), which asks for none ever: it is started with
+no player, as one whose players are all in. */
+void network_game_server_port_late_joiner_precached(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *client_machine)
+{
+	if (!client_machine || server->state != _network_game_server_state_ingame ||
+		!network_game_server_client_machine_is_joined_to_game(server, client_machine) ||
+		network_game_server_client_machine_is_local(server, client_machine) ||
+		!VALID_INDEX(client_machine->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) ||
+		TEST_FLAG(client_machine->flags, _network_client_machine_level_loaded_bit) ||
+		TEST_FLAG(client_machine->flags, _network_client_machine_started_late_bit) ||
+		network_game_server_machine_has_players(server, client_machine->machine_index) ||
+		network_game_server_machine_has_waiting_players(server, client_machine->machine_index) ||
+		(server->queued_player_valid && server->queued_player.machine_index == client_machine->machine_index) ||
+		system_milliseconds() - network_game_server_client_machine_join_times[client_machine->machine_index] <
+			SPECTATOR_LATE_JOINER_MILLISECONDS)
+	{
+		return;
+	}
+	network_event("starting machine #%d in the game in progress with no player (a spectator)",
+		client_machine->machine_index);
+	network_game_server_start_late_joiner(server, client_machine);
+}
+
 /* a machine joining the game in progress none of whose players could join
 (the game filled up): told the game is full, and let go */
 static void network_game_server_refuse_late_joiner(
@@ -3819,8 +3853,10 @@ static boolean network_game_server_client_machine_timed_out(
 	}
 	/* (joining the game in progress: waiting for its players to be added,
 	or loading; port: one that adds none in the time a machine has to in
-	the pregame holds its slot for nothing) */
-	if (!network_game_server_machine_has_players(server, machine->machine_index) &&
+	the pregame holds its slot for nothing - but one started with none, a
+	spectator, is loading: network_game_server_port_late_joiner_precached) */
+	if (!TEST_FLAG(machine->flags, _network_client_machine_started_late_bit) &&
+		!network_game_server_machine_has_players(server, machine->machine_index) &&
 		!network_game_server_machine_has_waiting_players(server, machine->machine_index) &&
 		system_milliseconds() - network_game_server_client_machine_join_times[machine->machine_index] >
 			NETWORK_GAME_SERVER_PLAYERLESS_MACHINE_TIMEOUT)
@@ -5225,16 +5261,16 @@ static boolean network_game_server_idle_pregame_tasks(
 					server,
 					client_machine);
 			}
-			/* port: a machine that joined and adds no player (the lobby filled
-			after it joined, or it never adds one) is refused, so it does not
-			stay in the lobby */
+			/* port: a machine that joined and adds no player because the lobby
+			filled after it joined is refused, so it does not stay in the lobby.
+			One with room may stay with none: a spectator
+			(port/linux/game/spectate.c) asks for none, and watches the game
+			(the countdown takes no account of a machine with no player) */
 			else if (network_game_server_client_machine_is_joined_to_game(server, client_machine) &&
 				!network_game_server_client_machine_is_local(server, client_machine) &&
 				!network_game_server_machine_has_players(server, client_machine->machine_index) &&
 				!map_share_machine_downloading(client_machine->machine_index) &&
-				(!network_game_server_port_room_for_person(&server->game) ||
-					system_milliseconds() - network_game_server_client_machine_join_times[client_machine->machine_index] >
-						NETWORK_GAME_SERVER_PLAYERLESS_MACHINE_TIMEOUT))
+				!network_game_server_port_room_for_person(&server->game))
 			{
 				network_game_server_refuse_late_joiner(server, client_machine,
 					network_game_has_free_player_slot(&server->game) ? _rejection_code_game_is_closed :

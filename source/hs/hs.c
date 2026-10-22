@@ -2843,6 +2843,7 @@ symbols in this file:
 #include "units/vehicles.h"
 #include "coop_scripts.h" /* port: port/linux/game/coop_scripts.c */
 #include "bots.h" /* port: port/linux/game/bots.c */
+#include "spectate.h" /* port: port/linux/game/spectate.c */
 #ifdef HALO_PROFILE
 #include "profile_console.h" /* port: port/linux/game/profile_console.c */
 #endif
@@ -15476,6 +15477,14 @@ static boolean hs_compile_and_evaluate_command(
 			name[length] = 0;
 			return network_votekick_player_named(name);
 		}
+	}
+	/* port: a spectator's camera ("spectate next", ...:
+	port/linux/game/spectate.c), which changes nothing of the game */
+	{
+		char const *text = hs_host_player_command(expression, "spectate");
+
+		if (text)
+			return spectate_console_command(text);
 	}
 	/* port: playing in another's game, the host decides the game: no
 	cheats, no game speed, nothing else a command changes of the game (the

@@ -243,6 +243,7 @@ symbols in this file:
 
 #include <math.h>
 #include <stdio.h>
+#include "spectate.h" /* port: port/linux/game/spectate.c */
 
 /* port: a stereo channel's sound in the world panned towards it, muffled
 and reverberated as a 3D channel's is (sound_dsound_xbox.c; update_channels) */
@@ -3833,7 +3834,9 @@ static void refresh_listener(
 	{
 		listener = listener_get(local_player_index);
 
-		if (local_player_get_player_index(local_player_index) != NONE)
+		/* port: (or a spectator's view, heard where it looks from:
+		port/linux/game/spectate.c) */
+		if (local_player_get_player_index(local_player_index) != NONE || spectate_view(local_player_index))
 		{
 			struct observer_result const *camera =
 				observer_get_camera(local_player_index);

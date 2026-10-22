@@ -392,6 +392,7 @@ symbols in this file:
 #include "networking/network_server_manager.h"
 #include "text/unicode.h"
 #include "map_share.h" /* port: port/linux/game/map_share.c */
+#include "spectate.h" /* port: port/linux/game/spectate.c */
 
 /* ---------- constants */
 
@@ -1496,6 +1497,10 @@ boolean network_game_client_add_player(
 	in progress whose map is being downloaded not until it is (map sharing:
 	port/linux/game/map_share.c); asked again each frame */
 	if (map_share_holds_players())
+		return TRUE;
+	/* port: nor ever on a spectator's machine, which watches the game with
+	no player of its own (port/linux/game/spectate.c) */
+	if (spectate_enabled())
 		return TRUE;
 
 	/* port: the pregame screen asks each frame until the host's settings

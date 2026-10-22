@@ -741,6 +741,8 @@ function gameArguments() {
     if (/^[A-Z0-9_]+=/.test(value)) args.push('--' + value);
   }
   if (params.has('menu')) args.push('--HALO_MENU_OPEN=' + params.get('menu'));
+  // a spectator, with no player (port/linux/game/spectate.c)
+  if (params.has('spectate')) args.push('--HALO_SPECTATE=1');
   // internet play's brokers (port/linux/src/p2p_signal.c), if not its own
   const brokers = (params.get('brokers') || '').split(',').filter((url) => /^wss?:\/\/[^,\s]+$/.test(url));
   if (brokers.length) args.push('--HALO_WEB_BROKERS=' + brokers.join(','));

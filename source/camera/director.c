@@ -138,6 +138,7 @@ symbols in this file:
 #include "units/unit_definitions.h"
 #include "units/units.h"
 #include "skate.h" /* port: port/linux/game/skate.c */
+#include "spectate.h" /* port: port/linux/game/spectate.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -990,6 +991,18 @@ void director_update(
 		local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
 		local_player_index++)
 	{
+		/* port: a spectator's machine, with no player, looks through the
+		first local player's camera, which the spectator moves
+		(port/linux/game/spectate.c) */
+		if (spectate_view(local_player_index))
+		{
+			struct observer_command command;
+
+			spectate_update(time_delta_sec, &command);
+			director_get(local_player_index)->command = command;
+			observer_set_camera(local_player_index, &director_get(local_player_index)->command);
+			continue;
+		}
 		if (local_player_get_player_index(local_player_index) != NONE)
 		{
 			boolean switch_camera;

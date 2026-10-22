@@ -462,6 +462,9 @@ void game_engine_post_rasterize_objects(
 void game_engine_post_rasterize(
 	void);
 
+/* port: the full scoreboard over a spectator's view (spectate.c) */
+void game_engine_port_draw_spectator_scoreboard(
+	void);
 void game_engine_nonplayer_post_rasterize(
 	void);
 void game_engine_update(

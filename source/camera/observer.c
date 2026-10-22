@@ -110,6 +110,7 @@ symbols in this file:
 #include "physics/collision_usage.h"
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
+#include "spectate.h" /* port: port/linux/game/spectate.c */
 
 /* ---------- constants */
 
@@ -445,7 +446,8 @@ void observer_reconnect_to_structure_bsp(
 		local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
 		local_player_index++)
 	{
-		if (local_player_get_player_index(local_player_index) != NONE)
+		/* port: (or a spectator's view: port/linux/game/spectate.c) */
+		if (local_player_get_player_index(local_player_index) != NONE || spectate_view(local_player_index))
 		{
 			struct observer *observer = observer_get(local_player_index);
 
@@ -1311,7 +1313,8 @@ void observer_update(
 		local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
 		local_player_index++)
 	{
-		if (local_player_get_player_index(local_player_index) != NONE)
+		/* port: (or a spectator's view: port/linux/game/spectate.c) */
+		if (local_player_get_player_index(local_player_index) != NONE || spectate_view(local_player_index))
 		{
 			struct observer *observer = observer_get(local_player_index);
 

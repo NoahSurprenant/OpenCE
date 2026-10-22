@@ -372,6 +372,7 @@ void render_objects(
 	return;
 }
 
+#include "spectate.h" /* port: port/linux/game/spectate.c */
 /* port: port/linux/game/first_person_legs.c */
 boolean first_person_legs_wanted(long object_index);
 real_matrix4x3 const *first_person_legs_node_matrices(long object_index, real_matrix4x3 const *nodes);
@@ -412,7 +413,11 @@ static boolean object_is_first_person_camera(
 	return (unit_index == object_index &&
 		director_get_perspective(render.local_player_index) ==
 			_director_perspective_first_person) ||
-		scripted_camera_object_is_first_person_camera(object_index);
+		scripted_camera_object_is_first_person_camera(object_index) ||
+		/* port: (or the player a spectator watches through their eyes:
+		port/linux/game/spectate.c) */
+		(render.local_player_index == NONE && object_index != NONE &&
+			object_index == spectate_first_person_unit());
 }
 
 static void find_rendered_objects(

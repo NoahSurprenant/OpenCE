@@ -88,6 +88,7 @@ symbols in this file:
 #include "main/main.h"
 #include "structures/structures.h"
 #include "skate.h" /* port: port/linux/game/skate.c */
+#include "spectate.h" /* port: port/linux/game/spectate.c */
 /* port: static transparent part links for the newly loaded model tags. */
 #include "models/models.h"
 
@@ -425,7 +426,12 @@ static void render_window(
 				rasterizer_camera->viewport_bounds.x1,
 				rasterizer_camera->viewport_bounds.y1);
 		}
-		interface_draw_screen();
+		/* port: a spectator's view has its own lines, not a player's HUD
+		(port/linux/game/spectate.c) */
+		if (local_player_index == NONE && rasterizer_target == _render_target_primary && spectate_window())
+			spectate_draw();
+		else
+			interface_draw_screen();
 		rasterizer_screen_flash();
 		halo_screen_ui_offset(TRUE);
 		render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
@@ -625,7 +631,8 @@ void render_frame(
 		{
 			window_type = 0;
 		}
-		else if (window->local_player_index != NONE)
+		/* port: (or a spectator's, which is no player's: port/linux/game/spectate.c) */
+		else if (window->local_player_index != NONE || spectate_window())
 		{
 			if (screenshot_index != NULL && screenshot_page_index != NULL)
 			{

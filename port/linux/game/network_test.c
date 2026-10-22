@@ -49,6 +49,7 @@ Called from the main loop every frame (main.c).
 #include "game/game_engine.h"
 #include "game/players.h"
 #include "bots.h"
+#include "spectate.h"
 #include "objects/objects.h"
 #include "units/units.h"
 #include "units/unit_definitions.h"
@@ -456,9 +457,22 @@ static void network_test_log_players(
 		spawns leaves it where it began) */
 		long local_player_index = local_player_get_player_index(0);
 		struct observer_result const *camera = observer_get_camera(0);
+		/* (a spectator's camera and whom it watches: spectate.c) */
+		char watching[64];
 
+		watching[0] = 0;
+		if (spectate_watching())
+		{
+			short mode;
+			long watched;
+
+			spectate_status(&mode, &watched);
+			snprintf(watching, sizeof(watching), " | spectating %s watching %ld",
+				mode == _spectate_mode_free ? "free" : mode == _spectate_mode_follow ? "follow" : "first",
+				watched == NONE ? -1L : (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(watched));
+		}
 		platform_log("network test: tick %ld%s | items %ld (+%ld -%ld !%ld x%ld) | %s to %ld | sent %ld received %ld corrected %ld"
-			" | hits %ld dealt %ld rejected %ld replayed %ld | local %ld camera (%.1f %.1f %.1f) respawn %ld",
+			" | hits %ld dealt %ld rejected %ld replayed %ld | local %ld camera (%.1f %.1f %.1f) respawn %ld%s",
 			game_time_get(), line, ground_items, creates, deletes, failures, removed,
 			game_engine_can_score() ? "playing" : "game over",
 			game_engine_running() ? (long)game_engine_get_variant()->universal_variant.score_to_win : 0L,
@@ -466,7 +480,7 @@ static void network_test_log_players(
 			sent_reports, dealt_reports, rejected_reports, replayed_events,
 			local_player_index == NONE ? -1L : (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(local_player_index),
 			camera ? camera->position.x : 0.0f, camera ? camera->position.y : 0.0f, camera ? camera->position.z : 0.0f,
-			local_player_index == NONE ? 0L : (long)player_get(local_player_index)->respawn_timer);
+			local_player_index == NONE ? 0L : (long)player_get(local_player_index)->respawn_timer, watching);
 	}
 }
 
@@ -1557,8 +1571,9 @@ void network_test_update(
 			if (network_test.joined_seconds >= 3.0f && global_network_game_client_get())
 				network_test.player_added = TRUE;
 		}
-		/* (the other team from the host's player: a team game needs both) */
-		else if (network_test.player_added && !network_test.team_set)
+		/* (the other team from the host's player: a team game needs both;
+		a spectator has no player, and no team) */
+		else if (network_test.player_added && !network_test.team_set && !spectate_enabled())
 		{
 			network_test.joined_seconds += seconds;
 			if (network_test.joined_seconds >= 5.0f)
