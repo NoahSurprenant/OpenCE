@@ -1351,9 +1351,17 @@ the bot's input, as a person's does, so nothing is new on the wire:
   (which they take in a fight for it) or a Ghost. Never a team mate, nor
   anyone riding. Accidents happen at every difficulty. The report counts
   the people a bot drove at and those its vehicle ran over.
+- **Sharing with people.** A bot that drives with a person aboard (at its
+  gun, or a passenger) drives them about and gets out only when it must (it
+  goes on to another place at its goal); a person driving a Warthog near a
+  bot of their team gets the bot at the gun. A bot takes no vehicle a person
+  stands near (6 world units) or comes to on foot (15), and gives its
+  driver's seat up to a person (a team mate in a team game) who waits at its
+  door for a second and a half.
 - `debug.network_test_vehicles` ("all") gives an automated test game every
   vehicle the map places (the built-in game types place Blood Gulch's
-  Warthogs only).
+  Warthogs only); `debug.network_test_vehicle_share` scripts a person sharing
+  vehicles with the bots of their team (tools/test_bots.py).
 - Not yet: Scorpions and rocket Warthogs, flying.
 
 Peaceful bots roam, take weapons and play as the others do, but never fight:

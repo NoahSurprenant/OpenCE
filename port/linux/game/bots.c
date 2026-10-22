@@ -365,7 +365,8 @@ static void bots_report(
 			"on a board %ld times, %ld seconds, %.0f world units, %ld ollies, %ld bails, %ld people ridden at, "
 			"%ld rails lined up with, %ld grinds; %ld times in a vehicle by mistake; %ld rides in vehicles, %ld seconds driven, "
 			"%.0f world units driven, %ld reverses, %ld vehicles flipped back, %ld people braked for, %ld people driven at; "
-			"%ld rides as a gunner, %ld seconds gunning, %ld ticks fired riding, %ld kills riding, %ld people run over",
+			"%ld rides as a gunner, %ld seconds gunning, %ld ticks fired riding, %ld kills riding, %ld people run over, "
+			"%ld seconds driving a person",
 			name, now, statistics->goals_reached, statistics->paths_planned, statistics->paths_failed, statistics->stuck,
 			statistics->stuck_ticks / TICKS_PER_SECOND,
 			statistics->travelled, statistics->moves[_bots_nav_drop], statistics->moves[_bots_nav_jump],
@@ -381,7 +382,7 @@ static void bots_report(
 			statistics->vehicle_ticks / TICKS_PER_SECOND, statistics->vehicle_travelled, statistics->vehicle_reverses,
 			statistics->vehicle_flips, statistics->vehicle_braked, statistics->vehicle_rams, statistics->gunner_rides,
 			statistics->gunner_ticks / TICKS_PER_SECOND, statistics->vehicle_ticks_fired, statistics->vehicle_kills,
-			statistics->run_overs);
+			statistics->run_overs, statistics->person_ticks / TICKS_PER_SECOND);
 		bots_report_objective(bot, name, now);
 	}
 }

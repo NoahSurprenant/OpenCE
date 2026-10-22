@@ -96,6 +96,8 @@ struct bot_statistics
 	long vehicle_ticks_fired;
 	long vehicle_kills;
 	long run_overs;
+	/* the ticks it drove with a person aboard */
+	long person_ticks;
 };
 
 /* a bot and a vehicle (bots_vehicle.c) */
@@ -157,6 +159,11 @@ struct bot_vehicle
 	long strafe_until_tick;
 	/* it drives at someone on foot (bots_vehicle.c's bot_vehicle_may_ram) */
 	boolean ramming;
+	/* a person rides with it; the ticks a person has stood at its door; it
+	got out to give them the seat */
+	boolean person_aboard;
+	long door_waiting_ticks;
+	boolean yielded;
 };
 
 /* a bot on a board (bots_skate.c) */

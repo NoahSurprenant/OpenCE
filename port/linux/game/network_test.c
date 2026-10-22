@@ -48,6 +48,7 @@ Called from the main loop every frame (main.c).
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
+#include "bots.h"
 #include "objects/objects.h"
 #include "units/units.h"
 #include "units/unit_definitions.h"
@@ -135,6 +136,11 @@ static struct
 	(NONE: not yet this game) */
 	real vehicle_flip_time;
 	long vehicle_flipped_tick;
+	/* debug.network_test_vehicle_share: when it begins; its step, and the
+	tick the step began */
+	real vehicle_share_time;
+	short vehicle_share_step;
+	long vehicle_share_tick;
 	real pickup_time;
 	char pickup_weapon[64];
 	long score_to_win;
@@ -292,6 +298,7 @@ static void network_test_read_settings(
 	network_test.shoot_interval = (real)config_real("debug.network_test_shoot");
 	network_test.vehicle_time = (real)config_real("debug.network_test_vehicle");
 	network_test.vehicle_flip_time = (real)config_real("debug.network_test_vehicle_flip");
+	network_test.vehicle_share_time = (real)config_real("debug.network_test_vehicle_share");
 	network_test.vehicle_flipped_tick = NONE;
 	network_test.pickup_time = (real)config_real("debug.network_test_pickup");
 	snprintf(network_test.pickup_weapon, sizeof(network_test.pickup_weapon), "%s",
@@ -767,6 +774,196 @@ static void network_test_vehicle_flip(
 	}
 }
 
+/* the vehicle's seat that is its gunner's and no driver's (NONE: none), and
+who sits in a seat (NONE: nobody) */
+static short network_test_gunner_seat(
+	long vehicle_index)
+{
+	short count = unit_definition_get(object_get(vehicle_index)->definition_index)->unit.seats.count;
+	short seat;
+
+	for (seat = 0; seat < count; seat++)
+	{
+		if (unit_seat_is_gunner(vehicle_index, seat) && !unit_seat_is_driver(vehicle_index, seat))
+			return seat;
+	}
+	return NONE;
+}
+
+static long network_test_seat_rider(
+	long vehicle_index,
+	short seat)
+{
+	long child = object_get(vehicle_index)->object.first_child_object_index;
+
+	while (child != NONE)
+	{
+		struct object_datum *object = object_get(child);
+
+		if (TEST_FLAG(_object_mask_unit, object->object.type) && unit_get(child)->unit.parent_seat_index == seat)
+			return child;
+		child = object->object.next_object_index;
+	}
+	return NONE;
+}
+
+/* whether anyone rides the vehicle (its weapon is a child of it too) */
+static boolean network_test_ridden(
+	long vehicle_index)
+{
+	long child = object_get(vehicle_index)->object.first_child_object_index;
+
+	while (child != NONE)
+	{
+		struct object_datum *object = object_get(child);
+
+		if (TEST_FLAG(_object_mask_unit, object->object.type))
+			return TRUE;
+		child = object->object.next_object_index;
+	}
+	return FALSE;
+}
+
+/* debug.network_test_vehicle_share: the host shares vehicles between a person
+(the first player who is no bot: a joining machine's) and the bots of their
+team. Step 0,
+from that many seconds in: once a team mate bot drives a vehicle with its gun
+free, the last player is seated at the gun; step 1, 25 seconds on, they get
+out; step 2, 5 seconds on, once a team mate bot stands on foot within 25
+world units of a vehicle nobody rides, the last player is seated as its
+driver, and stays (a bot may take the gun); step 3, 30 seconds on, they get
+out and stand beside it (a bot does not take a vehicle a person stands by).
+Meanwhile the person and what they ride take no damage */
+static void network_test_vehicle_share(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *last = NULL;
+	long now = game_time_get();
+	long last_unit;
+	struct object_iterator vehicles;
+
+	if (network_test.vehicle_share_step > 0 && now < network_test.vehicle_share_tick)
+		network_test.vehicle_share_step = 0;
+	if (now < (long)(network_test.vehicle_share_time * TICKS_PER_SECOND) || now % 15 != 0)
+		return;
+	/* (the person: the first player who is no bot) */
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL && !last)
+	{
+		if (!bots_player_is_bot(player))
+			last = player;
+	}
+	if (!last || last->unit_index == NONE)
+		return;
+	last_unit = last->unit_index;
+	/* (the person, and what they ride, unhurt meanwhile: the test is of
+	sharing, not of the fight about them) */
+	SET_FLAG(object_get(last_unit)->object.damage_flags, _object_cannot_take_damage_bit, TRUE);
+	if (object_get(last_unit)->object.parent_object_index != NONE)
+	{
+		SET_FLAG(object_get(object_get(last_unit)->object.parent_object_index)->object.damage_flags,
+			_object_cannot_take_damage_bit, TRUE);
+	}
+	switch (network_test.vehicle_share_step)
+	{
+	case 0:
+		if (object_get(last_unit)->object.parent_object_index != NONE)
+			return;
+		object_iterator_new(&vehicles, _object_mask_vehicle, 0);
+		while (object_iterator_next(&vehicles))
+		{
+			struct unit_datum *vehicle = unit_get(vehicles.index);
+			short gun = network_test_gunner_seat(vehicles.index);
+			struct player_datum *driver = vehicle->unit.driver_object_index != NONE &&
+				unit_get(vehicle->unit.driver_object_index)->unit.player_index != NONE ?
+				player_get(unit_get(vehicle->unit.driver_object_index)->unit.player_index) : NULL;
+
+			if (gun == NONE || !driver || !bots_player_is_bot(driver) || driver->team_index != last->team_index ||
+				network_test_seat_rider(vehicles.index, gun) != NONE)
+			{
+				continue;
+			}
+			if (unit_enter_seat(last_unit, vehicles.index, gun))
+			{
+				platform_log("network test: the person (player %ld) guns vehicle %lx, a bot driving, at tick %ld",
+					(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index_from_unit_index(last_unit)), vehicles.index, now);
+				network_test.vehicle_share_step = 1;
+				network_test.vehicle_share_tick = now;
+			}
+			return;
+		}
+		return;
+	case 1:
+		if (now - network_test.vehicle_share_tick < 25 * TICKS_PER_SECOND)
+			return;
+		if (object_get(last_unit)->object.parent_object_index != NONE)
+			unit_exit_seat_end(last_unit);
+		platform_log("network test: the person leaves the gun");
+		network_test.vehicle_share_step = 2;
+		network_test.vehicle_share_tick = now;
+		return;
+	case 2:
+		if (now - network_test.vehicle_share_tick < 5 * TICKS_PER_SECOND ||
+			object_get(last_unit)->object.parent_object_index != NONE)
+		{
+			return;
+		}
+		data_iterator_new(&iterator, player_data);
+		while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		{
+			real_point3d const *at;
+
+			if (!bots_player_is_bot(player) || player->team_index != last->team_index || player->unit_index == NONE ||
+				object_get(player->unit_index)->object.parent_object_index != NONE)
+			{
+				continue;
+			}
+			at = &object_get(player->unit_index)->object.position;
+			object_iterator_new(&vehicles, _object_mask_vehicle, 0);
+			while (object_iterator_next(&vehicles))
+			{
+				struct object_datum *vehicle = object_get(vehicles.index);
+				short seat;
+
+				if (network_test_ridden(vehicles.index) || TEST_FLAG(vehicle->object.damage_flags, _object_dead_bit) ||
+					vehicle->object.up.k < 0.7f || network_test_gunner_seat(vehicles.index) == NONE ||
+					distance_squared3d(at, &vehicle->object.position) > 25.0f * 25.0f)
+				{
+					continue;
+				}
+				for (seat = 0; seat < unit_definition_get(vehicle->definition_index)->unit.seats.count; seat++)
+				{
+					if (unit_seat_is_driver(vehicles.index, seat) && unit_enter_seat(last_unit, vehicles.index, seat))
+					{
+						platform_log("network test: the person drives vehicle %lx, a team mate bot (player %ld) "
+							"%.1f world units off", vehicles.index, (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index),
+							(real)sqrt(distance_squared3d(at, &vehicle->object.position)));
+						network_test.vehicle_share_step = 3;
+						network_test.vehicle_share_tick = now;
+						return;
+					}
+				}
+			}
+		}
+		return;
+	case 3:
+		if (now - network_test.vehicle_share_tick < 30 * TICKS_PER_SECOND)
+			return;
+		if (object_get(last_unit)->object.parent_object_index != NONE)
+		{
+			long vehicle_index = object_get(last_unit)->object.parent_object_index;
+
+			unit_exit_seat_end(last_unit);
+			platform_log("network test: the person gets out of vehicle %lx and stands by it at tick %ld", vehicle_index, now);
+		}
+		network_test.vehicle_share_step = 4;
+		network_test.vehicle_share_tick = now;
+		return;
+	}
+}
+
 /* both machines stand the last player at the driver's entrance of the
 nearest vehicle no one rides (a joining machine's player then holds the
 action button, as a player getting in does) */
@@ -986,6 +1183,8 @@ void network_test_update(
 				network_test_vehicle(FALSE);
 			}
 		}
+		if (network_test.mode == _network_test_host && network_test.vehicle_share_time > 0.0f)
+			network_test_vehicle_share();
 		/* debug.network_test_vehicle_flip: once a game */
 		if (network_test.mode == _network_test_host && network_test.vehicle_flip_time > 0.0f)
 		{
