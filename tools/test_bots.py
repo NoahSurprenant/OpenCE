@@ -637,7 +637,8 @@ def _drives(log):
     flipped back, people braked for, people driven at and times in a vehicle
     by mistake"""
     keys = ("rides in vehicles", "seconds driven", "world units driven", "reverses", "vehicles flipped back",
-            "people braked for", "people driven at", "times in a vehicle by mistake")
+            "people braked for", "people driven at", "times in a vehicle by mistake", "rides as a gunner",
+            "seconds gunning", "ticks fired riding", "kills riding", "people run over")
     return {name: {key: counts.get(key, 0) for key in keys} for name, counts in _reports(log).items()}
 
 
@@ -690,6 +691,62 @@ def test_bots_drive_harmless(tmp_path):
     assert all(c["people driven at"] == 0 for c in drives.values()), f"a peaceful bot drove at someone: {drives}"
     fired = {m[0]: int(m[1]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*? fired (\d+) ticks", log)}
     assert len(fired) == 4 and all(n == 0 for n in fired.values()), f"a peaceful bot fired: {fired}"
+
+
+def test_bots_warthog_crew(tmp_path):
+    """Four bots play a three-minute Team Slayer on Blood Gulch, two a team:
+    one of each team drives (debug.bot_vehicle "drive") and the other takes
+    only a gunner's seat ("gun"); Red's gunner is normal, Blue's peaceful
+    (server.bot_difficulty's peaceful may ride a gun, and never fires). A
+    driver waits for its team mate at the gun, drives on with them, and with
+    an enemy in sight stops for the gunner's shots (bots_vehicle.c); the
+    gunner aims and fires the Warthog's chaingun (bots_combat.c). Both
+    gunners ride; the normal one fires from the gun, the peaceful one never
+    fires; nobody kills a team mate. About three and a half minutes."""
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "31", "HALO_BOT_DIFFICULTIES": "normal,normal,normal,peaceful",
+        "HALO_BOT_VEHICLE": "drive,drive,gun,gun", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_GAME_TYPES": "team_slayer",
+        "HALO_SERVER_TIME_LIMIT": "3", "HALO_NET_ADDRESS": _test_address(207), "HALO_NET_BROADCAST": _test_address(208)},
+        seconds=330)
+    drives = _drives(log)
+    counts = _reports(log)
+    for name, c in sorted(drives.items()):
+        print(f"{name}: {c}; fired {counts[name].get('ticks')}, team kills {counts[name].get('team kills')}")
+    print("\n".join(line for line in log.splitlines() if re.search(r"bots: player \d+ (drives|guns|gets out)|joined", line)))
+    assert len(drives) == 4, log[-4000:]
+    joined = dict(re.findall(r"bots: (\[BOT\] \w+) joined \(machine \d+, controller \d+, team (\d), \w+\)", log))
+    assert joined == {"[BOT] Alpha": "0", "[BOT] Bravo": "1", "[BOT] Delta": "0", "[BOT] Echo": "1"}, joined
+    gunner, peaceful = drives["[BOT] Delta"], drives["[BOT] Echo"]
+    assert gunner["rides as a gunner"] >= 1 and peaceful["rides as a gunner"] >= 1, f"a gunner never rode: {drives}"
+    assert gunner["seconds gunning"] + peaceful["seconds gunning"] >= 20, f"the gunners hardly rode: {drives}"
+    assert re.search(r"bots: player \d+ guns vehicle \w+ \(warthog\), a bot driving", log), "no crew of two bots"
+    assert gunner["ticks fired riding"] >= 30, f"the normal gunner hardly fired the chaingun: {gunner}"
+    fired = {m[0]: int(m[1]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*? fired (\d+) ticks", log)}
+    assert fired["[BOT] Echo"] == 0 and peaceful["ticks fired riding"] == 0, f"the peaceful gunner fired: {fired}, {peaceful}"
+    assert all(c.get("team kills", 0) == 0 for c in counts.values()), f"a team kill: {counts}"
+
+
+def test_bots_ghost_fight(tmp_path):
+    """Four hard bots on Blood Gulch's dedicated server, alone, with all the
+    vehicles the map places (debug.network_test_vehicles "all": its four
+    Ghosts too), each driving whenever it can ("*drive"): a Ghost's driver is
+    its gunner, so a bot in one fights from it, aiming as it steers, closing
+    on a far target and backing off a near one (bots_vehicle.c). At least two
+    drive Ghosts, they fire a good deal from them, and nobody drives at
+    anyone on purpose. About two and a half minutes."""
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "41", "HALO_SERVER_BOT_DIFFICULTY": "hard", "HALO_BOT_VEHICLE": "*drive",
+        "HALO_NETWORK_TEST_VEHICLES": "all", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_NET_ADDRESS": _test_address(199), "HALO_NET_BROADCAST": _test_address(200)})
+    drives = _drives(log)
+    for name, c in sorted(drives.items()):
+        print(f"{name}: {c}")
+    ghosts = set(re.findall(r"bots: player (\d+) drives vehicle \w+ \(ghost\)", log))
+    print(f"Ghost drivers: {ghosts}")
+    assert len(drives) == 4, log[-4000:]
+    assert len(ghosts) >= 2, f"fewer than two bots drove a Ghost: {ghosts}"
+    assert sum(c["ticks fired riding"] for c in drives.values()) >= 200, f"the Ghosts hardly fired: {drives}"
+    assert all(c["people driven at"] == 0 for c in drives.values()), drives
 
 
 def test_bots_flip(tmp_path):

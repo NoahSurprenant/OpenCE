@@ -91,6 +91,9 @@ that hurt it is known of */
 /* a burst: held, then let go (ticks) */
 #define BOT_BURST_TICKS 9
 #define BOT_BURST_PAUSE_TICKS 5
+/* ... a vehicle's gun (a Warthog's chaingun spins up): longer */
+#define BOT_TURRET_BURST_TICKS 40
+#define BOT_TURRET_PAUSE_TICKS 8
 /* the range it keeps from a target, and at hand */
 #define BOT_NEAR_RANGE 4.0f
 #define BOT_FAR_RANGE 12.0f
@@ -160,7 +163,8 @@ game's line of sight test: two-sided surfaces are seen through) */
 static boolean bot_line_clear(
 	real_point3d const *from,
 	real_point3d const *to,
-	long ignore_object_index)
+	long ignore_object_index,
+	long target_vehicle_index)
 {
 	struct collision_result collision;
 	real_vector3d vector;
@@ -168,11 +172,37 @@ static boolean bot_line_clear(
 	vector.i = to->x - from->x;
 	vector.j = to->y - from->y;
 	vector.k = to->z - from->z;
-	return !collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) |
+	if (!collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) |
 		FLAG(_collision_test_ignore_two_sided_surfaces_bit) | FLAG(_collision_test_structure_bit) |
 		FLAG(_collision_test_objects_bit) | FLAG(_collision_test_objects_scenery_bit) |
 		FLAG(_collision_test_objects_machines_bit) | FLAG(_collision_test_objects_vehicles_bit),
-		from, &vector, ignore_object_index, &collision);
+		from, &vector, ignore_object_index, &collision))
+	{
+		return TRUE;
+	}
+	/* (the vehicle the target rides: seen, the target in it) */
+	return target_vehicle_index != NONE && collision.type == _collision_result_object &&
+		collision.object_index == target_vehicle_index;
+}
+
+long bot_unit_vehicle(
+	long unit_index)
+{
+	struct object_datum *object = object_try_and_get(unit_index);
+	long parent = object ? object->object.parent_object_index : NONE;
+
+	return parent != NONE && object_try_and_get(parent) && object_get(parent)->object.type == _object_type_vehicle ?
+		parent : NONE;
+}
+
+/* what a bot's eyes see past: its vehicle, riding (its own body is not in the
+way of the game's test) */
+static long bot_line_ignore(
+	long unit_index)
+{
+	long vehicle_index = bot_unit_vehicle(unit_index);
+
+	return vehicle_index != NONE ? vehicle_index : unit_index;
 }
 
 /* the projectile speed of the unit's weapon (world units a tick; 0 for an
@@ -183,6 +213,9 @@ static real bot_projectile_speed(
 	long weapon_index = unit->unit.current_weapon_index != NONE ?
 		unit->unit.weapon_object_indices[unit->unit.current_weapon_index] : NONE;
 	struct weapon_definition *weapon;
+
+	if (weapon_index == NONE || !object_try_and_get(weapon_index))
+		return 0.0f;
 
 	if (weapon_index == NONE)
 		return 0.0f;
@@ -227,6 +260,9 @@ static boolean bot_team_mate_in_the_way(
 		if (iterator.datum_index == player_index || other->unit_index == NONE)
 			continue;
 		mate = object_get(other->unit_index);
+		/* (riding with it: its driver, its gunner) */
+		if (mate->object.parent_object_index != NONE && mate->object.parent_object_index == unit->object.parent_object_index)
+			continue;
 		if (TEST_FLAG(mate->object.damage_flags, _object_dead_bit) ||
 			game_team_is_enemy(unit->object.owner_team_index, mate->object.owner_team_index))
 		{
@@ -318,8 +354,9 @@ static boolean bot_sees(
 	if (distance > 1.5f && fabs(bot_angle_difference(facing, (real)atan2(dy, dx))) > skill->field_of_view * 0.5f)
 		return FALSE;
 	unit_get_head_position(target_unit_index, &head);
-	return bot_line_clear(eye, &head, unit_index) ||
-		bot_line_clear(eye, &target->object.bounding_sphere_center, unit_index);
+	return bot_line_clear(eye, &head, bot_line_ignore(unit_index), bot_unit_vehicle(target_unit_index)) ||
+		bot_line_clear(eye, &target->object.bounding_sphere_center, bot_line_ignore(unit_index),
+		bot_unit_vehicle(target_unit_index));
 }
 
 /* the target a bot fights: the nearest enemy it sees (its target so far,
@@ -521,11 +558,20 @@ void bot_combat_act(
 	real move_yaw, move_amount;
 	long now = game_time_get();
 	long weapon_index;
+	/* (riding: a gunner's seat fires the vehicle's weapon, aimed as it looks
+	(units.c gives the vehicle its gunner's aim and trigger); its moves are
+	its driver's, and it throws, strikes and changes weapons not at all) */
+	long vehicle_index = bot_unit_vehicle(unit_index);
+	struct unit_datum *shooter = vehicle_index != NONE && unit_get(vehicle_index)->unit.gunner_object_index == unit_index ?
+		unit_get(vehicle_index) : unit;
+	real_vector2d throttle = action->throttle;
+	long burst = shooter != unit ? BOT_TURRET_BURST_TICKS : BOT_BURST_TICKS;
+	long pause = shooter != unit ? BOT_TURRET_PAUSE_TICKS : BOT_BURST_PAUSE_TICKS;
 
 	if (!target_player || target_player->unit_index == NONE)
 		return;
 	/* (a grenade on its way out: its aim held, no shots) */
-	if (bot_grenade_act(bot, unit_index, action))
+	if (vehicle_index == NONE && bot_grenade_act(bot, unit_index, action))
 		return;
 	target = object_get(target_player->unit_index);
 	unit_get_camera_position(unit_index, &eye);
@@ -533,8 +579,19 @@ void bot_combat_act(
 	one not in view, where it was last seen) */
 	if (combat->target_visible)
 	{
-		real speed = bot_projectile_speed(unit);
+		real speed = bot_projectile_speed(shooter);
+		/* (the target's own way, its vehicle's if it rides; less the bot's
+		vehicle's: a shot from a moving vehicle carries its way) */
+		long target_vehicle = bot_unit_vehicle(target_player->unit_index);
+		real_vector3d velocity = object_get(target_vehicle != NONE ? target_vehicle : target_player->unit_index)->
+			object.translational_velocity;
 
+		if (vehicle_index != NONE)
+		{
+			velocity.i -= object_get(vehicle_index)->object.translational_velocity.i;
+			velocity.j -= object_get(vehicle_index)->object.translational_velocity.j;
+			velocity.k -= object_get(vehicle_index)->object.translational_velocity.k;
+		}
 		aim_point = target->object.bounding_sphere_center;
 		if (speed > 0.01f)
 		{
@@ -544,9 +601,9 @@ void bot_combat_act(
 			dy = aim_point.y - eye.y;
 			dz = aim_point.z - eye.z;
 			ticks = MIN((real)sqrt(dx * dx + dy * dy + dz * dz) / speed, 2.0f * TICKS_PER_SECOND);
-			aim_point.x += target->object.translational_velocity.i * ticks;
-			aim_point.y += target->object.translational_velocity.j * ticks;
-			aim_point.z += target->object.translational_velocity.k * ticks * 0.5f;
+			aim_point.x += velocity.i * ticks;
+			aim_point.y += velocity.j * ticks;
+			aim_point.z += velocity.k * ticks * 0.5f;
 		}
 	}
 	else
@@ -635,10 +692,16 @@ void bot_combat_act(
 		DEGREES_TO_RADIANS(BOT_MAXIMUM_PITCH_DEGREES));
 	action->throttle.i = (real)cos(move_yaw - combat->aim_yaw) * move_amount;
 	action->throttle.j = (real)sin(move_yaw - combat->aim_yaw) * move_amount;
+	if (vehicle_index != NONE)
+		action->throttle = throttle;
 
 	/* the weapon for the range: thought of every half second, changed when
 	another suits it better */
-	if (now >= combat->weapon_look_tick)
+	if (vehicle_index != NONE)
+	{
+		/* (riding: none changed) */
+	}
+	else if (now >= combat->weapon_look_tick)
 	{
 		short slot = bot_weapon_choose(unit_index, distance);
 
@@ -650,11 +713,11 @@ void bot_combat_act(
 	/* (a flag or a ball in hand stays there: changing weapons drops it) */
 	if (bot_holds_flag(unit))
 		combat->weapon_slot = unit->unit.current_weapon_index;
-	if (combat->weapon_slot != NONE && combat->weapon_slot != unit->unit.current_weapon_index)
+	if (vehicle_index == NONE && combat->weapon_slot != NONE && combat->weapon_slot != unit->unit.current_weapon_index)
 		action->desired_weapon_index = combat->weapon_slot;
 	/* firing: in view, past its reaction, its aim near enough, in bursts */
-	weapon_index = unit->unit.current_weapon_index != NONE ?
-		unit->unit.weapon_object_indices[unit->unit.current_weapon_index] : NONE;
+	weapon_index = shooter->unit.current_weapon_index != NONE ?
+		shooter->unit.weapon_object_indices[shooter->unit.current_weapon_index] : NONE;
 	cone = (real)atan2(0.35f, MAX(distance, 0.5f)) * skill->fire_cone;
 	aim_off = (real)fabs(bot_angle_difference(combat->aim_yaw, (real)atan2(dy, dx))) +
 		(real)fabs(combat->aim_pitch - (real)atan2(dz, MAX(horizontal, 0.01f)));
@@ -662,13 +725,15 @@ void bot_combat_act(
 		!bot_weapon_blasts_near(weapon_index, distance) &&
 		!bot_team_mate_in_the_way(unit->unit.player_index, unit_index, &eye, &aim_point))
 	{
-		if (combat->burst_ticks < BOT_BURST_TICKS)
+		if (combat->burst_ticks < burst)
 		{
 			action->primary_trigger = 1.0f;
 			SET_FLAG(action->control_flags, _unit_control_weapon_primary_trigger_bit, TRUE);
 			brain->statistics.ticks_fired++;
+			if (vehicle_index != NONE)
+				brain->statistics.vehicle_ticks_fired++;
 		}
-		if (++combat->burst_ticks >= BOT_BURST_TICKS + BOT_BURST_PAUSE_TICKS)
+		if (++combat->burst_ticks >= burst + pause)
 			combat->burst_ticks = 0;
 	}
 	else
@@ -677,14 +742,14 @@ void bot_combat_act(
 	}
 	/* (a target at hand, faced: struck, unless a team mate is at hand in
 	front, whom the blow would strike) */
-	if (combat->target_visible && distance < BOT_MELEE_RANGE + 0.5f && aim_off < 0.5f &&
+	if (vehicle_index == NONE && combat->target_visible && distance < BOT_MELEE_RANGE + 0.5f && aim_off < 0.5f &&
 		now >= combat->melee_after_tick && !bot_team_mate_at_hand(unit->unit.player_index, unit_index, combat->aim_yaw))
 	{
 		SET_FLAG(action->control_flags, _unit_control_use_equipment_bit, TRUE);
 		combat->melee_after_tick = now + TICKS_PER_SECOND;
 	}
 	/* (an empty magazine reloaded) */
-	if (weapon_index != NONE)
+	if (weapon_index != NONE && vehicle_index == NONE)
 	{
 		struct weapon_datum *weapon = weapon_get(weapon_index);
 
