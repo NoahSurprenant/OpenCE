@@ -84,16 +84,24 @@ static struct
 	boolean checked;
 } bots_nav_game;
 
-/* the graph the map's vehicles drive (bots_nav_vehicle_parameters), made
-with the walking graph when needed, on a map that places vehicles (none: no
-graph) */
-static struct
+/* the graphs the map's vehicles drive: its Warthogs and Ghosts
+(bots_nav_vehicle_parameters) and its tanks (bots_nav_tank_parameters), made
+with the walking graph when needed, on a map that places such vehicles
+(none: no graph) */
+enum
+{
+	_bots_nav_drive_vehicles,
+	_bots_nav_drive_tanks,
+	NUMBER_OF_BOTS_NAV_DRIVE_GRAPHS
+};
+
+static struct bots_nav_drive_graph
 {
 	boolean built;
 	long scenario_index;
 	short structure_bsp_index;
 	struct bots_nav nav;
-} bots_nav_drive;
+} bots_nav_drive_graphs[NUMBER_OF_BOTS_NAV_DRIVE_GRAPHS];
 
 /* ---------- the level's triangles */
 
@@ -656,48 +664,69 @@ static void bots_nav_make(
 	free(weapons);
 }
 
-/* the drive graph of the map being played, from the cache or built: its
-seeds the level's vehicles (their placements, whichever the game type
-leaves), whose part of the level is kept */
+/* a drive graph of the map being played, from the cache or built: its seeds
+the level's vehicles of its kind (their placements, whichever the game type
+leaves: every one for the vehicles' graph, the tanks for the tanks'), whose
+part of the level is kept */
 static void bots_nav_make_drive(
-	void)
+	short kind)
 {
+	struct bots_nav_drive_graph *graph = &bots_nav_drive_graphs[kind];
 	struct scenario *scenario = global_scenario_get();
 	struct collision_bsp *bsp = global_collision_bsp_get();
 	struct tag_block *placements;
+	struct tag_block *palette;
 	struct bots_nav_parameters parameters;
 	struct bots_nav_point *seeds;
 	long element_size = 0;
 	long seed_count = 0, pieces = 0;
 	unsigned long started = system_milliseconds();
+	char const *name = kind == _bots_nav_drive_tanks ? "tank" : "drive";
 	boolean cached;
 	long index;
 
-	bots_nav_free(&bots_nav_drive.nav);
-	bots_nav_drive.built = TRUE;
-	bots_nav_drive.scenario_index = global_scenario_index;
-	bots_nav_drive.structure_bsp_index = global_structure_bsp_index;
-	bots_nav_vehicle_parameters(&parameters);
+	bots_nav_free(&graph->nav);
+	graph->built = TRUE;
+	graph->scenario_index = global_scenario_index;
+	graph->structure_bsp_index = global_structure_bsp_index;
+	if (kind == _bots_nav_drive_tanks)
+		bots_nav_tank_parameters(&parameters);
+	else
+		bots_nav_vehicle_parameters(&parameters);
 	if (!scenario || !bsp)
 		return;
 	placements = scenario_get_object_type_scenario_datums(scenario, _object_type_vehicle, &element_size);
-	if (!placements || placements->count <= 0)
-	{
-		if (config_boolean("debug.bot_nav_check"))
-			platform_log("bots: no drive graph for %s: it places no vehicles", bots_nav_game.map);
-		return;
-	}
-	seeds = (struct bots_nav_point *)malloc((size_t)placements->count * sizeof(*seeds));
-	if (!seeds)
-		return;
-	for (index = 0; index < placements->count; index++)
+	palette = scenario_get_object_type_scenario_palette(scenario, _object_type_vehicle);
+	seeds = placements && placements->count > 0 ?
+		(struct bots_nav_point *)malloc((size_t)placements->count * sizeof(*seeds)) : NULL;
+	for (index = 0; seeds && index < placements->count; index++)
 	{
 		struct scenario_object_datum const *placement = (struct scenario_object_datum const *)
 			tag_block_get_element_with_size(placements, index, element_size);
 
+		if (kind == _bots_nav_drive_tanks)
+		{
+			struct scenario_object_palette_entry const *entry = palette &&
+				VALID_INDEX(placement->palette_entry_index, palette->count) ?
+				TAG_BLOCK_GET_ELEMENT(palette, placement->palette_entry_index, struct scenario_object_palette_entry) : NULL;
+			char const *tag = entry && entry->reference.index != NONE ? tag_get_name(entry->reference.index) : NULL;
+
+			if (!tag || !strstr(tag, "scorpion"))
+				continue;
+		}
 		bots_nav_point_from(&seeds[seed_count++], &placement->position);
 	}
-	cached = bots_nav_cache_read(&bots_nav_drive.nav, &parameters, "drive");
+	if (seed_count == 0)
+	{
+		if (config_boolean("debug.bot_nav_check"))
+			platform_log("bots: no %s graph for %s: it places no %s", name, bots_nav_game.map,
+				kind == _bots_nav_drive_tanks ? "tanks" : "vehicles");
+		/* (the game's free takes no NULL: debug_memory.c) */
+		if (seeds)
+			free(seeds);
+		return;
+	}
+	cached = bots_nav_cache_read(&graph->nav, &parameters, name);
 	if (!cached)
 	{
 		struct bots_nav_triangles triangles;
@@ -714,24 +743,25 @@ static void bots_nav_make_drive(
 			input.seeds = seeds;
 			input.seed_count = seed_count;
 			input.clear = bots_nav_clear;
-			if (bots_nav_build(&input, &parameters, &bots_nav_drive.nav))
-				bots_nav_cache_write(&bots_nav_drive.nav, "drive");
+			if (bots_nav_build(&input, &parameters, &graph->nav))
+				bots_nav_cache_write(&graph->nav, name);
 		}
 		free(triangles.points);
 	}
-	if (!bots_nav_drive.nav.nodes)
+	if (!graph->nav.nodes)
 	{
-		platform_log("bots: no drive graph for %s", bots_nav_game.map);
+		platform_log("bots: no %s graph for %s", name, bots_nav_game.map);
 	}
 	else
 	{
-		struct bots_nav_statistics const *statistics = &bots_nav_drive.nav.statistics;
+		struct bots_nav_statistics const *statistics = &graph->nav.statistics;
 
-		platform_log("bots: drive graph of %s %s in %lu ms: %ld nodes, %ld edges (%ld drives, %ld drops), %ld triangles; "
-			"vehicles %ld/%ld on its main part",
-			bots_nav_game.map, cached ? "read from the cache" : "built", system_milliseconds() - started,
-			bots_nav_drive.nav.node_count, bots_nav_drive.nav.edge_count, statistics->walk_edges, statistics->drop_edges,
-			statistics->triangles, bots_nav_reached(&bots_nav_drive.nav, seeds, seed_count, "vehicle",
+		platform_log("bots: %s graph of %s %s in %lu ms: %ld nodes, %ld edges (%ld drives, %ld drops), %ld triangles; "
+			"%s %ld/%ld on its main part",
+			name, bots_nav_game.map, cached ? "read from the cache" : "built", system_milliseconds() - started,
+			graph->nav.node_count, graph->nav.edge_count, statistics->walk_edges, statistics->drop_edges,
+			statistics->triangles, kind == _bots_nav_drive_tanks ? "tanks" : "vehicles",
+			bots_nav_reached(&graph->nav, seeds, seed_count, kind == _bots_nav_drive_tanks ? "tank" : "vehicle",
 			_bots_nav_reached_bit | _bots_nav_reaches_bit), seed_count);
 	}
 	free(seeds);
@@ -740,7 +770,17 @@ static void bots_nav_make_drive(
 struct bots_nav *bots_nav_drive_current(
 	void)
 {
-	return bots_nav_drive.built && bots_nav_drive.nav.nodes ? &bots_nav_drive.nav : NULL;
+	struct bots_nav_drive_graph *graph = &bots_nav_drive_graphs[_bots_nav_drive_vehicles];
+
+	return graph->built && graph->nav.nodes ? &graph->nav : NULL;
+}
+
+struct bots_nav *bots_nav_tank_current(
+	void)
+{
+	struct bots_nav_drive_graph *graph = &bots_nav_drive_graphs[_bots_nav_drive_tanks];
+
+	return graph->built && graph->nav.nodes ? &graph->nav : NULL;
 }
 
 struct bots_nav *bots_nav_current(
@@ -763,10 +803,17 @@ void bots_nav_update(
 			bots_nav_free(&bots_nav_game.nav);
 			bots_nav_game.built = FALSE;
 		}
-		if (bots_nav_drive.built)
 		{
-			bots_nav_free(&bots_nav_drive.nav);
-			bots_nav_drive.built = FALSE;
+			short kind;
+
+			for (kind = 0; kind < NUMBER_OF_BOTS_NAV_DRIVE_GRAPHS; kind++)
+			{
+				if (bots_nav_drive_graphs[kind].built)
+				{
+					bots_nav_free(&bots_nav_drive_graphs[kind].nav);
+					bots_nav_drive_graphs[kind].built = FALSE;
+				}
+			}
 		}
 		return;
 	}
@@ -775,12 +822,20 @@ void bots_nav_update(
 	{
 		bots_nav_make();
 	}
-	/* (the drive graph, after the walking graph: its map name and key) */
-	if (bots_nav_game.built && (drive || check) && (!bots_nav_drive.built ||
-		bots_nav_drive.scenario_index != global_scenario_index ||
-		bots_nav_drive.structure_bsp_index != global_structure_bsp_index))
+	/* (the drive graphs, after the walking graph: its map name and key) */
 	{
-		bots_nav_make_drive();
+		short kind;
+
+		for (kind = 0; kind < NUMBER_OF_BOTS_NAV_DRIVE_GRAPHS; kind++)
+		{
+			struct bots_nav_drive_graph *graph = &bots_nav_drive_graphs[kind];
+
+			if (bots_nav_game.built && (drive || check) && (!graph->built || graph->scenario_index != global_scenario_index ||
+				graph->structure_bsp_index != global_structure_bsp_index))
+			{
+				bots_nav_make_drive(kind);
+			}
+		}
 	}
 	/* (debug.bot_nav_check: on to the next map) */
 	if (check && bots_nav_game.built && !bots_nav_game.checked && game_engine_running())

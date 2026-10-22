@@ -71,7 +71,9 @@ enum
 	/* it stands still on foot (something for a driver to brake for) */
 	_bot_vehicle_stand,
 	/* it takes only a gunner's seat, whenever a team mate drives near */
-	_bot_vehicle_gun
+	_bot_vehicle_gun,
+	/* it drives only a Scorpion, whenever it can */
+	_bot_vehicle_tank
 };
 
 /* the seat a bot takes */
@@ -132,6 +134,9 @@ step); a Ghost closes past far and backs off inside near */
 #define BOT_VEHICLE_ORBIT_STEP 0.7f
 #define BOT_VEHICLE_GHOST_FAR 14.0f
 #define BOT_VEHICLE_GHOST_NEAR 7.0f
+/* ... and a Scorpion (its cannon's blast kept off itself) */
+#define BOT_VEHICLE_TANK_FAR 25.0f
+#define BOT_VEHICLE_TANK_NEAR 10.0f
 /* a gunner gets out after this long with no driver, or standing still with
 a person driving and nobody to shoot at */
 #define BOT_VEHICLE_NO_DRIVER_TICKS (3 * TICKS_PER_SECOND)
@@ -163,6 +168,8 @@ world unit), how long it tries at the door */
 #define BOT_VEHICLE_BOARD_TICKS (6 * TICKS_PER_SECOND)
 /* how far outside a vehicle's door it steps first (world units) */
 #define BOT_VEHICLE_DOOR_OUTSIDE 1.0f
+/* ... and how far off the line out through the door counts as in front of it */
+#define BOT_VEHICLE_DOOR_ACROSS 0.5f
 /* the ticks between presses of the action button (one press is a press) */
 #define BOT_VEHICLE_PRESS_TICKS 10
 /* driving: a node this near is passed; the point it steers for, at least
@@ -262,26 +269,49 @@ static short bot_vehicle_mode(
 				return _bot_vehicle_stand;
 			if (!strcmp(name, "gun"))
 				return _bot_vehicle_gun;
+			if (!strcmp(name, "tank"))
+				return _bot_vehicle_tank;
 			return _bot_vehicle_normal;
 		}
 	}
 	return _bot_vehicle_normal;
 }
 
-/* the vehicles bots drive (now): a Warthog (not a rocket Warthog) or a
-Ghost, by its tag's name, as game_engine.c's vehicle types fall back to */
+/* the vehicles bots drive: a Warthog, a rocket Warthog, a Ghost or a
+Scorpion, by its tag's name, as game_engine.c's vehicle types fall back to
+(NULL: none of them: a Banshee, a turret) */
 static char const *bot_vehicle_kind(
 	long vehicle_index)
 {
 	char const *name = tag_get_name(object_get(vehicle_index)->definition_index);
 
-	if (!name || strstr(name, "rwarthog") || strstr(name, "rocket"))
+	if (!name)
 		return NULL;
+	if (strstr(name, "rwarthog") || (strstr(name, "rocket") && strstr(name, "warthog")))
+		return "rocket warthog";
 	if (strstr(name, "warthog"))
 		return "warthog";
 	if (strstr(name, "ghost"))
 		return "ghost";
+	if (strstr(name, "scorpion"))
+		return "scorpion";
 	return NULL;
+}
+
+/* whether the vehicle is a tank (a Scorpion: it drives the tanks' graph) */
+static boolean bot_vehicle_is_tank(
+	long vehicle_index)
+{
+	char const *kind = bot_vehicle_kind(vehicle_index);
+
+	return kind && !strcmp(kind, "scorpion");
+}
+
+/* the graph the vehicle drives (NULL: none on this map) */
+static struct bots_nav *bot_vehicle_graph(
+	long vehicle_index)
+{
+	return bot_vehicle_is_tank(vehicle_index) ? bots_nav_tank_current() : bots_nav_drive_current();
 }
 
 /* the vehicle's driver's seat (NONE: none) */
@@ -611,9 +641,10 @@ static void bot_vehicle_door_way(
 	outside = *door;
 	outside.x += ox * BOT_VEHICLE_DOOR_OUTSIDE;
 	outside.y += oy * BOT_VEHICLE_DOOR_OUTSIDE;
-	/* (at the door's outside, or in front of the door: in) */
+	/* (at the door's outside, or straight out in front of the door: in) */
 	if (bot_vehicle_distance2d(position, outside.x, outside.y) < 0.5f ||
-		(position->x - door->x) * ox + (position->y - door->y) * oy > 0.2f)
+		((position->x - door->x) * ox + (position->y - door->y) * oy > 0.2f &&
+		fabs((position->x - door->x) * -oy + (position->y - door->y) * ox) < BOT_VEHICLE_DOOR_ACROSS))
 	{
 		return;
 	}
@@ -741,10 +772,12 @@ static boolean bot_vehicle_choose(
 	struct bot_brain *brain = &bot->brain;
 	struct bot_vehicle *vehicle = &brain->vehicle;
 	struct bots_nav *nav = bots_nav_current();
-	struct bots_nav *drive = bots_nav_drive_current();
+	struct bots_nav *drive = NULL;
 	long limit = config_integer("server.bot_vehicles");
 	struct object_iterator iterator;
 	struct bots_nav_point goal;
+	/* (debug.bot_vehicle "tank": a Scorpion whenever it can) */
+	boolean tanks_only = mode == _bot_vehicle_tank;
 	long best = NONE;
 	short best_seat = NONE;
 	real best_distance = 0.0f;
@@ -753,8 +786,10 @@ static boolean bot_vehicle_choose(
 	struct bots_nav_node const *end;
 	boolean fighting;
 
-	if (mode == _bot_vehicle_never || limit < 0 || !nav || !drive || brain->goal_node == NONE ||
-		brain->goal_node >= nav->node_count)
+	if (tanks_only)
+		mode = _bot_vehicle_drive;
+	if (mode == _bot_vehicle_never || limit < 0 || !nav || (!bots_nav_drive_current() && !bots_nav_tank_current()) ||
+		brain->goal_node == NONE || brain->goal_node >= nav->node_count)
 	{
 		return FALSE;
 	}
@@ -792,7 +827,9 @@ static boolean bot_vehicle_choose(
 		{
 			continue;
 		}
-		if (!bot_vehicle_alive(iterator.index) || !bot_vehicle_kind(iterator.index) ||
+		if (tanks_only && !bot_vehicle_is_tank(iterator.index))
+			continue;
+		if (!bot_vehicle_alive(iterator.index) || !bot_vehicle_kind(iterator.index) || !bot_vehicle_graph(iterator.index) ||
 			(iterator.index == vehicle->avoided_vehicle && game_time_get() < vehicle->avoided_until_tick))
 		{
 			continue;
@@ -803,6 +840,7 @@ static boolean bot_vehicle_choose(
 		{
 			continue;
 		}
+		drive = bot_vehicle_graph(iterator.index);
 		node = bots_nav_locate(drive, object->object.position.x, object->object.position.y,
 			object->object.position.z + 0.5f);
 		if (node == NONE || drive->nodes[node].reach != (_bots_nav_reached_bit | _bots_nav_reaches_bit))
@@ -813,6 +851,7 @@ static boolean bot_vehicle_choose(
 	}
 	if (best == NONE)
 		return FALSE;
+	drive = bot_vehicle_graph(best);
 	goal_node = bot_vehicle_nearest_node(drive, goal.x, goal.y, goal.z);
 	if (goal_node == NONE)
 		return FALSE;
@@ -1018,6 +1057,7 @@ static void bot_vehicle_ghost_fight(
 	real target_distance,
 	real forward_speed,
 	boolean ram,
+	boolean tank,
 	struct player_action *action)
 {
 	struct bot_brain *brain = &bot->brain;
@@ -1028,7 +1068,8 @@ static void bot_vehicle_ghost_fight(
 
 	(void)player_index;
 	(void)target_at;
-	along = target_distance > BOT_VEHICLE_GHOST_FAR ? 0.6f : target_distance < BOT_VEHICLE_GHOST_NEAR ? -0.5f : 0.0f;
+	along = target_distance > (tank ? BOT_VEHICLE_TANK_FAR : BOT_VEHICLE_GHOST_FAR) ? 0.6f :
+		target_distance < (tank ? BOT_VEHICLE_TANK_NEAR : BOT_VEHICLE_GHOST_NEAR) ? -0.5f : 0.0f;
 	/* (one it may run over: at them, full on, no strafing) */
 	if (ram)
 		along = 1.0f;
@@ -1041,7 +1082,8 @@ static void bot_vehicle_ghost_fight(
 		}
 		side = vehicle->strafe_side * (bot->difficulty >= _bot_difficulty_hard ? 0.8f : 0.4f);
 	}
-	if (ram)
+	/* (a tank strafes not; one it runs over, straight at them) */
+	if (ram || tank)
 		side = 0.0f;
 	bot_action_idle(action, brain->yaw, 0.0f);
 	action->throttle.i = along;
@@ -1120,7 +1162,7 @@ static void bot_vehicle_drive(
 {
 	struct bot_brain *brain = &bot->brain;
 	struct bot_vehicle *vehicle = &brain->vehicle;
-	struct bots_nav *drive = bots_nav_drive_current();
+	struct bots_nav *drive = bot_vehicle_graph(vehicle->vehicle_index);
 	struct object_datum *object = object_get(vehicle->vehicle_index);
 	real_point3d at = object->object.position;
 	real speed = (real)sqrt(object->object.translational_velocity.i * object->object.translational_velocity.i +
@@ -1143,6 +1185,9 @@ static void bot_vehicle_drive(
 	boolean gunner_aboard = object_get(vehicle->vehicle_index) && unit_get(vehicle->vehicle_index)->unit.gunner_object_index != NONE &&
 		unit_get(vehicle->vehicle_index)->unit.gunner_object_index != vehicle->unit_index;
 	boolean ghost = !strcmp(bot_vehicle_kind(vehicle->vehicle_index) ? bot_vehicle_kind(vehicle->vehicle_index) : "", "ghost");
+	/* (its guns its driver's: a Ghost's, a Scorpion's cannon) */
+	boolean driver_guns = unit_get(vehicle->vehicle_index)->unit.gunner_object_index == vehicle->unit_index;
+	boolean tank = bot_vehicle_is_tank(vehicle->vehicle_index);
 	boolean direct = FALSE;
 	boolean hold = FALSE;
 	boolean ram = FALSE;
@@ -1160,6 +1205,13 @@ static void bot_vehicle_drive(
 			brain->statistics.vehicle_travelled += step;
 		vehicle->last_position = at;
 		brain->statistics.vehicle_ticks++;
+	}
+	/* (no graph for it on this map: out) */
+	if (!drive)
+	{
+		bot_vehicle_leave(vehicle, player_index, "no way on", FALSE);
+		bot_action_idle(action, brain->yaw, 0.0f);
+		return;
 	}
 	/* (turned over: out, and flipped back) */
 	vehicle->overturned_ticks = object->object.up.k < BOT_VEHICLE_OVERTURNED ? vehicle->overturned_ticks + 1 : 0;
@@ -1216,7 +1268,7 @@ static void bot_vehicle_drive(
 		brain->combat.aim_set = FALSE;
 	}
 	/* (a team mate going for its gun: waited for, a while) */
-	if (!gunner_aboard && !ghost && bots_vehicle_gunner_coming(vehicle->vehicle_index) &&
+	if (!gunner_aboard && !driver_guns && bots_vehicle_gunner_coming(vehicle->vehicle_index) &&
 		now - vehicle->phase_tick < BOT_VEHICLE_CREW_WAIT_TICKS)
 	{
 		bot_action_idle(action, brain->yaw, 0.0f);
@@ -1226,7 +1278,7 @@ static void bot_vehicle_drive(
 		return;
 	}
 	/* (one on foot it may run over, by its difficulty: bot_vehicle_may_ram) */
-	ram = fighting && (ghost || !gunner_aboard) &&
+	ram = fighting && (driver_guns || !gunner_aboard) &&
 		bot_vehicle_may_ram(bot, vehicle->vehicle_index, target_unit, &at, heading, target_distance);
 	if (ram != vehicle->ramming)
 	{
@@ -1238,10 +1290,10 @@ static void bot_vehicle_drive(
 				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(brain->combat.target_player), now);
 		}
 	}
-	/* (a Ghost fights: its guns are its driver's) */
-	if (fighting && ghost)
+	/* (a Ghost, a Scorpion fight: their guns are their driver's) */
+	if (fighting && driver_guns)
 	{
-		bot_vehicle_ghost_fight(bot, player_index, &target_at, target_distance, forward_speed, ram, action);
+		bot_vehicle_ghost_fight(bot, player_index, &target_at, target_distance, forward_speed, ram, tank, action);
 		vehicle->path_next = NONE;
 		vehicle->check_tick = now;
 		vehicle->check_position = at;

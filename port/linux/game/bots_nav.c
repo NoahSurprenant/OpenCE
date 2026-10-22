@@ -158,6 +158,22 @@ void bots_nav_vehicle_parameters(
 	parameters->seed_margin = 0.0f;
 }
 
+void bots_nav_tank_parameters(
+	struct bots_nav_parameters *parameters)
+{
+	bots_nav_vehicle_parameters(parameters);
+	/* (a Scorpion is about 1.3 wide with its treads, and taller) */
+	parameters->agent_radius = 0.8f;
+	parameters->agent_height = 1.3f;
+	/* (cos 30 degrees) */
+	parameters->walkable_normal_z = 0.866f;
+	/* (treads climb a higher lip; still no jumps) */
+	parameters->step_height = 0.4f;
+	parameters->jump_height = 0.4f;
+	/* (across the two radii either side of a drop) */
+	parameters->link_reach = 2.2f;
+}
+
 /* ---------- 1. rasterisation */
 
 /* the polygon's points on the side of the axis-aligned line where

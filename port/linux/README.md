@@ -1298,8 +1298,9 @@ netgame flags. It still fights what it meets on the way.
 
 ### Bots in vehicles
 
-Bots drive Warthogs and Ghosts (`game/bots_vehicle.c`) on maps that have
-them: of the stock maps, Blood Gulch and Sidewinder. Everything goes through
+Bots drive Warthogs, rocket Warthogs, Ghosts and Scorpions
+(`game/bots_vehicle.c`) on maps that have them: of the stock maps, Blood
+Gulch and Sidewinder. Everything goes through
 the bot's input, as a person's does, so nothing is new on the wire:
 
 - A bot thinks of a ride when its goal is far (40 world units, about 120 m),
@@ -1362,7 +1363,12 @@ the bot's input, as a person's does, so nothing is new on the wire:
   vehicle the map places (the built-in game types place Blood Gulch's
   Warthogs only); `debug.network_test_vehicle_share` scripts a person sharing
   vehicles with the bots of their team (tools/test_bots.py).
-- Not yet: Scorpions and rocket Warthogs, flying.
+- **Scorpions.** A tank drives a graph of its own (below), wider and less
+  steep. Its cannon is its driver's: a bot fights from it as from a Ghost,
+  keeping further off and strafing not, and fires nothing near enough for
+  the shell's blast to reach it (nor does a rocket Warthog's gunner). A
+  peaceful bot drives one and never fires. Its tread seats are not taken.
+- Not yet: flying (Banshees).
 
 Peaceful bots roam, take weapons and play as the others do, but never fight:
 they never aim at a player, shoot, throw a grenade or strike. They can still
@@ -1483,6 +1489,9 @@ drops of up to 1 driven over, no jumps, ladders or teleporters, tiles of 2
 world units, and the map's vehicles as its seeds. It is cached beside the
 walking graph (`z:\bots_drive_<map>_<key>.nav`). On Blood Gulch and Sidewinder
 it has about 2,200 nodes, and each map's eight vehicles are on its main part.
+A third graph is for tanks (`bots_nav_tank_parameters`: 0.8 world units from
+walls, 1.3 of room, slopes up to 30 degrees, lips of 0.4), its seeds the
+map's Scorpions (`z:\bots_tank_<map>_<key>.nav`).
 
 ## Map checks
 
