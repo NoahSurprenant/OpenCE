@@ -272,4 +272,35 @@ game's bots: each rail's points (3 floats each, world units) into points
 into ends (room for end_capacity rails); how many rails were written, or -1 */
 int halo_skate_rails_in(int session, float *points, int point_capacity, int *ends, int end_capacity);
 
+/* ---------- tricks (tricks.rs): what the engine's own scoring (Skate 3's) made of
+a session's riding since the session was made, and the right stick's gestures
+it knows tricks by */
+struct halo_skate_tricks
+{
+	unsigned int tricks; /* tricks announced (flips, grabs, grinds, manuals ...) */
+	unsigned int landed; /* ... of them in sequences landed (not bailed) */
+	unsigned int sequences; /* sequences landed: from leaving the ground (or a
+		grind, a manual) to rolling away clean */
+	unsigned int combos; /* ... of two or more tricks */
+	unsigned int bails; /* sequences a bail ended (they score nothing) */
+	unsigned int best_tricks; /* the most tricks in a sequence landed */
+	unsigned int sequence_tricks; /* tricks in the sequence under way */
+	float points; /* the points of the sequences landed */
+	float best_points; /* the best sequence's */
+	float sequence_points; /* the sequence under way's so far */
+	float multiplier; /* the combo multiplier (1: none going) */
+	char last_trick[32]; /* the name of the last trick (Skate 3's: "Kickflip") */
+};
+/* 0 with out filled (naught before the session's first step), -1 with no
+such session */
+int halo_skate_tricks(struct halo_skate_tricks *out);
+int halo_skate_tricks_in(int session, struct halo_skate_tricks *out);
+/* the right stick's way through the gesture the engine knows name by ("Ollie",
+"Kickflip", "Nollie", "360Flip"; in the air "L_F_Kickflip" ...), read from
+the joystick files of the converted data at assets: pad positions from -1 to
+1, +Y up, two floats each into points (room for capacity); how many, 0 for no
+such gesture, -1 on a bad argument. Each point held a game tick, in turn,
+flicks the trick as a person would */
+int halo_skate_gesture(const char *assets, const char *name, float *points, int capacity);
+
 #endif

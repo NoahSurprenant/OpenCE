@@ -428,6 +428,14 @@ game finds them; the ollie checks its pop and landing came from there), and
 one more test, which needs no engine, checks the loader reads every file
 `SOURCES.txt` lists and takes each sound written from that folder.
 
+`halo-skate/tests/real_assets_tricks.rs` flicks tricks the same way, through
+the gestures read from the data (above, "Tricks"), and checks what the
+scoring made of them: flatground flips each named, landed and scored; off
+the funbox a grab and a late flip each a combo with the ollie, and a late
+flip flicked halfway through the air a bail that scores nothing; manuals;
+and an ollie onto the rail, the grind and a flip off it, one combo
+(`--test real_assets_tricks`).
+
 `halo-skate/tests/real_assets_halo_map.rs` does the same on a real level:
 Hang 'Em High's collision, read at test time from your own Halo Xbox map
 (`common/halo_map.rs`: the cache file's header, its inflated tags, the
@@ -521,6 +529,7 @@ published even when the runner is down.
 | input | `../linux/src/sdl_platform.c`, `xinput_sdl.c` | J, and the first pad as an Xbox 360 pad |
 | sound | `halo-skate/src/sound.rs`, `sound_set.rs`, `mixer.rs`, `include/halo_skate_sound.h`, `../linux/game/skate_sound.c`, `../linux/src/dsound_sdl.c` | the events and loops from the engine's ticks, the sound set, the voices mixed into the game's output, and the listener, surface and volume from the game (above, "Sound") |
 | obstacles | `../linux/game/skate.c`, `halo-skate/src/obstacles.rs`, `vendor/skate-core/src/physics/kinematic_obstacle.rs`, `vendor/skate-host/src/physics/solve/obstacles.rs` | the bipeds, vehicles, scenery and devices near the skater, solid to the board and the skater each tick (below, "Obstacles") |
+| tricks | `halo-skate/src/tricks.rs`, `vendor/skate-host/src/physics/bridge/score.rs` | what the engine's scoring made of each session's riding, and the right stick's gestures read from the data, for the host's bots (below, "Tricks") |
 | multiplayer | `../linux/game/skate_network.c`, `../linux/game/network_distributed.c`, `halo-skate/src/board.rs` | each machine's skater's state to the others, and theirs posed and their boards drawn here (below, "Multiplayer") |
 
 ### Loading
@@ -888,6 +897,35 @@ more skaters near than that, the nearest and loudest are heard (a skater
 coming near takes the voice of the furthest), and this machine's own always.
 `tools/test_skating_bots.py`'s test_skating_bots_crowd puts 16 bots on boards
 with a client (HALO_TEST_SKATE_CROWD for more: 64, 127).
+
+### Tricks
+
+The engine carries Skate 3's own trick system: flick-it gestures on the right
+stick (matched against the patterns in your data's
+`private/stock/data/joystick/*.pat`, one stick sample per engine tick), grabs
+on the triggers in the air, manuals with the right stick held part way, and
+grinds by themselves. Its scoring (`vendor/skate-host/src/scoring_runtime.rs`,
+Skate 3's score module) names each trick, gathers them into sequences (from
+leaving the ground, or starting a grind or a manual, to rolling away clean)
+with a combo multiplier, and scores nothing for a sequence a bail ends.
+
+The game reads two things of it (`halo-skate/src/tricks.rs`; nothing changes
+on the wire):
+
+- `halo_skate_tricks_in` (and `halo_skate_tricks` for this machine's
+  skater): what the scoring made of a session's riding since the session was
+  made, looked at after each engine tick: tricks announced and landed,
+  sequences landed, combos (two tricks or more), bails, points, the best
+  sequence and the last trick's name (`ID_TRICK_FLIP_KICKFLIP`).
+- `halo_skate_gesture`: the stick's way through a gesture by its name
+  (`Ollie`, `Kickflip`, `360Flip`, in the air `L_F_Kickflip` ...), read from
+  your data at run time, so that the host's bots flick tricks through the
+  same pad a person uses, each point held a game tick.
+
+A bail out of the air left the scoring's landing countdown set, so that no
+manual or grind sequence settled until the skater was next in the air; it is
+cleared when the bailed sequence settles (an OpenCE fix in the vendored
+scoring).
 
 ### Bots on boards
 
