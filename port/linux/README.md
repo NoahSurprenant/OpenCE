@@ -1330,8 +1330,24 @@ the bot's input, as a person's does, so nothing is new on the wire:
   report (`bots: [BOT] ... at tick`) counts each bot's rides, seconds and
   world units driven, backing up, vehicles flipped back, people braked for
   and people driven at.
-- Not yet: gunners and passengers, fighting from a vehicle, Scorpions and
-  rocket Warthogs, flying.
+- **Gunners.** In team games a bot takes the gunner's seat of a Warthog
+  that a team mate drives (a bot, or a person) when it is near and slow; a
+  bot driver waits a few seconds for a team mate on its way to the gun. The
+  gunner aims and fires the chaingun as it fights on foot (its reaction,
+  aim and error by difficulty; its lead takes the vehicle's own way off),
+  and gets out when nobody drives. A peaceful bot may ride a gun and never
+  fires it.
+- **Fighting from a vehicle.** A driver with a gunner aboard stops near an
+  enemy for the gunner's shots (easy, normal) or circles it (hard,
+  legendary), and drives on to another place instead of getting out at its
+  goal. A Ghost's driver is its gunner: a bot fights from one, aiming as it
+  steers, closing on a far target and backing off a near one, and a bot that
+  may fight takes a Ghost near in a fight. A Warthog's driver alone gets out
+  to fight on foot.
+- `debug.network_test_vehicles` ("all") gives an automated test game every
+  vehicle the map places (the built-in game types place Blood Gulch's
+  Warthogs only).
+- Not yet: Scorpions and rocket Warthogs, flying.
 
 Peaceful bots roam, take weapons and play as the others do, but never fight:
 they never aim at a player, shoot, throw a grenade or strike. They can still

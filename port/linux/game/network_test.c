@@ -89,6 +89,9 @@ void network_damage_statistics(long *sent_reports, long *dealt_reports, long *re
 /* xinput_sdl.c's */
 void test_input_hold_action(int hold);
 
+/* game_engine.c's vehicle set of none (its enum game_engine_vehicles) */
+#define NETWORK_TEST_VEHICLES_NONE 1
+
 enum
 {
 	_network_test_off,
@@ -139,6 +142,9 @@ static struct
 	(a built-in variant's time limit is 0, so a game with no score it
 	reaches never ends and the host never moves on) */
 	long time_limit;
+	/* debug.network_test_vehicles: the games' vehicle set (NONE: the
+	variant's) */
+	short vehicle_set;
 	long logged_time;
 	boolean public_game;
 	boolean browsing;
@@ -292,6 +298,12 @@ static void network_test_read_settings(
 		config_string("debug.network_test_pickup_weapon"));
 	network_test.score_to_win = (long)config_integer("debug.network_test_score");
 	network_test.time_limit = (long)config_integer("debug.network_test_time");
+	{
+		char const *vehicles = config_string("debug.network_test_vehicles");
+
+		network_test.vehicle_set = !vehicles ? NONE : !strcmp(vehicles, "all") ? VARIANT_VEHICLE_SET_PC :
+			!strcmp(vehicles, "none") ? NETWORK_TEST_VEHICLES_NONE : NONE;
+	}
 	if (network_test.mode != _network_test_off)
 		platform_log("network test: %s", setting);
 }
@@ -1277,6 +1289,10 @@ void network_test_update(
 						game_variant_options_default(&variant, &options);
 						if (network_test.time_limit > 0)
 							options.time_limit = (short)network_test.time_limit;
+						/* debug.network_test_vehicles: the games' vehicles (all a map
+						places, or none) */
+						if (network_test.vehicle_set != NONE)
+							options.vehicle_set[0] = options.vehicle_set[1] = (byte)network_test.vehicle_set;
 						player_ui_set_game_variant_options(&options);
 					}
 					network_game_server_change_game_variant(global_network_game_server_get(), &variant);

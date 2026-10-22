@@ -88,6 +88,14 @@ struct bot_statistics
 	long vehicle_flips;
 	long vehicle_braked;
 	long vehicle_rams;
+	/* ... in a gunner's seat: the times, the ticks, and the ticks it fired
+	from a vehicle (a gun's seat, a Ghost); the enemies it killed riding, and
+	those a vehicle it drove ran over (by accident or not) */
+	long gunner_rides;
+	long gunner_ticks;
+	long vehicle_ticks_fired;
+	long vehicle_kills;
+	long run_overs;
 };
 
 /* a bot and a vehicle (bots_vehicle.c) */
@@ -103,10 +111,11 @@ struct bot_vehicle
 	long press_tick;
 	/* the tick by which it is at the door, or gives the vehicle up */
 	long approach_until_tick;
-	/* the vehicle and its driver's seat; the vehicle it keeps off, until
-	when */
+	/* the vehicle and the seat it takes (its driver's or its gunner's: the
+	role); the vehicle it keeps off, until when */
 	long vehicle_index;
 	short seat_index;
+	short role;
 	long avoided_vehicle;
 	long avoided_until_tick;
 	/* the goal it rides toward (its walking brain's), the drive graph's node
@@ -138,6 +147,14 @@ struct bot_vehicle
 	long overturned_ticks;
 	boolean flip_after;
 	long flip_presses;
+	/* a gunner: the ticks its vehicle has had no driver, and stood still
+	with nobody to shoot at; a driver fighting: the way round its target it
+	circles (1 or -1), and a Ghost's strafe side and until when */
+	long no_driver_ticks;
+	long parked_ticks;
+	real orbit_side;
+	real strafe_side;
+	long strafe_until_tick;
 };
 
 /* a bot on a board (bots_skate.c) */
@@ -415,11 +432,36 @@ boolean bot_vehicle_busy(
 	struct bot const *bot);
 boolean bot_vehicle_riding(
 	struct bot const *bot);
-/* (bots.c) whether a bot other than except has the vehicle; how many bots
-drive vehicles */
+/* (bots_vehicle.c) whether the bot goes to the vehicle's gunner's seat, or
+is getting in there */
+boolean bot_vehicle_gunner_coming(
+	struct bot const *bot,
+	long vehicle_index);
+/* (bots_vehicle.c) whether the bot drives the vehicle, or goes to (of the
+team, or any team for NONE) */
+boolean bot_vehicle_drives(
+	struct bot const *bot,
+	long vehicle_index,
+	short team);
+/* (bots_combat.c) the vehicle the unit rides (NONE: none) */
+long bot_unit_vehicle(
+	long unit_index);
+/* (bots.c) whether a bot other than except has the vehicle's seat (NONE:
+any of it); how many bots ride vehicles */
 boolean bots_vehicle_taken(
 	long vehicle_index,
+	short seat_index,
 	struct bot const *except);
+/* (bots.c) whether a bot goes to the vehicle's gunner's seat (getting in) */
+boolean bots_vehicle_gunner_coming(
+	long vehicle_index);
+/* (bots.c) whether a bot of the team drives the vehicle or goes to; whether
+a bot drives it (or goes to) */
+boolean bots_vehicle_team_mate_drives(
+	long vehicle_index,
+	short team);
+boolean bots_vehicle_bot_drives(
+	long vehicle_index);
 long bots_vehicle_riders(
 	void);
 /* (bots_combat.c) a fight afresh; whether the bot fights now (it looks

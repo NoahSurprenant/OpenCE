@@ -42,6 +42,8 @@ none); debug.bot_vehicle sets each bot's way for the tests. */
 #include "math/real_math.h"
 #include "memory/data.h"
 #include "game/game.h"
+#include "game/game_allegiance.h"
+#include "game/game_engine.h"
 #include "game/players.h"
 #include "objects/objects.h"
 #include "tag_files/tag_files.h"
@@ -67,7 +69,16 @@ enum
 	/* it never gets into one */
 	_bot_vehicle_never,
 	/* it stands still on foot (something for a driver to brake for) */
-	_bot_vehicle_stand
+	_bot_vehicle_stand,
+	/* it takes only a gunner's seat, whenever a team mate drives near */
+	_bot_vehicle_gun
+};
+
+/* the seat a bot takes */
+enum
+{
+	_bot_vehicle_role_driver,
+	_bot_vehicle_role_gunner
 };
 
 /* what a bot is about with a vehicle */
@@ -93,6 +104,30 @@ from it (for one that drives whenever it can, 60), and how much quicker than wal
 #define BOT_VEHICLE_DRIVER_TRIP 10.0f
 #define BOT_VEHICLE_REACH 25.0f
 #define BOT_VEHICLE_DRIVER_REACH 60.0f
+/* ... in a fight (a Ghost to fight from), and a team mate's vehicle whose gun
+it takes; the fastest a vehicle whose driver is a person may go for it to
+get in (world units a second) */
+#define BOT_VEHICLE_FIGHT_REACH 15.0f
+#define BOT_VEHICLE_GUNNER_REACH 15.0f
+#define BOT_VEHICLE_GUNNER_BOARD_SPEED 1.0f
+/* a driver waits this long for a team mate going for its gun */
+#define BOT_VEHICLE_CREW_WAIT_TICKS (6 * TICKS_PER_SECOND)
+/* a driver with a gunner aboard drives on to a place at least this far off
+when it gets to its goal */
+#define BOT_VEHICLE_ROAM 30.0f
+/* fighting: a Warthog's driver alone gets out for an enemy this near; one
+with a gunner stops this near (or circles at this range, this far round a
+step); a Ghost closes past far and backs off inside near */
+#define BOT_VEHICLE_FIGHT_ON_FOOT 15.0f
+#define BOT_VEHICLE_STANDOFF 15.0f
+#define BOT_VEHICLE_ORBIT_RANGE 14.0f
+#define BOT_VEHICLE_ORBIT_STEP 0.7f
+#define BOT_VEHICLE_GHOST_FAR 14.0f
+#define BOT_VEHICLE_GHOST_NEAR 7.0f
+/* a gunner gets out after this long with no driver, or standing still with
+a person driving and nobody to shoot at */
+#define BOT_VEHICLE_NO_DRIVER_TICKS (3 * TICKS_PER_SECOND)
+#define BOT_VEHICLE_PARKED_TICKS (20 * TICKS_PER_SECOND)
 #define BOT_VEHICLE_QUICKER 0.75f
 /* a vehicle drives about this many times as fast as a bot walks, and getting
 in and out costs about this much (world units of walking) */
@@ -210,6 +245,8 @@ static short bot_vehicle_mode(
 				return _bot_vehicle_never;
 			if (!strcmp(name, "stand"))
 				return _bot_vehicle_stand;
+			if (!strcmp(name, "gun"))
+				return _bot_vehicle_gun;
 			return _bot_vehicle_normal;
 		}
 	}
@@ -243,6 +280,40 @@ static short bot_vehicle_driver_seat(
 	{
 		if (unit_seat_is_driver(vehicle_index, seat))
 			return seat;
+	}
+	return NONE;
+}
+
+/* the vehicle's gunner's seat that is no driver's (a Warthog's chaingun;
+NONE: none, a Ghost's driver is its gunner) */
+static short bot_vehicle_gunner_seat(
+	long vehicle_index)
+{
+	short count = unit_definition_get(object_get(vehicle_index)->definition_index)->unit.seats.count;
+	short seat;
+
+	for (seat = 0; seat < count; seat++)
+	{
+		if (unit_seat_is_gunner(vehicle_index, seat) && !unit_seat_is_driver(vehicle_index, seat))
+			return seat;
+	}
+	return NONE;
+}
+
+/* who sits in the vehicle's seat (NONE: nobody) */
+static long bot_vehicle_seat_rider(
+	long vehicle_index,
+	short seat_index)
+{
+	long child = object_get(vehicle_index)->object.first_child_object_index;
+
+	while (child != NONE)
+	{
+		struct object_datum *object = object_get(child);
+
+		if (TEST_FLAG(_object_mask_unit, object->object.type) && unit_get(child)->unit.parent_seat_index == seat_index)
+			return child;
+		child = object->object.next_object_index;
 	}
 	return NONE;
 }
@@ -491,6 +562,87 @@ static void bot_vehicle_door_way(
 	}
 }
 
+/* the vehicle's driver is the bot's team mate: one who sits in its
+driver's seat, or a bot that goes to it */
+static boolean bot_vehicle_team_driver(
+	long unit_index,
+	long vehicle_index)
+{
+	short seat = bot_vehicle_driver_seat(vehicle_index);
+	long driver = seat != NONE ? bot_vehicle_seat_rider(vehicle_index, seat) : NONE;
+	short team = object_get(unit_index)->object.owner_team_index;
+
+	if (!game_engine_has_teams() || seat == NONE)
+		return FALSE;
+	if (driver != NONE)
+		return !game_team_is_enemy(team, object_get(driver)->object.owner_team_index);
+	return bots_vehicle_team_mate_drives(vehicle_index, team);
+}
+
+/* a gunner's seat chosen: a Warthog near that a team mate drives (or a bot
+goes to drive), its gun free and nobody else going for it, slow (a driver
+who is a bot waits for its gunner), on the walking graph's reach */
+static boolean bot_vehicle_choose_gun(
+	struct bot *bot,
+	long unit_index,
+	real_point3d const *position,
+	short mode,
+	struct bots_nav_point const *goal)
+{
+	struct bot_vehicle *vehicle = &bot->brain.vehicle;
+	struct object_iterator iterator;
+	long best = NONE;
+	short best_seat = NONE;
+	real best_distance = 0.0f;
+	real reach = mode == _bot_vehicle_gun ? BOT_VEHICLE_DRIVER_REACH : BOT_VEHICLE_GUNNER_REACH;
+
+	object_iterator_new(&iterator, _object_mask_vehicle, 0);
+	while (object_iterator_next(&iterator))
+	{
+		struct object_datum *object = object_get(iterator.index);
+		real distance = (real)sqrt(distance_squared3d(position, &object->object.position));
+		real speed = (real)sqrt(magnitude_squared3d(&object->object.translational_velocity)) * TICKS_PER_SECOND;
+		short seat;
+
+		if (distance > reach || (best != NONE && distance >= best_distance) || !bot_vehicle_alive(iterator.index) ||
+			!bot_vehicle_kind(iterator.index) || object->object.up.k < BOT_VEHICLE_UPRIGHT ||
+			(iterator.index == vehicle->avoided_vehicle && game_time_get() < vehicle->avoided_until_tick))
+		{
+			continue;
+		}
+		seat = bot_vehicle_gunner_seat(iterator.index);
+		if (seat == NONE || bot_vehicle_seat_rider(iterator.index, seat) != NONE ||
+			bots_vehicle_taken(iterator.index, seat, bot) || !bot_vehicle_team_driver(unit_index, iterator.index))
+		{
+			continue;
+		}
+		/* (moving off: a person's that drives away is not run after; a bot
+		driver waits) */
+		if (speed > BOT_VEHICLE_GUNNER_BOARD_SPEED && bot_vehicle_seat_rider(iterator.index,
+			bot_vehicle_driver_seat(iterator.index)) != NONE && !bots_vehicle_bot_drives(iterator.index))
+		{
+			continue;
+		}
+		best = iterator.index;
+		best_seat = seat;
+		best_distance = distance;
+	}
+	if (best == NONE)
+		return FALSE;
+	vehicle->vehicle_index = best;
+	vehicle->seat_index = best_seat;
+	vehicle->role = _bot_vehicle_role_gunner;
+	vehicle->goal.x = goal->x;
+	vehicle->goal.y = goal->y;
+	vehicle->goal.z = goal->z;
+	vehicle->no_driver_ticks = 0;
+	vehicle->parked_ticks = 0;
+	bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_approach);
+	vehicle->approach_until_tick = game_time_get() + BOT_VEHICLE_APPROACH_TICKS +
+		(long)(best_distance * BOT_VEHICLE_APPROACH_TICKS_PER_UNIT);
+	return TRUE;
+}
+
 /* a ride chosen, if one is worth it: the vehicle, its driver's seat, the goal
 it rides toward; its walk to the door begun (TRUE) */
 static boolean bot_vehicle_choose(
@@ -512,6 +664,7 @@ static boolean bot_vehicle_choose(
 	real trip, ride;
 	long goal_node;
 	struct bots_nav_node const *end;
+	boolean fighting;
 
 	if (mode == _bot_vehicle_never || limit < 0 || !nav || !drive || brain->goal_node == NONE ||
 		brain->goal_node >= nav->node_count)
@@ -520,14 +673,19 @@ static boolean bot_vehicle_choose(
 	}
 	if (limit > 0 && bots_vehicle_riders() >= limit)
 		return FALSE;
-	if (bot_holds_flag(unit_get(unit_index)) || (brain->combat.target_visible &&
-		bot->difficulty != _bot_difficulty_peaceful && mode != _bot_vehicle_drive))
-	{
+	if (bot_holds_flag(unit_get(unit_index)))
 		return FALSE;
-	}
 	goal = nav->nodes[brain->goal_node].point;
+	/* (a team mate's vehicle near with its gun free: its gunner's seat) */
+	if (mode != _bot_vehicle_drive && bot_vehicle_choose_gun(bot, unit_index, position, mode, &goal))
+		return TRUE;
+	if (mode == _bot_vehicle_gun)
+		return FALSE;
+	/* (fighting, a bot that may fight takes a Ghost near, to fight from: its
+	guns are its driver's) */
+	fighting = brain->combat.target_visible && bot->difficulty != _bot_difficulty_peaceful && mode != _bot_vehicle_drive;
 	trip = bot_vehicle_distance2d(position, goal.x, goal.y);
-	if (trip < (mode == _bot_vehicle_drive ? BOT_VEHICLE_DRIVER_TRIP : BOT_VEHICLE_TRIP))
+	if (!fighting && trip < (mode == _bot_vehicle_drive ? BOT_VEHICLE_DRIVER_TRIP : BOT_VEHICLE_TRIP))
 		return FALSE;
 	object_iterator_new(&iterator, _object_mask_vehicle, 0);
 	while (object_iterator_next(&iterator))
@@ -537,16 +695,22 @@ static boolean bot_vehicle_choose(
 		short seat;
 		long node;
 
-		if (distance > (mode == _bot_vehicle_drive ? BOT_VEHICLE_DRIVER_REACH : BOT_VEHICLE_REACH) ||
-			(best != NONE && distance >= best_distance))
+		if (distance > (mode == _bot_vehicle_drive ? BOT_VEHICLE_DRIVER_REACH : fighting ? BOT_VEHICLE_FIGHT_REACH :
+			BOT_VEHICLE_REACH) || (best != NONE && distance >= best_distance))
 			continue;
+		/* (in a fight, a Ghost: a Warthog's driver alone fights on foot) */
+		if ((fighting || brain->combat.target_visible) &&
+			(!bot_vehicle_kind(iterator.index) || strcmp(bot_vehicle_kind(iterator.index), "ghost")))
+		{
+			continue;
+		}
 		if (!bot_vehicle_alive(iterator.index) || !bot_vehicle_kind(iterator.index) ||
 			(iterator.index == vehicle->avoided_vehicle && game_time_get() < vehicle->avoided_until_tick))
 		{
 			continue;
 		}
 		seat = bot_vehicle_driver_seat(iterator.index);
-		if (seat == NONE || bot_vehicle_ridden(iterator.index) || bots_vehicle_taken(iterator.index, bot) ||
+		if (seat == NONE || bot_vehicle_ridden(iterator.index) || bots_vehicle_taken(iterator.index, NONE, bot) ||
 			bot_vehicle_person_near(&object->object.position, BOT_VEHICLE_COURTESY))
 		{
 			continue;
@@ -572,10 +736,11 @@ static boolean bot_vehicle_choose(
 			(real)sqrt((end->point.x - goal.x) * (end->point.x - goal.x) + (end->point.y - goal.y) * (end->point.y - goal.y)) +
 			BOT_VEHICLE_OVERHEAD;
 	}
-	if (mode != _bot_vehicle_drive && ride > BOT_VEHICLE_QUICKER * trip)
+	if (mode != _bot_vehicle_drive && !fighting && ride > BOT_VEHICLE_QUICKER * trip)
 		return FALSE;
 	vehicle->vehicle_index = best;
 	vehicle->seat_index = best_seat;
+	vehicle->role = _bot_vehicle_role_driver;
 	vehicle->goal.x = goal.x;
 	vehicle->goal.y = goal.y;
 	vehicle->goal.z = goal.z;
@@ -654,6 +819,165 @@ static boolean bot_vehicle_way_blocked(
 	return person;
 }
 
+/* a new goal for a driver with a gunner aboard (its own goal reached): a
+node of the drive graph's main part a good way off, at random; FALSE: none
+found */
+static boolean bot_vehicle_new_goal(
+	struct bot_brain *brain,
+	struct bots_nav *drive,
+	real_point3d const *at)
+{
+	struct bot_vehicle *vehicle = &brain->vehicle;
+	short tries;
+
+	for (tries = 0; tries < 30; tries++)
+	{
+		long node = (long)(bot_random_real(brain) * (real)drive->node_count);
+		struct bots_nav_node const *here;
+
+		if (node < 0 || node >= drive->node_count)
+			continue;
+		here = &drive->nodes[node];
+		if (here->reach != (_bots_nav_reached_bit | _bots_nav_reaches_bit) ||
+			bot_vehicle_distance2d(at, here->point.x, here->point.y) < BOT_VEHICLE_ROAM)
+		{
+			continue;
+		}
+		vehicle->drive_goal_node = node;
+		vehicle->goal.x = here->point.x;
+		vehicle->goal.y = here->point.y;
+		vehicle->goal.z = here->point.z;
+		vehicle->path_next = NONE;
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/* a point on the drive graph to steer for, circling the target at a
+fighting range (its side kept, else the other); FALSE: none on the graph */
+static boolean bot_vehicle_orbit(
+	struct bot_vehicle *vehicle,
+	struct bots_nav *drive,
+	real_point3d const *at,
+	real_point3d const *target_at,
+	struct bots_nav_point *point)
+{
+	real dx = at->x - target_at->x, dy = at->y - target_at->y;
+	real around = (real)atan2(dy, dx);
+	short tries;
+
+	if (vehicle->orbit_side == 0.0f)
+		vehicle->orbit_side = 1.0f;
+	for (tries = 0; tries < 2; tries++)
+	{
+		real angle = around + vehicle->orbit_side * BOT_VEHICLE_ORBIT_STEP;
+
+		point->x = target_at->x + (real)cos(angle) * BOT_VEHICLE_ORBIT_RANGE;
+		point->y = target_at->y + (real)sin(angle) * BOT_VEHICLE_ORBIT_RANGE;
+		point->z = target_at->z;
+		if (bots_nav_locate(drive, point->x, point->y, point->z + 0.5f) != NONE)
+			return TRUE;
+		vehicle->orbit_side = -vehicle->orbit_side;
+	}
+	return FALSE;
+}
+
+/* a Ghost's driver fighting: its guns aimed as it steers (bots_combat.c's
+aim, the error and reaction of its difficulty), closing on a far target,
+backing off a near one (driving at nobody: bots run nobody over on purpose
+here), strafing side to side at hard and legendary */
+static void bot_vehicle_ghost_fight(
+	struct bot *bot,
+	long player_index,
+	real_point3d const *target_at,
+	real target_distance,
+	real forward_speed,
+	struct player_action *action)
+{
+	struct bot_brain *brain = &bot->brain;
+	struct bot_vehicle *vehicle = &brain->vehicle;
+	long now = game_time_get();
+	real along, side = 0.0f;
+	boolean vehicle_ahead;
+
+	(void)player_index;
+	(void)target_at;
+	along = target_distance > BOT_VEHICLE_GHOST_FAR ? 0.6f : target_distance < BOT_VEHICLE_GHOST_NEAR ? -0.5f : 0.0f;
+	if (bot->difficulty >= _bot_difficulty_normal)
+	{
+		if (now >= vehicle->strafe_until_tick)
+		{
+			vehicle->strafe_side = bot_random_real(brain) < 0.5f ? -1.0f : 1.0f;
+			vehicle->strafe_until_tick = now + 20 + (long)(bot_random_real(brain) * 25.0f);
+		}
+		side = vehicle->strafe_side * (bot->difficulty >= _bot_difficulty_hard ? 0.8f : 0.4f);
+	}
+	bot_action_idle(action, brain->yaw, 0.0f);
+	action->throttle.i = along;
+	action->throttle.j = side;
+	/* (someone on foot ahead: braked for) */
+	if (bot_vehicle_way_blocked(vehicle->vehicle_index, (real)fabs(forward_speed), &vehicle_ahead) && forward_speed > 0.3f)
+		action->throttle.i = -1.0f;
+	bot_combat_act(bot, vehicle->unit_index, action, TRUE);
+	brain->yaw = brain->combat.aim_yaw;
+}
+
+/* a gunner: its aim and fire at what it sees from the seat (bots_combat.c);
+seeing nobody, it looks ahead and about. A peaceful bot only looks. It gets
+out when the vehicle has had no driver a few seconds, or has stood still a
+long while with a person driving and nobody to shoot at */
+static void bot_vehicle_gun(
+	struct bot *bot,
+	long player_index,
+	long unit_index,
+	struct player_action *action)
+{
+	struct bot_brain *brain = &bot->brain;
+	struct bot_vehicle *vehicle = &brain->vehicle;
+	struct object_datum *object = object_get(vehicle->vehicle_index);
+	real heading = (real)atan2(object->object.forward.j, object->object.forward.i);
+	real speed = (real)sqrt(magnitude_squared3d(&object->object.translational_velocity)) * TICKS_PER_SECOND;
+	long now = game_time_get();
+	boolean engaged;
+
+	brain->statistics.gunner_ticks++;
+	engaged = bot->difficulty != _bot_difficulty_peaceful && bot_combat_engaged(bot, player_index, unit_index, bot->slot) &&
+		brain->combat.target_player != NONE;
+	vehicle->no_driver_ticks = unit_get(vehicle->vehicle_index)->unit.driver_object_index == NONE ?
+		vehicle->no_driver_ticks + 1 : 0;
+	vehicle->parked_ticks = speed < 0.3f && !engaged ? vehicle->parked_ticks + 1 : 0;
+	if (vehicle->no_driver_ticks > BOT_VEHICLE_NO_DRIVER_TICKS)
+	{
+		bot_vehicle_leave(vehicle, player_index, "nobody drives", FALSE);
+		bot_action_idle(action, brain->yaw, 0.0f);
+		return;
+	}
+	if (vehicle->parked_ticks > BOT_VEHICLE_PARKED_TICKS && !bots_vehicle_bot_drives(vehicle->vehicle_index))
+	{
+		bot_vehicle_leave(vehicle, player_index, "parked", FALSE);
+		bot_action_idle(action, brain->yaw, 0.0f);
+		return;
+	}
+	if (engaged)
+	{
+		bot_action_idle(action, brain->yaw, brain->pitch);
+		bot_combat_act(bot, unit_index, action, TRUE);
+		brain->yaw = brain->combat.aim_yaw;
+		brain->pitch = brain->combat.aim_pitch;
+		return;
+	}
+	/* (nobody to shoot at: ahead, and a look about now and then) */
+	{
+		real look = bot_vehicle_angle(heading + (real)sin((real)(now + bot->slot * 37) / 45.0f) * 1.2f);
+		real turn = bot_vehicle_angle(look - brain->yaw);
+
+		brain->combat.aim_set = FALSE;
+		brain->yaw = bot_vehicle_angle(brain->yaw + PIN(turn, -0.12f, 0.12f));
+		brain->pitch = 0.0f;
+		bot_action_idle(action, brain->yaw, 0.0f);
+	}
+}
+
 /* driving: the bot's input as its vehicle's driver */
 static void bot_vehicle_drive(
 	struct bot *bot,
@@ -671,10 +995,23 @@ static void bot_vehicle_drive(
 		object->object.translational_velocity.j * object->object.forward.j) * TICKS_PER_SECOND;
 	real heading = (real)atan2(object->object.forward.j, object->object.forward.i);
 	long now = game_time_get();
-	real throttle, yaw, off, turn, remaining;
+	real throttle, yaw, off, turn, remaining = 1.0e30f;
 	boolean vehicle_ahead = FALSE;
 	boolean blocked;
 	struct bots_nav_point target;
+	/* (a fight: its target, where, how far; a gunner aboard; whether it
+	steers straight for a point off the graph's way (circling its target),
+	or holds still for its gunner) */
+	boolean fighting;
+	long target_unit = NONE;
+	real_point3d target_at = at;
+	real target_distance = 1.0e30f;
+	boolean gunner_aboard = object_get(vehicle->vehicle_index) && unit_get(vehicle->vehicle_index)->unit.gunner_object_index != NONE &&
+		unit_get(vehicle->vehicle_index)->unit.gunner_object_index != vehicle->unit_index;
+	boolean ghost = !strcmp(bot_vehicle_kind(vehicle->vehicle_index) ? bot_vehicle_kind(vehicle->vehicle_index) : "", "ghost");
+	boolean direct = FALSE;
+	boolean hold = FALSE;
+	struct bots_nav_point direct_point;
 
 	/* (how far, how long) */
 	{
@@ -693,6 +1030,91 @@ static void bot_vehicle_drive(
 		bot_vehicle_leave(vehicle, player_index, "it turned over", TRUE);
 		bot_action_idle(action, brain->yaw, 0.0f);
 		return;
+	}
+	/* (what it sees from its seat, fighting: a bot that may fight) */
+	fighting = bot->difficulty != _bot_difficulty_peaceful &&
+		bot_combat_engaged(bot, player_index, vehicle->unit_index, bot->slot) && brain->combat.target_visible;
+	if (fighting)
+	{
+		struct player_datum *target_player = player_try_and_get(brain->combat.target_player);
+
+		if (target_player && target_player->unit_index != NONE)
+		{
+			target_unit = target_player->unit_index;
+			object_get_origin(target_unit, &target_at);
+			target_distance = (real)sqrt(distance_squared3d(&at, &target_at));
+		}
+		else
+		{
+			fighting = FALSE;
+		}
+	}
+	else
+	{
+		brain->combat.aim_set = FALSE;
+	}
+	/* (a team mate going for its gun: waited for, a while) */
+	if (!gunner_aboard && !ghost && bots_vehicle_gunner_coming(vehicle->vehicle_index) &&
+		now - vehicle->phase_tick < BOT_VEHICLE_CREW_WAIT_TICKS)
+	{
+		bot_action_idle(action, brain->yaw, 0.0f);
+		action->throttle.i = forward_speed > 0.5f ? -1.0f : 0.0f;
+		vehicle->check_tick = now;
+		vehicle->check_position = at;
+		return;
+	}
+	/* (a Ghost fights: its guns are its driver's) */
+	if (fighting && ghost)
+	{
+		bot_vehicle_ghost_fight(bot, player_index, &target_at, target_distance, forward_speed, action);
+		vehicle->path_next = NONE;
+		vehicle->check_tick = now;
+		vehicle->check_position = at;
+		return;
+	}
+	if (fighting && config_boolean("debug.bot_trace"))
+		platform_log("bots: trace fight: player %ld in %lx driver %lx gunner %lx (me %lx) gunner seat %d rider %lx, target %.1f away",
+			(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index,
+			unit_get(vehicle->vehicle_index)->unit.driver_object_index, unit_get(vehicle->vehicle_index)->unit.gunner_object_index,
+			vehicle->unit_index, bot_vehicle_gunner_seat(vehicle->vehicle_index),
+			bot_vehicle_gunner_seat(vehicle->vehicle_index) == NONE ? NONE :
+			bot_vehicle_seat_rider(vehicle->vehicle_index, bot_vehicle_gunner_seat(vehicle->vehicle_index)), target_distance);
+	/* (a Warthog alone, an enemy near: out, to fight on foot) */
+	if (fighting && !gunner_aboard && target_distance < BOT_VEHICLE_FIGHT_ON_FOOT)
+	{
+		bot_vehicle_leave(vehicle, player_index, "a fight", FALSE);
+		bot_action_idle(action, brain->yaw, 0.0f);
+		return;
+	}
+	/* (a gunner aboard: circling the target (hard, legendary), else near it
+	and still, for the gunner's shots) */
+	if (fighting && gunner_aboard)
+	{
+		if (bot->difficulty >= _bot_difficulty_hard)
+			direct = bot_vehicle_orbit(vehicle, drive, &at, &target_at, &direct_point);
+		if (!direct)
+		{
+			if (bot_vehicle_distance2d(&target_at, vehicle->goal.x, vehicle->goal.y) > 6.0f)
+			{
+				long node = bot_vehicle_nearest_node(drive, target_at.x, target_at.y, target_at.z);
+
+				vehicle->goal.x = target_at.x;
+				vehicle->goal.y = target_at.y;
+				vehicle->goal.z = target_at.z;
+				if (node != NONE)
+				{
+					vehicle->drive_goal_node = node;
+					vehicle->path_next = NONE;
+				}
+			}
+			hold = target_distance < BOT_VEHICLE_STANDOFF;
+		}
+	}
+	if (direct)
+	{
+		target = direct_point;
+		vehicle->path_next = NONE;
+		goto steer;
 	}
 	/* (a race's next flag: its goal) */
 	if (brain->objective.kind == _bot_objective_go &&
@@ -762,9 +1184,24 @@ static void bot_vehicle_drive(
 		remaining = bot_vehicle_distance2d(&at, end->x, end->y);
 		if (vehicle->path_next < 0 || remaining < BOT_VEHICLE_ARRIVED)
 		{
-			bot_vehicle_leave(vehicle, player_index, "there", FALSE);
-			bot_action_idle(action, brain->yaw, 0.0f);
-			return;
+			/* (its gunner fighting: there it stays, still; a gunner aboard and
+			nobody to fight: on to another place, its gunner's ride goes on) */
+			if (fighting && gunner_aboard)
+			{
+				hold = TRUE;
+				vehicle->path_next = vehicle->path_next < 0 ? 0 : vehicle->path_next;
+			}
+			else if (gunner_aboard && bot_vehicle_new_goal(brain, drive, &at))
+			{
+				bot_action_idle(action, brain->yaw, 0.0f);
+				return;
+			}
+			else
+			{
+				bot_vehicle_leave(vehicle, player_index, "there", FALSE);
+				bot_action_idle(action, brain->yaw, 0.0f);
+				return;
+			}
 		}
 	}
 	/* (the point it steers for: the first node ahead along its way at least
@@ -787,6 +1224,7 @@ static void bot_vehicle_drive(
 			}
 		}
 	}
+steer:
 	yaw = (real)atan2(target.y - at.y, target.x - at.x);
 	off = bot_vehicle_angle(yaw - heading);
 	/* (how fast: slower in a turn, near its goal; nothing in the air) */
@@ -801,8 +1239,12 @@ static void bot_vehicle_drive(
 	it rolls) */
 	if (object->object.up.k < BOT_VEHICLE_LEANING && throttle > 0.4f)
 		throttle = 0.4f;
-	if (!TEST_FLAG(object->object.flags, _object_on_ground_bit))
+	/* (a Ghost hovers: never on the ground, and driven all the same) */
+	if (!ghost && !TEST_FLAG(object->object.flags, _object_on_ground_bit))
 		throttle = 0.0f;
+	/* (still for its gunner: braked to a stop) */
+	if (hold)
+		throttle = forward_speed > 0.5f ? -0.6f : 0.0f;
 	/* (someone on foot ahead: braked for, whoever they are; a vehicle:
 	slowed for) */
 	blocked = bot_vehicle_way_blocked(vehicle->vehicle_index, speed, &vehicle_ahead);
@@ -965,8 +1407,17 @@ boolean bot_vehicle_think(
 		{
 			char const *reason = NULL;
 
-			if (bot_vehicle_ridden(vehicle->vehicle_index))
+			boolean gunner = vehicle->role == _bot_vehicle_role_gunner;
+
+			if (gunner ? bot_vehicle_seat_rider(vehicle->vehicle_index, vehicle->seat_index) != NONE :
+				bot_vehicle_ridden(vehicle->vehicle_index))
+			{
 				reason = "someone got in";
+			}
+			else if (gunner && !bot_vehicle_team_driver(unit_index, vehicle->vehicle_index))
+				reason = "no team mate drives it";
+			else if (gunner && object_get(vehicle->vehicle_index)->object.up.k < BOT_VEHICLE_UPRIGHT)
+				reason = "not upright";
 			else if (object_get(vehicle->vehicle_index)->object.up.k < BOT_VEHICLE_UPRIGHT)
 			{
 				/* (on its side or roof: flipped back over first) */
@@ -976,10 +1427,18 @@ boolean bot_vehicle_think(
 			}
 			else if (!unit_get_seat_entrance_point(unit_index, vehicle->vehicle_index, vehicle->seat_index, &door, &seat, NULL))
 				reason = "no door";
-			else if (brain->combat.target_visible && bot->difficulty != _bot_difficulty_peaceful && mode != _bot_vehicle_drive)
+			/* (a fight: on to a Ghost or a gun, which fight; not to a Warthog to
+			drive) */
+			else if (brain->combat.target_visible && bot->difficulty != _bot_difficulty_peaceful && mode == _bot_vehicle_normal &&
+				!gunner && strcmp(bot_vehicle_kind(vehicle->vehicle_index), "ghost"))
+			{
 				reason = "a fight";
-			else if (bot_vehicle_person_near(&object_get(vehicle->vehicle_index)->object.position, BOT_VEHICLE_COURTESY))
+			}
+			else if (!gunner && bot_vehicle_person_near(&object_get(vehicle->vehicle_index)->object.position,
+				BOT_VEHICLE_COURTESY))
+			{
 				reason = "a person near it";
+			}
 			if (reason)
 			{
 				bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS / 3, reason);
@@ -1016,10 +1475,27 @@ boolean bot_vehicle_think(
 		if (parent == vehicle->vehicle_index && object_get(unit_index)->object.parent_object_index != NONE &&
 			unit_get(unit_index)->unit.parent_seat_index == vehicle->seat_index)
 		{
-			brain->statistics.vehicle_rides++;
-			platform_log("bots: player %ld drives vehicle %lx (%s) at tick %ld",
-				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index,
-				bot_vehicle_kind(vehicle->vehicle_index), now);
+			if (vehicle->role == _bot_vehicle_role_gunner)
+			{
+				short driver_seat = bot_vehicle_driver_seat(vehicle->vehicle_index);
+				long driver = driver_seat != NONE ? bot_vehicle_seat_rider(vehicle->vehicle_index, driver_seat) : NONE;
+				long driver_player = driver != NONE ? unit_get(driver)->unit.player_index : NONE;
+
+				brain->statistics.gunner_rides++;
+				platform_log("bots: player %ld guns vehicle %lx (%s), %s at tick %ld",
+					(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index,
+					bot_vehicle_kind(vehicle->vehicle_index), driver_player == NONE ? "its driver to come" :
+					bots_player_is_bot(player_get(driver_player)) ? "a bot driving" : "a person driving", now);
+				vehicle->no_driver_ticks = 0;
+				vehicle->parked_ticks = 0;
+			}
+			else
+			{
+				brain->statistics.vehicle_rides++;
+				platform_log("bots: player %ld drives vehicle %lx (%s) at tick %ld",
+					(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index,
+					bot_vehicle_kind(vehicle->vehicle_index), now);
+			}
 			vehicle->last_position = object_get(vehicle->vehicle_index)->object.position;
 			vehicle->check_position = vehicle->last_position;
 			vehicle->check_tick = now;
@@ -1039,7 +1515,9 @@ boolean bot_vehicle_think(
 			bot_action_idle(action, brain->yaw, brain->pitch);
 			return TRUE;
 		}
-		if (now - vehicle->phase_tick > BOT_VEHICLE_BOARD_TICKS || bot_vehicle_ridden(vehicle->vehicle_index) ||
+		if (now - vehicle->phase_tick > BOT_VEHICLE_BOARD_TICKS ||
+			(vehicle->role == _bot_vehicle_role_gunner ? bot_vehicle_seat_rider(vehicle->vehicle_index, vehicle->seat_index) != NONE :
+			bot_vehicle_ridden(vehicle->vehicle_index)) ||
 			!unit_get_seat_entrance_point(unit_index, vehicle->vehicle_index, vehicle->seat_index, &door, &seat, NULL))
 		{
 			bot_vehicle_give_up(vehicle, BOT_VEHICLE_AVOID_TICKS, "not in at the door");
@@ -1083,7 +1561,7 @@ boolean bot_vehicle_think(
 			platform_log("bots: player %ld is out of vehicle %lx (%s) at tick %ld",
 				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), vehicle->vehicle_index,
 				overturned ? "it turned over" : "put out", now);
-			if (overturned)
+			if (overturned && vehicle->role == _bot_vehicle_role_driver)
 			{
 				bot_vehicle_set_phase(vehicle, _bot_vehicle_phase_flip);
 				vehicle->flip_presses = 0;
@@ -1095,7 +1573,10 @@ boolean bot_vehicle_think(
 			bot_vehicle_walk_on(brain);
 			return FALSE;
 		}
-		bot_vehicle_drive(bot, player_index, action);
+		if (vehicle->role == _bot_vehicle_role_gunner)
+			bot_vehicle_gun(bot, player_index, unit_index, action);
+		else
+			bot_vehicle_drive(bot, player_index, action);
 		return TRUE;
 
 	case _bot_vehicle_phase_leave:
@@ -1122,7 +1603,8 @@ boolean bot_vehicle_think(
 		}
 		bot_action_idle(action, brain->yaw, 0.0f);
 		/* (stopped first, braking against the way it goes) */
-		if (parent == vehicle->vehicle_index && fabs(forward_speed) > 1.0f && now - vehicle->phase_tick < 3 * TICKS_PER_SECOND)
+		if (parent == vehicle->vehicle_index && vehicle->role == _bot_vehicle_role_driver && fabs(forward_speed) > 1.0f &&
+			now - vehicle->phase_tick < 3 * TICKS_PER_SECOND)
 		{
 			action->throttle.i = forward_speed > 0.0f ? -1.0f : 1.0f;
 			return TRUE;
@@ -1189,6 +1671,29 @@ boolean bot_vehicle_think(
 	}
 	}
 	return FALSE;
+}
+
+boolean bot_vehicle_gunner_coming(
+	struct bot const *bot,
+	long vehicle_index)
+{
+	struct bot_vehicle const *vehicle = &bot->brain.vehicle;
+
+	return vehicle->vehicle_index == vehicle_index && vehicle->role == _bot_vehicle_role_gunner &&
+		(vehicle->phase == _bot_vehicle_phase_approach || vehicle->phase == _bot_vehicle_phase_board);
+}
+
+boolean bot_vehicle_drives(
+	struct bot const *bot,
+	long vehicle_index,
+	short team)
+{
+	struct bot_vehicle const *vehicle = &bot->brain.vehicle;
+
+	return vehicle->vehicle_index == vehicle_index && vehicle->role == _bot_vehicle_role_driver &&
+		vehicle->phase != _bot_vehicle_phase_none && vehicle->phase != _bot_vehicle_phase_flip &&
+		vehicle->phase != _bot_vehicle_phase_leave && (team == NONE || (bot->brain.unit_index != NONE &&
+		!game_team_is_enemy(team, object_get(bot->brain.unit_index)->object.owner_team_index)));
 }
 
 boolean bot_vehicle_holds(

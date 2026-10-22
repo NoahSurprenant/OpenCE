@@ -622,6 +622,11 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_vehicle", _config_real, "0.0", "HALO_NETWORK_TEST_VEHICLE", _environment_value, _platform_all,
 		"This many seconds into an automated test game the host seats its last\n"
 		"player as a vehicle's driver (and out 15 seconds on); 0 never." },
+	{ "debug.network_test_vehicles", _config_string, "\"\"", "HALO_NETWORK_TEST_VEHICLES", _environment_value,
+		_platform_all,
+		"The vehicles of an automated test host's games: \"all\" (every vehicle\n"
+		"the map places: Blood Gulch's Ghosts too), \"none\", or empty for the\n"
+		"variant's own." },
 	{ "debug.network_test_vehicle_flip", _config_real, "0.0", "HALO_NETWORK_TEST_VEHICLE_FLIP", _environment_value,
 		_platform_all,
 		"This many seconds into an automated test game the host turns the vehicle\n"

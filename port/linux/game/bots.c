@@ -364,7 +364,8 @@ static void bots_report(
 			"%ld power weapons taken, %ld suicides; %.0f world units from a spawn at most; "
 			"on a board %ld times, %ld seconds, %.0f world units, %ld ollies, %ld bails, %ld people ridden at, "
 			"%ld rails lined up with, %ld grinds; %ld times in a vehicle by mistake; %ld rides in vehicles, %ld seconds driven, "
-			"%.0f world units driven, %ld reverses, %ld vehicles flipped back, %ld people braked for, %ld people driven at",
+			"%.0f world units driven, %ld reverses, %ld vehicles flipped back, %ld people braked for, %ld people driven at; "
+			"%ld rides as a gunner, %ld seconds gunning, %ld ticks fired riding, %ld kills riding, %ld people run over",
 			name, now, statistics->goals_reached, statistics->paths_planned, statistics->paths_failed, statistics->stuck,
 			statistics->stuck_ticks / TICKS_PER_SECOND,
 			statistics->travelled, statistics->moves[_bots_nav_drop], statistics->moves[_bots_nav_jump],
@@ -378,13 +379,16 @@ static void bots_report(
 			statistics->skate_ollies, statistics->skate_bails, statistics->skate_rams, statistics->skate_grind_tries,
 			statistics->skate_grinds, statistics->vehicle_mistakes, statistics->vehicle_rides,
 			statistics->vehicle_ticks / TICKS_PER_SECOND, statistics->vehicle_travelled, statistics->vehicle_reverses,
-			statistics->vehicle_flips, statistics->vehicle_braked, statistics->vehicle_rams);
+			statistics->vehicle_flips, statistics->vehicle_braked, statistics->vehicle_rams, statistics->gunner_rides,
+			statistics->gunner_ticks / TICKS_PER_SECOND, statistics->vehicle_ticks_fired, statistics->vehicle_kills,
+			statistics->run_overs);
 		bots_report_objective(bot, name, now);
 	}
 }
 
 boolean bots_vehicle_taken(
 	long vehicle_index,
+	short seat_index,
 	struct bot const *except)
 {
 	short index;
@@ -393,7 +397,47 @@ boolean bots_vehicle_taken(
 	{
 		struct bot const *bot = &bots_globals.bots[index];
 
-		if (bot->used && bot != except && bot_vehicle_holds(bot, vehicle_index))
+		if (bot->used && bot != except && bot_vehicle_holds(bot, vehicle_index) &&
+			(seat_index == NONE || bot->brain.vehicle.seat_index == seat_index))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+boolean bots_vehicle_team_mate_drives(
+	long vehicle_index,
+	short team)
+{
+	short index;
+
+	for (index = 0; index < BOTS_MAXIMUM; index++)
+	{
+		struct bot const *bot = &bots_globals.bots[index];
+
+		if (bot->used && bot_vehicle_drives(bot, vehicle_index, team))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+boolean bots_vehicle_bot_drives(
+	long vehicle_index)
+{
+	return bots_vehicle_team_mate_drives(vehicle_index, NONE);
+}
+
+boolean bots_vehicle_gunner_coming(
+	long vehicle_index)
+{
+	short index;
+
+	for (index = 0; index < BOTS_MAXIMUM; index++)
+	{
+		struct bot const *bot = &bots_globals.bots[index];
+
+		if (bot->used && bot_vehicle_gunner_coming(bot, vehicle_index))
 			return TRUE;
 	}
 	return FALSE;
@@ -532,6 +576,18 @@ void bots_note_damage(
 	else if (grenade)
 	{
 		bot->brain.statistics.grenade_kills++;
+	}
+	/* (a vehicle's: run over (its collision damage, its driver's), or shot
+	riding) */
+	else if (name && strstr(name, "collision"))
+	{
+		bot->brain.statistics.run_overs++;
+		platform_log("bots: player %ld ran over player %ld (%s)", DATUM_INDEX_TO_ABSOLUTE_INDEX(damage->owner_player_index),
+			DATUM_INDEX_TO_ABSOLUTE_INDEX(dead_player_index), bot->brain.vehicle.phase ? "driving" : "?");
+	}
+	else if (bot->brain.unit_index != NONE && bot_unit_vehicle(bot->brain.unit_index) != NONE)
+	{
+		bot->brain.statistics.vehicle_kills++;
 	}
 }
 
