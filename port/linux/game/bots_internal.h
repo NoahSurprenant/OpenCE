@@ -155,6 +155,8 @@ struct bot_vehicle
 	real orbit_side;
 	real strafe_side;
 	long strafe_until_tick;
+	/* it drives at someone on foot (bots_vehicle.c's bot_vehicle_may_ram) */
+	boolean ramming;
 };
 
 /* a bot on a board (bots_skate.c) */

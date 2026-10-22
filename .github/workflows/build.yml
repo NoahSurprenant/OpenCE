@@ -590,7 +590,8 @@ jobs:
     # Gulch's and Sidewinder's Warthogs and Ghosts (test_bots_drive,
     # test_bots_drive_harmless), flipping one back over (test_bots_flip),
     # crews of a driver and a gunner (test_bots_warthog_crew) and fighting
-    # from Ghosts (test_bots_ghost_fight).
+    # from Ghosts (test_bots_ghost_fight), and running people over by
+    # difficulty (test_bots_ram).
     # They
     # need the Halo maps, so on the owner's
     # runner, opence-k8s, only for this repository's own code, as
@@ -670,7 +671,7 @@ jobs:
             -k "ctf or difficulties" > "$RUNNER_TEMP/bots-d.log" 2>&1 &
           fourth=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/e" tools/test_bots.py \
-            -k "drive or flip or crew or ghost" > "$RUNNER_TEMP/bots-e.log" 2>&1 &
+            -k "drive or flip or crew or ghost or ram" > "$RUNNER_TEMP/bots-e.log" 2>&1 &
           fifth=$!
           wait $first || true
           wait $second || true
@@ -680,10 +681,10 @@ jobs:
           cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log"
           if ! grep -q '7 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
-            ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" || ! grep -q '5 passed' "$RUNNER_TEMP/bots-e.log" ||
+            ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" || ! grep -q '6 passed' "$RUNNER_TEMP/bots-e.log" ||
             grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log"; then
-            echo "::error::the twenty tests of tools/test_bots.py did not all run and pass (7 + 4 + 2 + 2 + 5)"
+            echo "::error::the twenty-one tests of tools/test_bots.py did not all run and pass (7 + 4 + 2 + 2 + 6)"
             exit 1
           fi
 
