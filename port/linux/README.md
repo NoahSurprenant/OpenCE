@@ -1313,8 +1313,8 @@ the bot's input, as a person's does, so nothing is new on the wire:
 - It drives along the graph that vehicles drive (below, "The walking
   graph"), steering for a point a few world units ahead, slower in turns,
   near its goal, leaning or in the air. It brakes for anyone on foot ahead,
-  bots and people alike, and slows for vehicles: a bot runs nobody over on
-  purpose (accidents happen). Peaceful bots drive too.
+  bots and people alike, and slows for vehicles, but for one it means to run
+  over (below, by difficulty). Peaceful bots drive too.
 - Getting nowhere, it backs up with the wheels turned and goes round. Stuck
   again and again on one part of the way, it keeps off it, and after six
   times in 20 seconds it gets out and walks.
@@ -1343,7 +1343,14 @@ the bot's input, as a person's does, so nothing is new on the wire:
   goal. A Ghost's driver is its gunner: a bot fights from one, aiming as it
   steers, closing on a far target and backing off a near one, and a bot that
   may fight takes a Ghost near in a fight. A Warthog's driver alone gets out
-  to fight on foot.
+  to fight on foot, unless it may run its target over.
+- **Running people over, by difficulty.** Peaceful and easy bots never drive
+  at anyone on purpose and brake for people on foot; normal bots drive at a
+  target on foot already ahead (within 20 degrees, 12 world units); hard and
+  legendary bots hunt targets on foot within 25 world units, in a Warthog
+  (which they take in a fight for it) or a Ghost. Never a team mate, nor
+  anyone riding. Accidents happen at every difficulty. The report counts
+  the people a bot drove at and those its vehicle ran over.
 - `debug.network_test_vehicles` ("all") gives an automated test game every
   vehicle the map places (the built-in game types place Blood Gulch's
   Warthogs only).

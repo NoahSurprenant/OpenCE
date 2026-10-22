@@ -115,6 +115,13 @@ get in (world units a second) */
 /* a driver with a gunner aboard drives on to a place at least this far off
 when it gets to its goal */
 #define BOT_VEHICLE_ROAM 30.0f
+/* running people over (bot_vehicle_may_ram): a normal bot's target ahead
+within this range and angle (radians), a hard one's within this range; none
+higher or lower than this (world units) */
+#define BOT_VEHICLE_RAM_RANGE 12.0f
+#define BOT_VEHICLE_RAM_CONE 0.35f
+#define BOT_VEHICLE_HUNT_RANGE 25.0f
+#define BOT_VEHICLE_RAM_HEIGHT 2.0f
 /* fighting: a Warthog's driver alone gets out for an enemy this near; one
 with a gunner stops this near (or circles at this range, this far round a
 step); a Ghost closes past far and backs off inside near */
@@ -698,8 +705,9 @@ static boolean bot_vehicle_choose(
 		if (distance > (mode == _bot_vehicle_drive ? BOT_VEHICLE_DRIVER_REACH : fighting ? BOT_VEHICLE_FIGHT_REACH :
 			BOT_VEHICLE_REACH) || (best != NONE && distance >= best_distance))
 			continue;
-		/* (in a fight, a Ghost: a Warthog's driver alone fights on foot) */
-		if ((fighting || brain->combat.target_visible) &&
+		/* (in a fight, a Ghost; a Warthog only for a hard or legendary bot,
+		who runs people over with it: another's driver alone fights on foot) */
+		if ((fighting || brain->combat.target_visible) && bot->difficulty < _bot_difficulty_hard &&
 			(!bot_vehicle_kind(iterator.index) || strcmp(bot_vehicle_kind(iterator.index), "ghost")))
 		{
 			continue;
@@ -775,6 +783,7 @@ within the corridor it drives; a vehicle: slowed for, not braked */
 static boolean bot_vehicle_way_blocked(
 	long vehicle_index,
 	real speed,
+	long rammed_unit,
 	boolean *vehicle_ahead)
 {
 	struct object_datum *vehicle = object_get(vehicle_index);
@@ -795,7 +804,7 @@ static boolean bot_vehicle_way_blocked(
 		struct object_datum *object = object_get(iterator.index);
 		real dx, dy, along, across;
 
-		if (iterator.index == vehicle_index || object->object.parent_object_index != NONE ||
+		if (iterator.index == vehicle_index || iterator.index == rammed_unit || object->object.parent_object_index != NONE ||
 			TEST_FLAG(object->object.damage_flags, _object_dead_bit))
 		{
 			continue;
@@ -882,16 +891,53 @@ static boolean bot_vehicle_orbit(
 	return FALSE;
 }
 
+/* whether the bot runs its target over on purpose, by its difficulty (the
+owner's rule): peaceful and easy bots never (they brake for people, and only
+accidents happen); normal ones a target on foot already ahead (within 20
+degrees of the vehicle's heading, 12 world units); hard and legendary ones
+hunt a target on foot within 25 world units. Never a team mate, nor anyone
+riding */
+static boolean bot_vehicle_may_ram(
+	struct bot const *bot,
+	long vehicle_index,
+	long target_unit,
+	real_point3d const *at,
+	real heading,
+	real target_distance)
+{
+	struct object_datum *target = target_unit != NONE ? object_try_and_get(target_unit) : NULL;
+	real_point3d target_at;
+
+	if (!target || target->object.type != _object_type_biped || target->object.parent_object_index != NONE ||
+		bot->difficulty <= _bot_difficulty_easy || !bot->brain.combat.target_visible)
+	{
+		return FALSE;
+	}
+	if (game_engine_has_teams() &&
+		!game_team_is_enemy(object_get(vehicle_index)->object.owner_team_index, target->object.owner_team_index))
+	{
+		return FALSE;
+	}
+	if (fabs(target->object.position.z - at->z) > BOT_VEHICLE_RAM_HEIGHT)
+		return FALSE;
+	if (bot->difficulty >= _bot_difficulty_hard)
+		return target_distance < BOT_VEHICLE_HUNT_RANGE;
+	object_get_origin(target_unit, &target_at);
+	return target_distance < BOT_VEHICLE_RAM_RANGE &&
+		fabs(bot_vehicle_angle((real)atan2(target_at.y - at->y, target_at.x - at->x) - heading)) < BOT_VEHICLE_RAM_CONE;
+}
+
 /* a Ghost's driver fighting: its guns aimed as it steers (bots_combat.c's
 aim, the error and reaction of its difficulty), closing on a far target,
-backing off a near one (driving at nobody: bots run nobody over on purpose
-here), strafing side to side at hard and legendary */
+backing off a near one, strafing side to side (normal and up); at one it
+may run over (bot_vehicle_may_ram), full on */
 static void bot_vehicle_ghost_fight(
 	struct bot *bot,
 	long player_index,
 	real_point3d const *target_at,
 	real target_distance,
 	real forward_speed,
+	boolean ram,
 	struct player_action *action)
 {
 	struct bot_brain *brain = &bot->brain;
@@ -903,6 +949,9 @@ static void bot_vehicle_ghost_fight(
 	(void)player_index;
 	(void)target_at;
 	along = target_distance > BOT_VEHICLE_GHOST_FAR ? 0.6f : target_distance < BOT_VEHICLE_GHOST_NEAR ? -0.5f : 0.0f;
+	/* (one it may run over: at them, full on, no strafing) */
+	if (ram)
+		along = 1.0f;
 	if (bot->difficulty >= _bot_difficulty_normal)
 	{
 		if (now >= vehicle->strafe_until_tick)
@@ -912,12 +961,17 @@ static void bot_vehicle_ghost_fight(
 		}
 		side = vehicle->strafe_side * (bot->difficulty >= _bot_difficulty_hard ? 0.8f : 0.4f);
 	}
+	if (ram)
+		side = 0.0f;
 	bot_action_idle(action, brain->yaw, 0.0f);
 	action->throttle.i = along;
 	action->throttle.j = side;
 	/* (someone on foot ahead: braked for) */
-	if (bot_vehicle_way_blocked(vehicle->vehicle_index, (real)fabs(forward_speed), &vehicle_ahead) && forward_speed > 0.3f)
+	if (!ram && bot_vehicle_way_blocked(vehicle->vehicle_index, (real)fabs(forward_speed), NONE, &vehicle_ahead) &&
+		forward_speed > 0.3f)
+	{
 		action->throttle.i = -1.0f;
+	}
 	bot_combat_act(bot, vehicle->unit_index, action, TRUE);
 	brain->yaw = brain->combat.aim_yaw;
 }
@@ -1011,6 +1065,7 @@ static void bot_vehicle_drive(
 	boolean ghost = !strcmp(bot_vehicle_kind(vehicle->vehicle_index) ? bot_vehicle_kind(vehicle->vehicle_index) : "", "ghost");
 	boolean direct = FALSE;
 	boolean hold = FALSE;
+	boolean ram = FALSE;
 	struct bots_nav_point direct_point;
 
 	/* (how far, how long) */
@@ -1063,10 +1118,22 @@ static void bot_vehicle_drive(
 		vehicle->check_position = at;
 		return;
 	}
+	/* (one on foot it may run over, by its difficulty: bot_vehicle_may_ram) */
+	ram = fighting && bot_vehicle_may_ram(bot, vehicle->vehicle_index, target_unit, &at, heading, target_distance);
+	if (ram != vehicle->ramming)
+	{
+		vehicle->ramming = ram;
+		if (ram)
+		{
+			brain->statistics.vehicle_rams++;
+			platform_log("bots: player %ld drives at player %ld at tick %ld", (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index),
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(brain->combat.target_player), now);
+		}
+	}
 	/* (a Ghost fights: its guns are its driver's) */
 	if (fighting && ghost)
 	{
-		bot_vehicle_ghost_fight(bot, player_index, &target_at, target_distance, forward_speed, action);
+		bot_vehicle_ghost_fight(bot, player_index, &target_at, target_distance, forward_speed, ram, action);
 		vehicle->path_next = NONE;
 		vehicle->check_tick = now;
 		vehicle->check_position = at;
@@ -1079,8 +1146,19 @@ static void bot_vehicle_drive(
 			vehicle->unit_index, bot_vehicle_gunner_seat(vehicle->vehicle_index),
 			bot_vehicle_gunner_seat(vehicle->vehicle_index) == NONE ? NONE :
 			bot_vehicle_seat_rider(vehicle->vehicle_index, bot_vehicle_gunner_seat(vehicle->vehicle_index)), target_distance);
-	/* (a Warthog alone, an enemy near: out, to fight on foot) */
-	if (fighting && !gunner_aboard && target_distance < BOT_VEHICLE_FIGHT_ON_FOOT)
+	/* (a Warthog alone: at one it may run over, a little ahead of where they
+	go; else, an enemy near, out to fight on foot) */
+	if (ram && !gunner_aboard)
+	{
+		real lead = target_distance / MAX(speed, 3.0f);
+		struct object_datum *rammed = object_get(target_unit);
+
+		direct = TRUE;
+		direct_point.x = target_at.x + rammed->object.translational_velocity.i * TICKS_PER_SECOND * MIN(lead, 1.5f);
+		direct_point.y = target_at.y + rammed->object.translational_velocity.j * TICKS_PER_SECOND * MIN(lead, 1.5f);
+		direct_point.z = target_at.z;
+	}
+	else if (fighting && !gunner_aboard && target_distance < BOT_VEHICLE_FIGHT_ON_FOOT)
 	{
 		bot_vehicle_leave(vehicle, player_index, "a fight", FALSE);
 		bot_action_idle(action, brain->yaw, 0.0f);
@@ -1242,12 +1320,15 @@ steer:
 	/* (a Ghost hovers: never on the ground, and driven all the same) */
 	if (!ghost && !TEST_FLAG(object->object.flags, _object_on_ground_bit))
 		throttle = 0.0f;
+	/* (running someone over: as fast as it goes, turns aside) */
+	if (ram && throttle > 0.0f && fabs(off) < 0.6f)
+		throttle = 1.0f;
 	/* (still for its gunner: braked to a stop) */
 	if (hold)
 		throttle = forward_speed > 0.5f ? -0.6f : 0.0f;
 	/* (someone on foot ahead: braked for, whoever they are; a vehicle:
 	slowed for) */
-	blocked = bot_vehicle_way_blocked(vehicle->vehicle_index, speed, &vehicle_ahead);
+	blocked = bot_vehicle_way_blocked(vehicle->vehicle_index, speed, ram ? target_unit : NONE, &vehicle_ahead);
 	if (blocked)
 	{
 		if (!vehicle->braking)
@@ -1428,9 +1509,9 @@ boolean bot_vehicle_think(
 			else if (!unit_get_seat_entrance_point(unit_index, vehicle->vehicle_index, vehicle->seat_index, &door, &seat, NULL))
 				reason = "no door";
 			/* (a fight: on to a Ghost or a gun, which fight; not to a Warthog to
-			drive) */
+			drive, but for a hard or legendary bot, who runs people over) */
 			else if (brain->combat.target_visible && bot->difficulty != _bot_difficulty_peaceful && mode == _bot_vehicle_normal &&
-				!gunner && strcmp(bot_vehicle_kind(vehicle->vehicle_index), "ghost"))
+				!gunner && strcmp(bot_vehicle_kind(vehicle->vehicle_index), "ghost") && bot->difficulty < _bot_difficulty_hard)
 			{
 				reason = "a fight";
 			}

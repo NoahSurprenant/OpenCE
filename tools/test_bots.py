@@ -731,9 +731,9 @@ def test_bots_ghost_fight(tmp_path):
     vehicles the map places (debug.network_test_vehicles "all": its four
     Ghosts too), each driving whenever it can ("*drive"): a Ghost's driver is
     its gunner, so a bot in one fights from it, aiming as it steers, closing
-    on a far target and backing off a near one (bots_vehicle.c). At least two
-    drive Ghosts, they fire a good deal from them, and nobody drives at
-    anyone on purpose. About two and a half minutes."""
+    on a far target and backing off a near one (bots_vehicle.c; hard bots
+    also run people on foot over: test_bots_ram). At least two drive Ghosts,
+    and they fire a good deal from them. About two and a half minutes."""
     log = _bots_game(tmp_path, "server", {
         "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "41", "HALO_SERVER_BOT_DIFFICULTY": "hard", "HALO_BOT_VEHICLE": "*drive",
         "HALO_NETWORK_TEST_VEHICLES": "all", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "2",
@@ -746,7 +746,31 @@ def test_bots_ghost_fight(tmp_path):
     assert len(drives) == 4, log[-4000:]
     assert len(ghosts) >= 2, f"fewer than two bots drove a Ghost: {ghosts}"
     assert sum(c["ticks fired riding"] for c in drives.values()) >= 200, f"the Ghosts hardly fired: {drives}"
-    assert all(c["people driven at"] == 0 for c in drives.values()), drives
+
+
+def test_bots_ram(tmp_path):
+    """Running people over, by difficulty (bots_vehicle.c's bot_vehicle_may_ram,
+    the owner's rule): on Blood Gulch's dedicated server, every vehicle the map
+    places, a hard bot and an easy bot that drive whenever they can
+    ("drive"), and two peaceful bots that stand still on foot ("stand"). The
+    hard bot hunts people on foot: it drives at a standing bot and runs it
+    over, the kill its own. The easy bot never drives at anyone (it brakes
+    for people), nor do the peaceful ones. About three and a half minutes."""
+    log = _bots_game(tmp_path, "server", {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "1", "HALO_BOT_DIFFICULTIES": "hard,easy,peaceful,peaceful",
+        "HALO_BOT_VEHICLE": "drive,drive,stand,stand", "HALO_NETWORK_TEST_VEHICLES": "all",
+        "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "3",
+        "HALO_NET_ADDRESS": _test_address(197), "HALO_NET_BROADCAST": _test_address(198)}, seconds=330)
+    drives = _drives(log)
+    for name, c in sorted(drives.items()):
+        print(f"{name}: {c}")
+    print("\n".join(line for line in log.splitlines() if re.search(r"bots: player \d+ (drives at|ran over)|died of", line)))
+    assert len(drives) == 4, log[-4000:]
+    hard, easy = drives["[BOT] Alpha"], drives["[BOT] Bravo"]
+    assert hard["people driven at"] >= 1, f"the hard bot drove at nobody: {hard}"
+    assert hard["people run over"] >= 1, f"the hard bot ran nobody over: {hard}"
+    assert easy["people driven at"] == 0, f"the easy bot drove at someone: {easy}"
+    assert drives["[BOT] Delta"]["people driven at"] == 0 and drives["[BOT] Echo"]["people driven at"] == 0, drives
 
 
 def test_bots_flip(tmp_path):
