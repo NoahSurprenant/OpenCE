@@ -546,8 +546,8 @@ jobs:
             echo "::error::test_skate_multiplayer, test_skate_hitbox and the five test_dedicated_server tests did not all run and pass"
             exit 1
           fi
-          if ! grep -q '5 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
-            echo "::error::the five tests of tools/test_skating_bots.py did not all run and pass"
+          if ! grep -q '6 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
+            echo "::error::the six tests of tools/test_skating_bots.py did not all run and pass"
             exit 1
           fi
 
@@ -592,7 +592,8 @@ jobs:
     # crews of a driver and a gunner (test_bots_warthog_crew) and fighting
     # from Ghosts (test_bots_ghost_fight), and running people over by
     # difficulty (test_bots_ram), and sharing vehicles with a person
-    # (test_bots_share_with_a_person), and Scorpions (test_bots_tank).
+    # (test_bots_share_with_a_person), Scorpions (test_bots_tank), and game
+    # types with vehicles (test_bots_vehicle_objectives).
     # They
     # need the Halo maps, so on the owner's
     # runner, opence-k8s, only for this repository's own code, as
@@ -672,7 +673,7 @@ jobs:
             -k "ctf or difficulties" > "$RUNNER_TEMP/bots-d.log" 2>&1 &
           fourth=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/e" tools/test_bots.py \
-            -k "drive or flip or crew" > "$RUNNER_TEMP/bots-e.log" 2>&1 &
+            -k "drive or flip or crew or vehicle_objectives" > "$RUNNER_TEMP/bots-e.log" 2>&1 &
           fifth=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/f" tools/test_bots.py \
             -k "ghost or ram or share or tank" > "$RUNNER_TEMP/bots-f.log" 2>&1 &
@@ -686,10 +687,10 @@ jobs:
           cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log"
           if ! grep -q '7 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
-            ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-e.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-f.log" ||
+            ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" || ! grep -q '5 passed' "$RUNNER_TEMP/bots-e.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-f.log" ||
             grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log"; then
-            echo "::error::the twenty-three tests of tools/test_bots.py did not all run and pass (7 + 4 + 2 + 2 + 4 + 4)"
+            echo "::error::the twenty-four tests of tools/test_bots.py did not all run and pass (7 + 4 + 2 + 2 + 5 + 4)"
             exit 1
           fi
 

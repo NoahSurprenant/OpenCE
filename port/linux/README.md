@@ -1368,6 +1368,15 @@ the bot's input, as a person's does, so nothing is new on the wire:
   keeping further off and strafing not, and fires nothing near enough for
   the shell's blast to reach it (nor does a rocket Warthog's gunner). A
   peaceful bot drives one and never fires. Its tread seats are not taken.
+- **Game types.** While a bot drives, its goal follows its game type's
+  objective (a race's next flag, a flag or ball to take, a hill or flag
+  stand to hold, someone to hunt); it gets out on the hill or stand it
+  holds, and takes no vehicle standing there. A bot with a flag or ball in
+  hand takes none.
+- **Walking, a board or a vehicle.** Where the host has Skate 3 mode, a bot
+  weighs its board (about 1.3 times as quick as walking) against a vehicle
+  before it takes one (`bots: player N takes vehicle ...` logs both), and
+  steps off its board ("a vehicle") for one it takes.
 - Not yet: flying (Banshees).
 
 Peaceful bots roam, take weapons and play as the others do, but never fight:

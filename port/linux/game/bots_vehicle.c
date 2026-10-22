@@ -146,6 +146,9 @@ a person driving and nobody to shoot at */
 in and out costs about this much (world units of walking) */
 #define BOT_VEHICLE_SPEED_FACTOR 3.0f
 #define BOT_VEHICLE_OVERHEAD 6.0f
+/* a board goes about this many times as fast as a bot walks (9 m/s against
+a run's 6.8: bots_skate.c's fast speed), its getting on and off reckoned in */
+#define BOT_VEHICLE_SKATE_FACTOR 1.3f
 /* nobody (a person) this near a vehicle: they may want it; nor this near
 and coming to it faster than this (world units a second) */
 #define BOT_VEHICLE_COURTESY 6.0f
@@ -829,6 +832,13 @@ static boolean bot_vehicle_choose(
 		}
 		if (tanks_only && !bot_vehicle_is_tank(iterator.index))
 			continue;
+		/* (one in the hill, the flag's stand it holds: no ride, it is there) */
+		if (brain->objective.kind == _bot_objective_hold &&
+			bot_vehicle_distance2d(&object->object.position, brain->objective.point.x, brain->objective.point.y) <
+			MAX(brain->objective.radius, 3.0f) + 3.0f)
+		{
+			continue;
+		}
 		if (!bot_vehicle_alive(iterator.index) || !bot_vehicle_kind(iterator.index) || !bot_vehicle_graph(iterator.index) ||
 			(iterator.index == vehicle->avoided_vehicle && game_time_get() < vehicle->avoided_until_tick))
 		{
@@ -863,8 +873,18 @@ static boolean bot_vehicle_choose(
 			(real)sqrt((end->point.x - goal.x) * (end->point.x - goal.x) + (end->point.y - goal.y) * (end->point.y - goal.y)) +
 			BOT_VEHICLE_OVERHEAD;
 	}
-	if (mode != _bot_vehicle_drive && !fighting && ride > BOT_VEHICLE_QUICKER * trip)
-		return FALSE;
+	/* (its other way: a board, where it may skate, is quicker than walking) */
+	{
+		real foot = bot_skate_possible(bot) ? trip / BOT_VEHICLE_SKATE_FACTOR : trip;
+
+		if (mode != _bot_vehicle_drive && !fighting && ride > BOT_VEHICLE_QUICKER * foot)
+			return FALSE;
+		if (config_boolean("debug.bot_trace") || bot_skate_possible(bot))
+			platform_log("bots: player %ld takes vehicle %lx%s: %.0f world units of walking by it, %.0f %s",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(unit_get(unit_index)->unit.player_index), best,
+				fighting ? " in a fight" : mode == _bot_vehicle_drive ? " (debug.bot_vehicle)" : "", ride, foot,
+				bot_skate_possible(bot) ? "on a board" : "on foot");
+	}
 	vehicle->vehicle_index = best;
 	vehicle->seat_index = best_seat;
 	vehicle->role = _bot_vehicle_role_driver;
@@ -945,6 +965,19 @@ static boolean bot_vehicle_way_blocked(
 			*vehicle_ahead = TRUE;
 	}
 	return person;
+}
+
+/* whether the bot's game type objective (bots_objectives.c) has a point to
+go to more than 5 world units off the goal it drives to */
+static boolean bot_vehicle_objective_moved(
+	struct bot_brain const *brain)
+{
+	short kind = brain->objective.kind;
+
+	return (kind == _bot_objective_go || kind == _bot_objective_take || kind == _bot_objective_hold ||
+		kind == _bot_objective_hunt) &&
+		bot_vehicle_distance2d((real_point3d const *)&brain->objective.point, brain->vehicle.goal.x,
+		brain->vehicle.goal.y) > 5.0f;
 }
 
 /* a new goal for a driver with a gunner aboard (its own goal reached): a
@@ -1354,9 +1387,10 @@ static void bot_vehicle_drive(
 		vehicle->path_next = NONE;
 		goto steer;
 	}
-	/* (a race's next flag: its goal) */
-	if (brain->objective.kind == _bot_objective_go &&
-		bot_vehicle_distance2d((real_point3d const *)&brain->objective.point, vehicle->goal.x, vehicle->goal.y) > 5.0f)
+	/* (its game type's objective - a race's next flag, a flag or a ball to
+	take, a hill or a flag's stand to hold, someone to hunt - moved on: its
+	goal; with a person aboard, theirs is the ride) */
+	if (person == NONE && bot_vehicle_objective_moved(brain))
 	{
 		long node = bot_vehicle_nearest_node(drive, brain->objective.point.x, brain->objective.point.y,
 			brain->objective.point.z);
@@ -1369,6 +1403,14 @@ static void bot_vehicle_drive(
 			vehicle->drive_goal_node = node;
 			vehicle->path_next = NONE;
 		}
+	}
+	/* (a hill, a flag's stand it holds: there, out, on foot within it) */
+	if (person == NONE && !gunner_aboard && brain->objective.kind == _bot_objective_hold &&
+		bot_vehicle_distance2d(&at, brain->objective.point.x, brain->objective.point.y) < MAX(brain->objective.radius, 3.0f))
+	{
+		bot_vehicle_leave(vehicle, player_index, "its objective", FALSE);
+		bot_action_idle(action, brain->yaw, 0.0f);
+		return;
 	}
 	/* (its way along the drive graph) */
 	if (vehicle->path_next == NONE)
