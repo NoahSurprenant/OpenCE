@@ -772,6 +772,9 @@ void network_game_client_request_immediate_start(
 	return;
 }
 
+/* port: the settings' (port_config.c) */
+long config_integer(const char *name);
+
 boolean create_global_network_game_server(
 	void)
 {
@@ -783,8 +786,15 @@ boolean create_global_network_game_server(
 	global_network_game_server = network_game_server_create();
 	if (global_network_game_server)
 	{
-		network_game_set_random_seed(
-			seed_random(get_global_local_random_seed_address()));
+		/* port: with debug.game_seed set (a test's), the game's seed comes
+		from it alone, not from the local random numbers' next: the menus and
+		every frame before hosting draw from those too, so a menu added to the
+		game changed the seeded games */
+		long game_seed = config_integer("debug.game_seed");
+
+		network_game_set_random_seed(game_seed ?
+			(long)((unsigned long)game_seed * 2654435761UL + 0x5eedUL) :
+			(long)seed_random(get_global_local_random_seed_address()));
 	}
 
 	return global_network_game_server != NULL;

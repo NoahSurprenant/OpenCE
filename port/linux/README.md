@@ -1508,9 +1508,10 @@ map's Scorpions (`z:\bots_tank_<map>_<key>.nav`).
 
 ## Spectators
 
-A spectator watches a network game without playing in it. Set
-`network.spectate` (`HALO_SPECTATE`) to `true`, or type `spectate on` at the
-console, and join a game as usual: a dedicated server, or a game that
+A spectator watches a network game without playing in it. Set JOIN GAMES AS
+to SPECTATOR (Settings > Network Setup > SPECTATING; `network.spectate`,
+`HALO_SPECTATE`), or type `spectate on` at the console, and join a game as
+usual: a dedicated server, or a game that
 someone hosts from the menus. In the browser, add `?spectate` to the page's
 address (with `?join=<code>` to join an internet game).
 
@@ -1525,7 +1526,8 @@ address (with `?join=<code>` to join an internet game).
   watching").
 
 Four cameras, which the action key (E, or X on a controller) switches
-between (SPECTATOR CAMERA, `network.spectate_camera`, is the first):
+between (Network Setup's SPECTATOR CAMERA, `network.spectate_camera`, is the
+first):
 
 - **FOLLOW** (first) stays behind the player that it watches. The look keys
   or stick turn it round them, and it turns back behind them two seconds
