@@ -1356,7 +1356,9 @@ def test_dedicated_server_skaters(tmp_path):
     bounds, refusing a stray few at most) and decides each hit
     (skate_authority.c: the skater's report, message 92, and the verdict, 93),
     which both clients hear alike: the second on foot run over, killed by the
-    server's damage, the kill the first's. With a round trip of 150 ms and a tenth of
+    server's damage, the kill the first's. 80 seconds in, the second's
+    skater is put under the level (debug.network_test_skate_fall), as a fall
+    through a hole in it would: it is put back where it last rode. With a round trip of 150 ms and a tenth of
     the datagrams lost. Skips without the builds, the data and the maps
     (HALO_SKATE_TEST_HALO_MAPS); about two minutes."""
     game = os.environ.get("HALO_TEST_GAME")
@@ -1375,7 +1377,9 @@ def test_dedicated_server_skaters(tmp_path):
                            "HALO_NETWORK_TEST_SKATE_BLOCK": "1",
                            "HALO_NET_BROADCAST": f"{addresses['first']},{addresses['second']}"},
                 "first": dict(clients, HALO_NETWORK_TEST_SKATE="15"),
-                "second": dict(clients, HALO_NETWORK_TEST_SKATE="55")}
+                # (and 80 seconds in, the second's skater put under the level, as a fall
+                # through a hole in it would: put back where it last rode)
+                "second": dict(clients, HALO_NETWORK_TEST_SKATE="55", HALO_NETWORK_TEST_SKATE_FALL="80")}
     games = {}
     killed = []
     try:
@@ -1437,6 +1441,17 @@ def test_dedicated_server_skaters(tmp_path):
     # and hears the other skate: the server, which plays none, passes each
     # skater's sounds on (skate_network.c, messages 94 and 95)
     _assert_remote_skate_sounds({"first": first, "second": second}, {"first": "second", "second": "first"})
+    # a skater under the level (a fall through a hole in it: the second's
+    # once fell on and on, at z -300 by the end, and made no sound) is put
+    # back on the board where it last rode, and rides on there
+    assert "skate test: the skater put under the level" in second, second[-4000:]
+    rescued = re.search(r"skate: this machine's skater fell out of the level at .*?: back on the board at "
+                        r"\((-?[\d.]+) (-?[\d.]+) (-?[\d.]+)\)", second)
+    assert rescued, f"the second's skater was not put back from under the level:\n{second[-4000:]}"
+    after = [float(z) for z in re.findall(r"skates here at \(-?[\d.]+ -?[\d.]+ (-?[\d.]+)\)",
+                                          second[rescued.end():])]
+    print(f"put back at {rescued.groups()}, then {len(after)} seconds skating, lowest at {min(after or [0.0]):.2f}")
+    assert len(after) >= 5 and min(after) > float(rescued.group(3)) - 5.0, f"it did not ride on from there: {after}"
     # the server steps the second client's player into the first's way: the
     # first's skater hits them, tells the server, and the server decides
     blocks = re.findall(r"the watcher steps into the skater's way at", host)

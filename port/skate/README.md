@@ -600,6 +600,16 @@ gets on. The biped's skeleton is kept across that restart, so the biped is
 posed and its weapon holstered as before; a skater the engine cannot pose
 still has its weapon holstered.
 
+A skater can also fall out of the level: a test's second client's once fell
+on and on below Blood Gulch (z -300 by the game's end). Its biped is the
+engine's, so no fall of Halo's ends it. A skater more than 2 world units
+below the level's world bounds is put back on the board where it last rode
+or stood on the ground in the level (`skate_rescue_fallen` in
+`../linux/game/skate.c`; the log says `skate: ... fell out of the level at
+..., back on the board at ...`). `debug.network_test_skate_fall` puts this
+machine's skater under the level that many seconds into a game, for
+`test_dedicated_server_skaters`.
+
 ### Feet on the deck
 
 The skater's ankles are not as high above its soles as Master Chief's, so

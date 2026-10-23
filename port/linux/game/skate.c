@@ -31,6 +31,7 @@ objects (render.c). */
 #include "render/render.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
+#include "structures/structure_bsp_definitions.h"
 #include "tag_files/tag_files.h"
 #include "units/biped_definitions.h"
 #include "units/bipeds.h"
@@ -82,6 +83,10 @@ once: past any speed on a board (90 m/s) */
 (world units, 3 m: past any tick on a board) was moved by something else, a
 teleporter or a script, and the skater goes there (skate_follow_teleport) */
 #define SKATE_TELEPORT_DISTANCE 1.f
+/* a skater this far below the level's lowest point (world units) fell out of
+it: the skate engine's level has a hole there, or the skater went through a
+seam; Halo's own falls are a biped's, and a skater's biped is the engine's */
+#define SKATE_FALLEN_DEPTH 2.f
 
 /* a skater this machine runs the skate engine for: its player's (skater 0,
 driven by the pad), or one of the host's bots' (skate_bot_..., driven by
@@ -117,6 +122,11 @@ struct skate_skater
 	it went: moved from there since by something else (a teleporter, a script)
 	the skater is taken there (skate_follow_teleport); pushed faster (a blast)
 	is told of and undone */
+	/* where it last rode or stood on the ground (on the board: a fall out of
+	the level puts it back there, skate_rescue_fallen) */
+	boolean grounded;
+	real_point3d ground_position;
+	real ground_yaw;
 	boolean placed;
 	real_point3d placed_position;
 	real placed_yaw;
@@ -1326,6 +1336,37 @@ static void skate_put(struct skate_skater *skater, long unit_index, real_point3d
 	skate_apply_frame(skater, unit_index, TRUE);
 }
 
+/* each tick a skater is posed: where it is on the ground kept; fallen out
+of the level (below its world bounds), put back on the board there, as a
+failed step puts it back (it fell on and on, never to land: its biped is the
+skate engine's, so no fall of Halo's kills it) */
+static void skate_rescue_fallen(struct skate_skater *skater, long unit_index)
+{
+	struct structure_bsp *bsp = global_structure_bsp_get();
+
+	if (!skater->skating || unit_index == NONE || !bsp)
+		return;
+	/* (on the ground in the level: under it, a board just put there is on
+	nothing the level has, whatever its state says) */
+	if ((!strcmp(skater->frame.state, "PhysicsGround") || !strncmp(skater->frame.state, "Grind", 5) ||
+		!strcmp(skater->frame.state, "BipedGround")) && skater->frame.position[2] >= bsp->world_bounds.z0)
+	{
+		skater->grounded = TRUE;
+		skater->ground_position.x = skater->frame.position[0];
+		skater->ground_position.y = skater->frame.position[1];
+		skater->ground_position.z = skater->frame.position[2] + 0.1f;
+		skater->ground_yaw = (real)atan2(skater->frame.forward[1], skater->frame.forward[0]);
+		return;
+	}
+	if (!skater->grounded || !(skater->frame.position[2] < bsp->world_bounds.z0 - SKATE_FALLEN_DEPTH))
+		return;
+	platform_log("skate: %s fell out of the level at (%.2f %.2f %.2f), below %.2f: back on the board at (%.2f %.2f %.2f)",
+		skater == skate_local ? "this machine's skater" : "a bot's skater", skater->frame.position[0],
+		skater->frame.position[1], skater->frame.position[2], bsp->world_bounds.z0, skater->ground_position.x,
+		skater->ground_position.y, skater->ground_position.z);
+	skate_put(skater, unit_index, &skater->ground_position, skater->ground_yaw);
+}
+
 static void skate_start(struct skate_skater *skater, long unit_index)
 {
 	struct object_datum *object = object_get(unit_index);
@@ -1345,6 +1386,10 @@ static void skate_start(struct skate_skater *skater, long unit_index)
 	}
 	skater->skating = TRUE;
 	skater->unit_index = unit_index;
+	skater->grounded = TRUE;
+	skater->ground_position = ground;
+	skater->ground_position.z += 0.1f;
+	skater->ground_yaw = (real)atan2(object->object.forward.j, object->object.forward.i);
 	skater->skeleton_described_again = FALSE;
 	skate_skater_board_forget(skater);
 	skate_apply_frame(skater, unit_index, TRUE);
@@ -2745,6 +2790,8 @@ static void skate_bots_finish_steps(void)
 		}
 		else if (stepped >= 0)
 			skate_apply_frame(skater, skater->unit_index, FALSE);
+		if (stepped >= 0)
+			skate_rescue_fallen(skater, skater->unit_index);
 		else if (halo_skate_state_in(index) == -1)
 		{
 			skate_engine_failed(skater);
@@ -2861,6 +2908,24 @@ static void skate_local_update(void)
 		if (skate_network_block_spot(skater->unit_index, TRUE, &spot, &yaw))
 			skate_put(skater, skater->unit_index, &spot, yaw);
 	}
+	/* (debug.network_test_skate_fall: that many seconds into the game, the
+	skater put 20 world units below the level, as a fall through a hole in it
+	would leave them: skate_rescue_fallen puts them back) */
+	{
+		real fall = (real)config_real("debug.network_test_skate_fall");
+		struct structure_bsp *bsp = global_structure_bsp_get();
+
+		if (fall > 0.f && bsp && game_time_get() == (long)(fall * TICKS_PER_SECOND))
+		{
+			real_point3d below;
+
+			below.x = skater->frame.position[0];
+			below.y = skater->frame.position[1];
+			below.z = bsp->world_bounds.z0 - 20.f;
+			platform_log("skate test: the skater put under the level at (%.2f %.2f %.2f)", below.x, below.y, below.z);
+			skate_put(skater, skater->unit_index, &below, (real)atan2(skater->frame.forward[1], skater->frame.forward[0]));
+		}
+	}
 	/* (moved by a teleporter or a script: the skater goes there) */
 	skate_follow_teleport(skater, skater->unit_index);
 	/* (a blast pushed them) */
@@ -2878,6 +2943,8 @@ static void skate_local_update(void)
 	}
 	else if (stepped >= 0)
 		skate_apply_frame(skater, skater->unit_index, FALSE);
+	if (stepped >= 0)
+		skate_rescue_fallen(skater, skater->unit_index);
 	else if (halo_skate_state() == -1)
 		skate_engine_failed(skater);
 	/* (its hits on held obstacles, for the host to decide: skate_authority.c) */

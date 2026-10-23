@@ -156,14 +156,17 @@ def test_skating_bots_run_over(tmp_path):
 def test_skating_bots_harmless(tmp_path):
     """Two peaceful bots told to ram (debug.bot_skate "ram,ram") on Prisoner's
     dedicated server with Skate 3 data: they get on boards, ride and grind the
-    rails beside their way as any bot, but never ride at anyone on purpose -
+    rails beside their way (every one they pass, within a hard bot's reach:
+    debug.bot_tricks "*hard"; a peaceful bot's own skill takes only some of the
+    rails, as an easy one, which left a grind in three minutes to chance), but
+    never ride at anyone on purpose -
     no ram, though they see each other. What happens by accident is allowed
     (the owner's call): a run-over decided as any skater's, a fall off a
     ledge, a bail. About three and a half minutes."""
     _, maps, assets = _needs_skate()
     log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
         "HALO_SERVER_BOTS": "2", "HALO_SERVER_BOT_DIFFICULTY": "peaceful", "HALO_BOT_SKATE": "ram,ram",
-        "HALO_BOT_SEED": "1", "HALO_SERVER_MAPS": "prisoner", "HALO_SERVER_TIME_LIMIT": "3"},
+        "HALO_BOT_TRICKS": "*hard", "HALO_BOT_SEED": "1", "HALO_SERVER_MAPS": "prisoner", "HALO_SERVER_TIME_LIMIT": "3"},
         (_test_address(253), _test_address(254)))
     boards = _boards(log)
     seen = {name: int(n) for name, n in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*?(\d+) targets seen", log)}
