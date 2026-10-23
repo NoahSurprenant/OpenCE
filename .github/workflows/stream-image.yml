@@ -72,11 +72,11 @@ jobs:
 
       # There are no maps in CI (they are never published), and the game needs real ones, so this
       # checks the image around it: the game finds the portable build's SDL beside it and every other
-      # library it links; the 32-bit EGL and llvmpipe it draws with are there; ffmpeg has libx264 and
-      # the HLS muxer. Then, started as uid 10001 on a read-only root, the script makes its FIFOs and
-      # starts the game and ffmpeg; the game, without maps, exits with status 2, and the script stops
-      # ffmpeg and exits 1, saying so. tools/test_stream.py runs the stream itself, with maps, on the
-      # owner's runner.
+      # library it links; ffmpeg has libx264 and the HLS muxer. Then, started as uid 10001 on a
+      # read-only root with no maps, the script makes its FIFOs and starts the game and ffmpeg: the
+      # game draws with OpenGL on llvmpipe (its error screen: it has no maps) and ffmpeg writes HLS
+      # segments of it; docker stop (SIGTERM) stops both and the container exits 0.
+      # tools/test_stream.py runs the stream itself, with maps, on the owner's runner.
       - name: Smoke test
         run: |
           set -euo pipefail
@@ -86,18 +86,28 @@ jobs:
             ldd /opt/opence/halo | grep -q "libSDL3.so.0 => /opt/opence/libSDL3.so.0"
             if ldd /opt/opence/halo | grep "not found"; then exit 1; fi
             test -e /usr/lib/i386-linux-gnu/libEGL.so.1
-            ls /usr/lib/i386-linux-gnu/dri/ /usr/lib/i386-linux-gnu/ | grep -qE "swrast_dri.so|libgallium"
             ffmpeg -hide_banner -encoders | grep -q libx264
             ffmpeg -hide_banner -muxers | grep -qw hls'
-          status=0
-          timeout 60 docker run --name stream --read-only --cap-drop ALL --security-opt no-new-privileges \
+          docker run -d --name stream --read-only --cap-drop ALL --security-opt no-new-privileges \
             --tmpfs /state:uid=10001,gid=10001 --tmpfs /tmp:uid=10001,gid=10001 --tmpfs /hls:uid=10001,gid=10001 \
-            -e STREAM_SERVER=127.0.0.1 -e STREAM_CHECK_SECONDS=1 opence-stream:ci > stream.log 2>&1 || status=$?
+            -e STREAM_SERVER=127.0.0.1 opence-stream:ci > /dev/null
+          segments=0
+          for _ in $(seq 1 30); do
+            segments=$(docker exec stream sh -c 'grep -cs "^live[0-9]*\.ts$" /hls/live.m3u8' || true)
+            [ "${segments:-0}" -lt 3 ] || break
+            sleep 2
+          done
+          docker stop -t 10 stream > /dev/null
+          status=$(docker inspect -f '{{.State.ExitCode}}' stream)
+          docker logs stream > stream.log 2>&1
+          docker rm stream > /dev/null
           cat stream.log
-          docker rm -f stream > /dev/null
-          [ "$status" = 1 ] || { echo "::error::the stream without maps exited with $status, not 1"; exit 1; }
           grep -qF 'stream.sh: watching 127.0.0.1 (127.0.0.1): 854x480 at 30 fps to /hls/live.m3u8' stream.log
-          grep -qF 'stream.sh: the game exited (2)' stream.log
+          grep -q 'OpenGL .* on llvmpipe' stream.log || { echo "::error::the game did not draw with llvmpipe"; exit 1; }
+          grep -qF 'stream: streaming (the first frame' stream.log
+          [ "${segments:-0}" -ge 3 ] || { echo "::error::ffmpeg wrote ${segments:-0} segments, not 3"; exit 1; }
+          grep -qF 'stream.sh: stopping' stream.log
+          [ "$status" = 0 ] || { echo "::error::the stream exited with $status after SIGTERM, not 0"; exit 1; }
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
