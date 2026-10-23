@@ -2596,6 +2596,13 @@ static boolean network_game_server_handle_message_client_map_is_precached_pregam
 			network_event("server failed to decode a message_type_client_map_is_precached_pregame packet");
 		}
 	}
+	/* port: a machine joining the game in progress: a spectator, which
+	brings no player, is started once it has the map (network_server_manager.c) */
+	else if (network_game_server_get_state(server, NULL) == _network_game_server_state_ingame &&
+		!network_game_server_client_machine_is_loaded(server, client_machine))
+	{
+		network_game_server_port_late_joiner_precached(server, client_machine);
+	}
 	else
 	{
 		network_event(

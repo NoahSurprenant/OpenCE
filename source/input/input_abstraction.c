@@ -336,6 +336,42 @@ real input_abstraction_port_primary_trigger(
 	return gamepad->buttons[button_index] ? 1.f : 0.f;
 }
 
+/* port: the controller's movement and look as the game reads them, and how
+many ticks each game control has been held (button_count of them): a
+spectator's camera reads them with no player to drive (spectate.c) */
+void input_abstraction_port_input(
+	short controller_index,
+	real *forward,
+	real *strafe,
+	real *yaw,
+	real *pitch,
+	byte *buttons,
+	short button_count)
+{
+	struct game_input_state const *state;
+	short control_index;
+
+	*forward = *strafe = *yaw = *pitch = 0.f;
+	for (control_index = 0; control_index < button_count; control_index++)
+	{
+		buttons[control_index] = 0;
+	}
+	if (controller_index < 0 || controller_index >= MAXIMUM_GAMEPADS ||
+		!input_abstraction_globals.controller_available[controller_index])
+	{
+		return;
+	}
+	state = &input_abstraction_globals.input_states[controller_index];
+	*forward = state->forward_movement;
+	*strafe = state->strafe;
+	*yaw = state->yaw;
+	*pitch = state->pitch;
+	for (control_index = 0; control_index < button_count && control_index < NUMBER_OF_GAME_CONTROLS; control_index++)
+	{
+		buttons[control_index] = state->buttons[control_index];
+	}
+}
+
 /* port: the game control on each of the controller's buttons by its
 profile's mapping (NONE for none), numbered as the gamepad's buttons are
 (input.h): the touch controls name their buttons by it (touch_game.c) */

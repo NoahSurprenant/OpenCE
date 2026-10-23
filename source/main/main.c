@@ -381,6 +381,7 @@ symbols in this file:
 #include "networking/network_server_manager.h" /* port: a co-op game's level won */
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
 #include "network_voice.h" /* port: port/linux/game/network_voice.c */
+#include "spectate.h" /* port: port/linux/game/spectate.c */
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
 #ifdef HALO_PROFILE
@@ -3345,6 +3346,11 @@ static void main_game_render(
 			window->local_player_index = last_local_player_index;
 			observer = observer_get_camera(window->local_player_index);
 			observer = render_interpolation_camera(window->local_player_index, observer);
+			/* port: a spectator's machine has no player: its window is no
+			player's (no HUD of one), drawn from the first local player's camera,
+			which the spectator moves (port/linux/game/spectate.c, render.c) */
+			if (window->local_player_index == NONE && spectate_window())
+				observer = render_interpolation_camera(0, observer_get_camera(0));
 		}
 		else
 		{

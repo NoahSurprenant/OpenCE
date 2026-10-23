@@ -380,6 +380,7 @@ the setting for one start of the game. It has priority over the file.
 | `network.address` | `""` | `HALO_NET_ADDRESS` | The IPv4 address of this machine for system link. Refer to "Play on one computer". |
 | `network.broadcast` | `""` | `HALO_NET_BROADCAST` | IPv4 addresses, with commas between them, that get the broadcasts of the game. Empty: 255.255.255.255. |
 | `network.online` | `true` | `HALO_NET_ONLINE` | `true`: internet play. `false`: system link on the local network only. |
+| `network.spectate` | `false` | `HALO_SPECTATE` | `true`: join games as a spectator, with no player. Refer to "Spectators". |
 | `network.join_from_clipboard` | `true` | `HALO_NET_JOIN_FROM_CLIPBOARD` | `true`: when the game comes to the front, it joins the game of an invite link on the clipboard. |
 | `network.tunnel_port` | `0` | `HALO_NET_TUNNEL_PORT` | The UDP port for internet play. `0`: the game selects a port. Refer to "Internet play". |
 | `network.allow_upnp` | `true` | `HALO_NET_ALLOW_UPNP` | `true`: internet play can ask the router to forward its port (UPnP). `false`: the game does not ask. Refer to "Internet play". |
@@ -1501,6 +1502,51 @@ it has about 2,200 nodes, and each map's eight vehicles are on its main part.
 A third graph is for tanks (`bots_nav_tank_parameters`: 0.8 world units from
 walls, 1.3 of room, slopes up to 30 degrees, lips of 0.4), its seeds the
 map's Scorpions (`z:\bots_tank_<map>_<key>.nav`).
+
+## Spectators
+
+A spectator watches a network game without playing in it. Set
+`network.spectate` (`HALO_SPECTATE`) to `true`, or type `spectate on` at the
+console, and join a game as usual: a dedicated server, or a game that
+someone hosts from the menus. In the browser, add `?spectate` to the page's
+address (with `?join=<code>` to join an internet game).
+
+- A spectator takes no player slot, never spawns, is on no team and is not
+  on the scoreboard. Its machine brings no player to the game, so it needs
+  no change to what the machines send each other: hosts and players of the
+  same network version, with or without spectators of their own, play with
+  it. Refer to `NETCODE.md`, "Spectators".
+- It sees what a player's machine sees: every player, the bots, vehicles
+  and what they do.
+
+Three cameras, which the action key (E, or X on a controller) switches
+between:
+
+- **FOLLOW** (first) stays behind the player that it watches. The look keys
+  or stick turn it round them, and it turns back behind them two seconds
+  after the look is let go. Forward and back bring it nearer and further.
+- **FIRST PERSON** looks through the eyes of that player.
+- **FREE** flies where it looks, through walls. The movement keys or left
+  stick move it, jump and crouch move it up and down, and the weapon and
+  grenade switches (and the mouse wheel) make it faster and slower.
+
+Fire (the left mouse button, the right trigger) watches the next player,
+and the grenade (the right mouse button, the left trigger) the one before.
+The scoreboard key (Tab, Back) shows the scores. The flashlight key hides
+and shows the names over the players' heads. The top of the screen says
+who is watched, with their health and shields.
+
+The console's `spectate` command does the same: `spectate next`,
+`spectate previous`, `spectate free`, `spectate follow`, `spectate first`,
+`spectate player <name>` (or the start of the name), `spectate speed <n>`
+(world units a second), `spectate scores` (the scores shown until it is
+typed again), and `spectate` alone says what it watches.
+
+A spectator joins a game in its lobby or in progress. It needs a host of this
+build or newer, which keeps and starts a machine that brings no player; an
+older host refuses a machine with no player after fifteen seconds. A
+spectator cannot join a lobby or a game that is full of players: the host
+refuses a full game before the spectator can say that it brings no player.
 
 ## Map checks
 

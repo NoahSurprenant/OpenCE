@@ -694,6 +694,22 @@ jobs:
             exit 1
           fi
 
+      # (tools/test_spectator.py: a machine that joins a dedicated server with
+      # bots as a spectator, with no player: it sees them play, takes no slot,
+      # and follows one and then another; its games on addresses of their own)
+      - name: Spectators
+        env:
+          HALO_TEST_GAME: ${{ runner.temp }}/halo-bots
+          HALO_TEST_STALL_BACKTRACE: ${{ runner.temp }}/stall_backtrace.so
+        run: |
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/spectator" tools/test_spectator.py \
+            > "$RUNNER_TEMP/spectator.log" 2>&1 || true
+          cat "$RUNNER_TEMP/spectator.log"
+          if ! grep -q '2 passed' "$RUNNER_TEMP/spectator.log" || grep -qiE 'skipped|failed' "$RUNNER_TEMP/spectator.log"; then
+            echo "::error::the two tests of tools/test_spectator.py did not all run and pass"
+            exit 1
+          fi
+
       - name: Compile cache
         run: ccache --show-stats
 
@@ -710,7 +726,7 @@ jobs:
         run: |
           pkill -KILL -f "$RUNNER_TEMP/halo-" || true
           git worktree remove --force "$RUNNER_TEMP/old-client" || true
-          rm -rf "$RUNNER_TEMP/bots" "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log" "$RUNNER_TEMP/halo-bots" "$RUNNER_TEMP/halo-old-client" \
+          rm -rf "$RUNNER_TEMP/bots" "$RUNNER_TEMP/spectator.log" "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log" "$RUNNER_TEMP/halo-bots" "$RUNNER_TEMP/halo-old-client" \
             "$RUNNER_TEMP/stall_backtrace.so"
 
   web-dedicated:

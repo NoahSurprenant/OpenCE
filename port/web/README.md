@@ -161,6 +161,7 @@ For testing, the page's address takes:
 | `?room=<secret>` | Joins that room (32 hex digits); `?brokers=ws://host:port[,...]` uses other MQTT brokers (WebSocket listeners), for rooms and internet play, as the tests do. |
 | `?join=<code>` | Joins that internet game once the game starts (an invite's 64 hex digits, as a `halo://join/` link ends). |
 | `?set=NAME=value` | Sets a setting's environment variable (the settings table in [port/linux/README.md](../linux/README.md)); repeat it for more. `?set=HALO_GL_DEBUG=1` reports WebGL errors in the log. |
+| `?spectate` | Joins games as a spectator (`network.spectate`): with `?join=<code>`, watches that internet game with no player. |
 | `?menu=<screen>` | Opens a menu screen (`debug.menu_open`). |
 | `?map=<level>` | Starts a level: `a10`, or `levels\test\bloodgulch\bloodgulch`. The page writes `init.txt` for it, and removes it at the next visit without `?map=`. |
 | `?play` | Starts the game at once (when the game data is there). |

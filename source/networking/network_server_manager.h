@@ -75,6 +75,9 @@ boolean network_game_server_port_machine_is_bot(
 	long machine_index);
 boolean network_game_server_port_room_for_person(
 	struct network_game *game);
+void network_game_server_port_late_joiner_precached(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *client_machine);
 boolean network_game_server_port_add_bot(
 	wchar_t const *name,
 	struct network_player *added);

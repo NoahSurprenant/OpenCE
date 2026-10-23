@@ -362,6 +362,46 @@ host with bots and plays with them: it sees players named `[BOT] ...`.
 `tools/test_bots.py`'s `test_bots_with_an_older_client` checks this with a
 build from before bots.
 
+## Spectators
+
+A spectator (`port/linux/game/spectate.c`; `README.md`, "Spectators") is a
+machine that joins a game and asks for no player, with nothing new on the
+wire and no change of version:
+
+- It joins as any machine does (`_message_client_join_game_request`, the
+  first free connection slot from 0 up, never a bot machine's) and never
+  sends `_message_client_add_player_request_*`. It has no `network_player`,
+  so no team, no statistics and no line on the scoreboard; the host's
+  countdown already takes no account of a machine with no player.
+- The host sends it the game as it sends a machine whose players are dead
+  or still joining: every object, and the moving ones as often as they are
+  near any player's unit (`network_objects.c`, `distributed_host_object_period`).
+  It sends nothing back but its acknowledgements and an empty input.
+- What a host does with a machine with no player changed, not what goes on
+  the wire:
+  - In the lobby, a machine with no player stays while there is room for a
+    person (a host used to refuse one after fifteen seconds); one is still
+    refused once the lobby is full.
+  - A machine joining a game in progress is started once its players are
+    in. A spectator has none: the host starts a machine joining in progress
+    that says it has the map precached
+    (`_message_client_map_is_precached_pregame`, sent each second while it
+    waits) and has asked for no player within three seconds of joining, as
+    one whose players are all in, and does not time it out for having no
+    player while it loads.
+  - So a spectator needs a host of this build: an older host refuses it
+    after fifteen seconds in the lobby, and never starts it in a game in
+    progress.
+- Its view is the first local player's director and observer slot, which
+  nobody else uses on that machine; its window is no player's (no HUD), drawn
+  from that camera, and its sound is heard from it.
+
+So a host or client of the same version that knows nothing of spectators
+plays with one in the game (a spectator is one more machine in the
+settings). `tools/test_spectator.py` checks that a spectator on a dedicated
+server with bots sees them move, takes no slot, and follows one after
+another.
+
 ## Joining a game in progress
 
 A game stays open when it starts (on the Xbox it closed, since every

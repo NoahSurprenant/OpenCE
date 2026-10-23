@@ -1097,13 +1097,16 @@ static void game_engine_generate_title_string(
 	long string_list_index;
 	wchar_t *format_string;
 
-	player_get(player_index);
+	/* port: (no player for a spectator: port/linux/game/spectate.c) */
+	if (player_index != NONE)
+		player_get(player_index);
 	secondary_string = L"";
 	match_assert(
 		"c:\\halo\\SOURCE\\game\\game_engine.c",
 		0x36E,
 		title_string);
-	if (global_variant.universal_variant.lives > 0)
+	/* port: (a spectator has no lives left to show) */
+	if (global_variant.universal_variant.lives > 0 && player_index != NONE)
 	{
 		struct player_datum *player = player_get(player_index);
 		long remaining_lives =
@@ -1178,7 +1181,14 @@ static void game_engine_generate_title_string(
 		secondary_string = time_left_string;
 	}
 
-	if (game_engine_globals.postgame_state == game_engine_mode_postgame_delay)
+	/* port: a spectator, who has no place nor outcome: the time left alone,
+	or a team game's score (port/linux/game/spectate.c) */
+	if (player_index == NONE &&
+		(game_engine_globals.postgame_state == game_engine_mode_postgame_delay || !game_engine_has_teams()))
+	{
+		ustrncpy(title_string, secondary_string, 80);
+	}
+	else if (game_engine_globals.postgame_state == game_engine_mode_postgame_delay)
 	{
 		long did_player_win = game_engine_did_player_win(player_index);
 		boolean has_teams = game_engine_has_teams();
@@ -2503,6 +2513,15 @@ static void game_engine_rasterize_scoreboard(
 	rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
 
 	return;
+}
+
+/* port: the full scoreboard over a spectator's view, which is no player's
+(port/linux/game/spectate.c) */
+void game_engine_port_draw_spectator_scoreboard(
+	void)
+{
+	if (game_engine || network_coop_active())
+		game_engine_rasterize_scoreboard(NONE, 1.0f);
 }
 
 static void game_engine_rasterize_in_game_score(
