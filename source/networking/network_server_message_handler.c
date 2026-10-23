@@ -1797,6 +1797,37 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 					network_event(
 						"network_game_server_write() failed in handle_message_client_broadcast_game_search()");
 				}
+				/* port: and to the searcher itself, at the client port of the
+				address the search came from (as a pong goes), which the broadcast
+				does not reach when it searched from another network (its
+				network.broadcast naming this machine: a stream in the same
+				cluster, a VPN) and this machine's network.broadcast does
+				not name it. No more often than the broadcast: one answer
+				each GAME_ADVERTISEMENT_INTERVAL, whoever asks */
+				if (source_address->address_length == IPV4_ADDRESS_LENGTH &&
+					source_address->address.ipv4_address != 0 &&
+					source_address->address.ipv4_address != (unsigned long)NONE)
+				{
+					struct transport_address searcher = *source_address;
+					/* (made again: a write leaves the message it sent in
+					network byte order) */
+					struct network_message *direct = create_network_game_message(
+						_message_server_game_advertise,
+						&advertisement,
+						sizeof(advertisement));
+
+					searcher.port = NETWORK_GAME_CLIENT_PORT;
+					if (direct && !network_game_server_write(
+						connection,
+						direct,
+						GET_MESSAGE_SIZE(direct->header),
+						&searcher,
+						0))
+					{
+						network_event(
+							"network_game_server_write() to the searcher failed in handle_message_client_broadcast_game_search()");
+					}
+				}
 			}
 			else
 			{

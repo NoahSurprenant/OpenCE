@@ -51,10 +51,12 @@ class _Reader(threading.Thread):
                         del self.chunks[:-self.keep]
 
 
-def _server(tmp_path, game, maps, address, peer):
+def _server(tmp_path, game, maps, address):
+    # (no network.broadcast: the server knows nothing of the stream, as a
+    # server in a cluster does not; it answers the stream's search directly)
     return _start(tmp_path, "server", game, maps, {
         "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "5", "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "6",
-        "HALO_NET_ADDRESS": address, "HALO_NET_BROADCAST": peer})
+        "HALO_NET_ADDRESS": address})
 
 
 def test_stream_mode(tmp_path):
@@ -63,8 +65,9 @@ def test_stream_mode(tmp_path):
     (as ffmpeg reads them); it says it is streaming and writes its ready file
     at its first frame; once it watches the game, its frames are not all the
     same (the director's camera moves with the bots) and its sound is not
-    silent (their fight). The server restarts: the stream joins its new game
-    by itself. SIGTERM ends it in seconds, its ready file gone. About two
+    silent (their fight). The server is given no address of the stream: it
+    answers the stream's search directly. The server restarts: the stream joins
+    its new game by itself. SIGTERM ends it in seconds, its ready file gone. About two
     minutes."""
     if os.environ.get("HALO_TEST_STREAM") != "1":
         pytest.skip("needs HALO_TEST_STREAM=1: a build whose SDL draws offscreen with OpenGL, and a 32-bit OpenGL")
@@ -74,7 +77,7 @@ def test_stream_mode(tmp_path):
     video, audio, ready = tmp_path / "video", tmp_path / "audio", tmp_path / "ready"
     os.mkfifo(video)
     os.mkfifo(audio)
-    games = {"server": _server(tmp_path, server, maps, server_address, stream_address)}
+    games = {"server": _server(tmp_path, server, maps, server_address)}
     executables = {"server": server, "stream": game}
     readers = []
     try:
@@ -119,7 +122,7 @@ def test_stream_mode(tmp_path):
         games["server"].wait()
         watched = _log(tmp_path, "stream").count("stream: watching a game")
         (tmp_path / "server").rename(tmp_path / "server-1")
-        games["server"] = _server(tmp_path, server, maps, server_address, stream_address)
+        games["server"] = _server(tmp_path, server, maps, server_address)
         _wait(lambda: _log(tmp_path, "stream").count("stream: watching a game") > watched, 240, games, tmp_path,
               "the stream did not watch the server's new game")
         assert "network test: the game is gone; joining again" in _log(tmp_path, "stream")

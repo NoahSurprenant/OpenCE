@@ -34,9 +34,19 @@ app.kubernetes.io/instance: {{ .Release.Name }}
    (tag@sha256:... or sha256:..., what Argo CD Image Updater writes); digest, when set, replaces it.
    An empty tag is the chart's appVersion. */}}
 {{- define "opence-server.image" -}}
-{{- $image := .Values.image -}}
+{{- include "opence-server.imageRef" (dict "image" .Values.image "default" .Chart.AppVersion) -}}
+{{- end }}
+
+{{/* The stream's image (stream.image), as opence-server.image. */}}
+{{- define "opence-server.streamImage" -}}
+{{- include "opence-server.imageRef" (dict "image" .Values.stream.image "default" .Chart.AppVersion) -}}
+{{- end }}
+
+{{/* image (repository, tag, digest) as a reference; default: the tag when tag is empty. */}}
+{{- define "opence-server.imageRef" -}}
+{{- $image := .image -}}
 {{- $ref := $image.repository -}}
-{{- $tag := toString ($image.tag | default .Chart.AppVersion) -}}
+{{- $tag := toString ($image.tag | default .default) -}}
 {{- if $image.digest }}{{ $tag = regexReplaceAll "@.*$" $tag "" }}{{ if hasPrefix "sha256:" $tag }}{{ $tag = "" }}{{ end }}{{ end -}}
 {{- if hasPrefix "sha256:" $tag }}{{ $ref = printf "%s@%s" $ref $tag }}
 {{- else if $tag }}{{ $ref = printf "%s:%s" $ref $tag }}{{ end -}}
@@ -80,4 +90,26 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- with .Values.logs -}}
 {{- if or .existingClaim .volume }}true{{ end -}}
 {{- end -}}
+{{- end }}
+
+{{/* The stream's objects' name and the headless Service of the server's system link. */}}
+{{- define "opence-server.streamName" -}}
+{{- printf "%s-stream" (include "opence-server.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
+{{- define "opence-server.systemLinkName" -}}
+{{- printf "%s-system-link" (include "opence-server.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
+{{/* What the stream's Service and NetworkPolicy select (never the server's pods). */}}
+{{- define "opence-server.streamSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "opence-server.name" . }}-stream
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "opence-server.streamLabels" -}}
+{{ include "opence-server.streamSelectorLabels" . }}
+app.kubernetes.io/component: stream
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}

@@ -1628,7 +1628,13 @@ went) and shows the lobby and the scores between games.
   file is removed at exit. SIGTERM leaves the game and exits at once.
 - **Where to.** System link's search (`debug.network_test` "join"):
   `network.broadcast` (`HALO_NET_BROADCAST`) set to the server's address
-  finds it on another network, for example a server in the same cluster.
+  finds it on another network, for example a server in the same cluster. A host answers a
+  search at the searcher's own address too (as well as by broadcast), so the server needs no
+  address of the stream.
+- **A container.** docker/server/Dockerfile's `stream` target is an image of it (the portable build,
+  32-bit Mesa, ffmpeg, and `docker/stream/stream.sh`, which makes the FIFOs and runs the game and
+  ffmpeg to HLS); the Helm chart's `stream` runs it beside a server (charts/opence-server/README.md,
+  "Stream").
 
 For example, with the FIFOs made first (`mkfifo video audio`):
 

@@ -24,6 +24,18 @@ spec:
       from:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    {{- if .Values.stream.enabled }}
+    # the stream (stream.enabled) joining over system link
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "opence-server.streamSelectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 5150
+        - protocol: TCP
+          port: 5150
+    {{- end }}
     {{- with $np.extraIngress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -52,6 +64,16 @@ spec:
         # Every UDP port: STUN (19302, 3478) and the players' tunnel ports.
         - protocol: UDP
         {{- end }}
+    {{- end }}
+    {{- if .Values.stream.enabled }}
+    # system link to the stream: its game advertisement and the game
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opence-server.streamSelectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 5151
     {{- end }}
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}

@@ -1,0 +1,136 @@
+{{- if .Values.stream.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opence-server.streamName" . }}
+  labels:
+    {{- include "opence-server.streamLabels" . | nindent 4 }}
+data:
+  # The playlist and its segments from /hls, the watch page at any path that ends in /, so the
+  # stream works under any path prefix an ingress gives it (/watch/, say) with nothing stripped.
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    error_log stderr warn;
+    events {
+      worker_connections 512;
+    }
+    http {
+      default_type application/octet-stream;
+      access_log off;
+      server_tokens off;
+      sendfile on;
+      client_body_temp_path /tmp/client_body;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      server {
+        listen 8080;
+        absolute_redirect off;
+        location = /healthz {
+          default_type text/plain;
+          return 200 "ok\n";
+        }
+        # the playlist changes every segment: never kept
+        location ~ ^(?:.*/)?(live\.m3u8)$ {
+          types { }
+          default_type application/vnd.apple.mpegurl;
+          add_header Cache-Control "no-cache" always;
+          alias /hls/$1;
+        }
+        # a segment never changes, and is deleted a few segments later
+        location ~ ^(?:.*/)?(live[0-9]+\.ts)$ {
+          types { }
+          default_type video/mp2t;
+          add_header Cache-Control "max-age=30" always;
+          alias /hls/$1;
+        }
+        location ~ /$ {
+          types { }
+          default_type text/html;
+          add_header Cache-Control "no-cache" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          root /etc/opence-stream;
+          try_files /index.html =404;
+        }
+        location / {
+          return 301 $uri/;
+        }
+      }
+    }
+  # hls.js (cdnjs, pinned with its integrity hash) where the browser has no HLS of its own (Safari
+  # has). Muted until a click: browsers start no sound by themselves.
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ .Values.stream.title }} - live</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 15px system-ui, sans-serif; }
+      main { display: flex; flex-direction: column; height: 100%; }
+      video { flex: 1; width: 100%; min-height: 0; background: #000; }
+      .bar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; background: #111; }
+      .bar button { font: inherit; padding: 6px 14px; border: 1px solid #555; border-radius: 4px; background: #222; color: #eee; cursor: pointer; }
+      #status { opacity: 0.8; }
+      .live { color: #e33; font-weight: 600; }
+    </style>
+    </head>
+    <body>
+    <main>
+      <video id="video" playsinline muted autoplay></video>
+      <div class="bar">
+        <span class="live">&#9679; LIVE</span>
+        <button id="sound" type="button">Unmute</button>
+        <span id="status">Connecting&hellip;</span>
+      </div>
+    </main>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.6.16/hls.min.js"
+      integrity="sha512-zAODd1LM+/58SazX5fct5psehCijY60y5rG0BYIzxTXot7ovEo2FhfWTV0mp4oqIef2xriyg4zlrPlmFTDcPXg=="
+      crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+    (function () {
+      var video = document.getElementById('video');
+      var status = document.getElementById('status');
+      var sound = document.getElementById('sound');
+      var source = 'live.m3u8';
+      function say(text) { status.textContent = text; }
+      sound.onclick = function () {
+        video.muted = !video.muted;
+        sound.textContent = video.muted ? 'Unmute' : 'Mute';
+        video.play().catch(function () {});
+      };
+      video.addEventListener('playing', function () { say(''); });
+      video.addEventListener('waiting', function () { say('Buffering…'); });
+      // The stream went away (it stopped, or is starting again): load the page again, which shows
+      // whatever is in front of the stream (a starting page) until it is back.
+      function again(why) {
+        say(why + ' Reconnecting…');
+        setTimeout(function () { location.reload(); }, 5000);
+      }
+      if (window.Hls && Hls.isSupported()) {
+        var hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 8, manifestLoadingMaxRetry: 4,
+          levelLoadingMaxRetry: 4, fragLoadingMaxRetry: 4 });
+        var mediaRecoveries = 0;
+        hls.on(Hls.Events.ERROR, function (event, data) {
+          if (!data.fatal) return;
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries++ < 3) { hls.recoverMediaError(); return; }
+          hls.destroy();
+          again('The stream stopped.');
+        });
+        hls.loadSource(source);
+        hls.attachMedia(video);
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = source;
+        video.addEventListener('error', function () { again('The stream stopped.'); });
+      } else {
+        say('This browser cannot play the stream.');
+      }
+      video.play().catch(function () {});
+    })();
+    </script>
+    </body>
+    </html>
+{{- end }}

@@ -170,6 +170,40 @@ and `extraEgress` add rules.
 For admin, `telnetConsole.enabled` opens the game's script console on 127.0.0.1 inside the pod (no
 password), which `kubectl exec` reaches; NOTES.txt prints the command.
 
+## Stream
+
+`stream.enabled` adds a stream of the server's game for people to watch in a browser
+(port/linux/README.md, "Streaming"): a second Deployment, `<fullname>-stream`, whose pod runs
+
+- the stream image (`ghcr.io/noahsurprenant/opence-stream`, docker/server/Dockerfile's `stream`
+  target): the game as a spectator with the auto-director, drawn with OpenGL on Mesa's llvmpipe (no
+  GPU) at `stream.width` x `stream.height` (854 x 480), and ffmpeg encoding it to HLS (x264
+  `stream.preset`, AAC, `stream.segmentSeconds` segments, `stream.playlistSize` in the
+  playlist, older ones deleted) in an in-memory emptyDir;
+- nginx, serving the playlist, the segments and a small watch page (hls.js from cdnjs, pinned by its
+  integrity hash) on port 8080, behind the Service `<fullname>-stream` (port 80). The page and the
+  files are served under any path prefix, so an ingress can put it at `/watch/` without stripping it.
+
+It mounts the same game data as the server (read-only), and the Skate 3 data too
+(`stream.skateData`) so skaters' boards are drawn. It joins the server over system link on the pod
+network: a headless Service, `<fullname>-system-link` (TCP and UDP 5150), names the server pod's
+own address, which the stream looks up (and looks up again: when the server's pod is replaced, the
+stream's container restarts on the new address). With network policies on, the stream reaches only
+DNS and the server's TCP and UDP 5150, the server answers it on UDP 5151, and only
+`stream.networkPolicy.from` (or anyone) reaches its port 8080.
+
+`stream.replicas` is 0: a stream costs about 2.5 cores while it runs, so something scales it up
+while someone watches - Sablier (its labels in `stream.deploymentLabels`), KEDA's HTTP add-on, or
+`kubectl scale`. Have your GitOps tool ignore the Deployment's `spec.replicas`. The pod is ready
+once the playlist lists `stream.readySegments` segments (a few seconds after the start), and
+restarted if the playlist stops changing for 30 seconds.
+
+Measured at 854 x 480 with llvmpipe: about 2.1 cores for the game and half a core for ffmpeg, about
+400 MB; the defaults request 2.5 cores and 700Mi and limit 3 cores and 1Gi. Set
+`stream.renderThreads` (`LP_NUM_THREADS`) to the CPU limit. The pod is hardened as the server's:
+non-root, read-only root filesystem, the emptyDirs its only writable folders, no capabilities,
+seccomp `RuntimeDefault`, no service account token.
+
 ## Settings
 
 The chart maps its values to the server's environment variables (port/linux/README.md, "Settings"):

@@ -268,5 +268,96 @@ networkPolicy:
   extraIngress: []
   extraEgress: []
 
+# The stream (port/linux/README.md, "Streaming"): a second Deployment that watches this server's game
+# as a spectator with the auto-director and serves it as HLS video (H.264 and AAC) with a small watch
+# page, for people to watch in a browser. Off by default. Its image is the server's build in stream
+# mode (docker/server/Dockerfile, target stream): it draws with OpenGL on Mesa's llvmpipe (no GPU),
+# writes the picture and sound to two FIFOs, and ffmpeg encodes them to HLS in an emptyDir that an
+# nginx beside it serves. It joins the server over system link, on the pod network: the chart adds a
+# headless Service (<fullname>-system-link, TCP and UDP 5150) whose name the stream looks up to the
+# server pod's address, and NetworkPolicy rules between the two pods.
+#
+# replicas is 0 by default: a stream costs about 2.5 cores while it runs, so something scales it up
+# while someone watches (Sablier, KEDA's HTTP add-on, or by hand: kubectl scale). With an autoscaler
+# that writes spec.replicas, have your GitOps tool ignore it.
+stream:
+  enabled: false
+  replicas: 0
+  image:
+    repository: ghcr.io/noahsurprenant/opence-stream
+    # Empty: the chart's appVersion (latest). Image Updater can write <tag>@sha256:... here.
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  # The picture and its encoding. llvmpipe draws about 18 frames a second at 854 x 480 in about 2.1
+  # cores (30 sent: a frame drawn late repeats the last one); about 10 at 1280 x 720 in 2.5.
+  width: 854
+  height: 480
+  fps: 30
+  videoBitrate: 1500k
+  audioBitrate: 128k
+  # x264's preset and threads (veryfast at 854 x 480: about half a core).
+  preset: veryfast
+  encoderThreads: 2
+  # HLS: the segments' length in seconds and how many the playlist lists (older ones are deleted).
+  segmentSeconds: 2
+  playlistSize: 6
+  # llvmpipe's threads (LP_NUM_THREADS): match it to the CPU limit; it otherwise starts one for each
+  # of the node's CPUs.
+  renderThreads: 3
+  # The camera: director (cuts between whoever is most worth watching), follow, first or free.
+  camera: director
+  # The watch page's title.
+  title: Halo
+  # Mount skateData (when set) read-only, so the stream draws skaters' boards as players see them.
+  skateData: true
+  # The ready pod: the playlist lists this many segments (a player starts a few segments behind).
+  readySegments: 3
+  # Measured at 854 x 480 (4 bots): about 2.1 cores for the game and half a core for ffmpeg, about
+  # 390 MB for the game and ffmpeg together.
+  resources:
+    requests:
+      cpu: 2500m
+      memory: 700Mi
+    limits:
+      cpu: "3"
+      memory: 1Gi
+  # The web server (nginx) that serves the playlist, the segments and the watch page.
+  web:
+    image:
+      repository: nginxinc/nginx-unprivileged
+      tag: 1.30.5-alpine@sha256:56b8272e43a0525f67aed68d1e0794a712d10e3e45a563e118e9a77c817e6f86
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: "1"
+        memory: 64Mi
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+    labels: {}
+  # Labels and annotations on the stream's Deployment (an autoscaler's, e.g. sablier.enable), and
+  # on its pods.
+  deploymentLabels: {}
+  deploymentAnnotations: {}
+  podLabels: {}
+  podAnnotations: {}
+  # Empty: the server's nodeSelector; affinity and tolerations are the stream's own.
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  priorityClassName: ""
+  terminationGracePeriodSeconds: 10
+  # More environment variables for the stream container ({name, value} or {name, valueFrom}).
+  extraEnv: []
+  # Who may reach the web server's port (8080), as NetworkPolicy peers. Empty: anyone; narrow it to
+  # the ingress controller.
+  networkPolicy:
+    from: []
+
 # More objects to render with the release (templated).
 extraObjects: []

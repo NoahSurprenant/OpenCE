@@ -86,6 +86,43 @@ networkPolicy:
       ports:
         - protocol: TCP
           port: 443
+stream:
+  enabled: true
+  replicas: 1
+  image:
+    tag: latest@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  width: 1280
+  height: 720
+  fps: 30
+  videoBitrate: 3M
+  preset: faster
+  renderThreads: 4
+  camera: follow
+  title: Example server
+  resources:
+    requests: { cpu: "3", memory: 800Mi }
+    limits: { cpu: "4", memory: 1Gi }
+  service:
+    annotations:
+      example.com/stream: "true"
+  deploymentLabels:
+    sablier.enable: "true"
+    sablier.group: example
+  podAnnotations:
+    example.com/scrape: "false"
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: games
+      effect: NoSchedule
+  extraEnv:
+    - name: STREAM_PLAYLIST_SIZE
+      value: "8"
+  networkPolicy:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: traefik
 extraObjects:
   - apiVersion: v1
     kind: ConfigMap

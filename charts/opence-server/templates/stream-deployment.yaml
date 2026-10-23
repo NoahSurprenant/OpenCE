@@ -1,0 +1,254 @@
+{{- if .Values.stream.enabled }}
+{{- $s := .Values.stream }}
+{{- $name := include "opence-server.streamName" . }}
+{{- $env := list }}
+{{- $env = append $env (dict "name" "STREAM_SERVER" "value" (printf "%s.%s.svc.cluster.local" (include "opence-server.systemLinkName" .) .Release.Namespace)) }}
+{{- $env = append $env (dict "name" "STREAM_HLS_DIR" "value" "/hls") }}
+{{- $env = append $env (dict "name" "STREAM_WIDTH" "value" (toString (int $s.width))) }}
+{{- $env = append $env (dict "name" "STREAM_HEIGHT" "value" (toString (int $s.height))) }}
+{{- $env = append $env (dict "name" "STREAM_FPS" "value" (toString (int $s.fps))) }}
+{{- $env = append $env (dict "name" "STREAM_VIDEO_BITRATE" "value" (toString $s.videoBitrate)) }}
+{{- $env = append $env (dict "name" "STREAM_AUDIO_BITRATE" "value" (toString $s.audioBitrate)) }}
+{{- $env = append $env (dict "name" "STREAM_PRESET" "value" $s.preset) }}
+{{- $env = append $env (dict "name" "STREAM_ENCODER_THREADS" "value" (toString (int $s.encoderThreads))) }}
+{{- $env = append $env (dict "name" "STREAM_SEGMENT_SECONDS" "value" (toString (int $s.segmentSeconds))) }}
+{{- $env = append $env (dict "name" "STREAM_PLAYLIST_SIZE" "value" (toString (int $s.playlistSize))) }}
+{{- $env = append $env (dict "name" "HALO_STREAM_CAMERA" "value" $s.camera) }}
+{{- $env = append $env (dict "name" "LP_NUM_THREADS" "value" (toString (int $s.renderThreads))) }}
+{{- $env = append $env (dict "name" "HALO_DATA_ROOT" "value" "/data") }}
+{{- $env = append $env (dict "name" "HALO_SAVE_ROOT" "value" "/state/saves") }}
+{{- $skate := and $s.skateData (include "opence-server.hasSkateData" .) }}
+{{- if $skate }}
+{{- $env = append $env (dict "name" "HALO_SKATE_ASSETS" "value" "/skate-data/assets") }}
+{{- end }}
+{{- if include "opence-server.hasCustomMaps" . }}
+{{- $env = append $env (dict "name" "HALO_CUSTOM_MAPS_ROOT" "value" "/custom_maps") }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "opence-server.streamLabels" . | nindent 4 }}
+    {{- with $s.deploymentLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $s.deploymentAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # 0 unless someone watches: an autoscaler (or kubectl scale) sets it.
+  replicas: {{ int $s.replicas }}
+  # One stream at a time: a second would be a second spectator.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "opence-server.streamSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "opence-server.streamSelectorLabels" . | nindent 8 }}
+        {{- with $s.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # the watch page and nginx's settings: a change rolls the pod
+        checksum/web: {{ include (print $.Template.BasePath "/stream-configmap.yaml") . | sha256sum }}
+        {{- with $s.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      # Neither container calls the Kubernetes API.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $s.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $s.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with ($s.nodeSelector | default .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $s.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $s.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: stream
+          image: {{ include "opence-server.streamImage" . | quote }}
+          imagePullPolicy: {{ $s.image.pullPolicy }}
+          env:
+            {{- toYaml $env | nindent 12 }}
+            {{- with $s.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            # system link's client port: the server's game advertisement and its datagrams
+            - name: system-link
+              containerPort: 5151
+              protocol: UDP
+          # Ready once the playlist lists readySegments segments, so a player has enough to start.
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - test "$(grep -cs '^live[0-9]*\.ts$' /hls/live.m3u8)" -ge {{ int $s.readySegments }}
+            periodSeconds: 2
+            failureThreshold: 2
+            timeoutSeconds: 2
+          # Alive while ffmpeg keeps writing the playlist (a segment every segmentSeconds; the script
+          # exits by itself if the game or ffmpeg does).
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - test -n "$(find /hls/live.m3u8 -newermt '-30 seconds' 2>/dev/null)"
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml $s.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: game-data
+              mountPath: /data
+              readOnly: true
+              {{- with .Values.gameData.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+            {{- if include "opence-server.hasCustomMaps" . }}
+            - name: custom-maps
+              mountPath: /custom_maps
+              readOnly: true
+              {{- with .Values.customMaps.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+            {{- end }}
+            {{- if $skate }}
+            - name: skate-data
+              mountPath: /skate-data
+              readOnly: true
+              {{- with .Values.skateData.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+            {{- end }}
+            # settings, the save root and its map cache
+            - name: state
+              mountPath: /state
+            # the two FIFOs
+            - name: tmp
+              mountPath: /tmp
+            - name: hls
+              mountPath: /hls
+        - name: web
+          image: {{ include "opence-server.imageRef" (dict "image" $s.web.image "default" "latest") | quote }}
+          imagePullPolicy: {{ $s.web.image.pullPolicy }}
+          # (nginx itself, not the image's entrypoint, whose scripts edit files in its read-only root)
+          command: ["nginx", "-c", "/etc/opence-stream/nginx.conf", "-g", "daemon off;"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml $s.web.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: web
+              mountPath: /etc/opence-stream
+              readOnly: true
+            - name: hls
+              mountPath: /hls
+              readOnly: true
+            # nginx's pid and temporary files
+            - name: web-tmp
+              mountPath: /tmp
+      volumes:
+        - name: game-data
+          {{- if .Values.gameData.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.gameData.existingClaim }}
+            readOnly: true
+          {{- else if and .Values.gameData.nfs.server .Values.gameData.nfs.path }}
+          nfs:
+            server: {{ .Values.gameData.nfs.server }}
+            path: {{ .Values.gameData.nfs.path }}
+            readOnly: true
+          {{- else }}
+          {{- toYaml .Values.gameData.volume | nindent 10 }}
+          {{- end }}
+        {{- if include "opence-server.hasCustomMaps" . }}
+        - name: custom-maps
+          {{- if .Values.customMaps.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.customMaps.existingClaim }}
+            readOnly: true
+          {{- else if and .Values.customMaps.nfs.server .Values.customMaps.nfs.path }}
+          nfs:
+            server: {{ .Values.customMaps.nfs.server }}
+            path: {{ .Values.customMaps.nfs.path }}
+            readOnly: true
+          {{- else }}
+          {{- toYaml .Values.customMaps.volume | nindent 10 }}
+          {{- end }}
+        {{- end }}
+        {{- if $skate }}
+        - name: skate-data
+          {{- if .Values.skateData.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.skateData.existingClaim }}
+            readOnly: true
+          {{- else if and .Values.skateData.nfs.server .Values.skateData.nfs.path }}
+          nfs:
+            server: {{ .Values.skateData.nfs.server }}
+            path: {{ .Values.skateData.nfs.path }}
+            readOnly: true
+          {{- else }}
+          {{- toYaml .Values.skateData.volume | nindent 10 }}
+          {{- end }}
+        {{- end }}
+        # (the map cache: about 115 MB for the multiplayer maps)
+        - name: state
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+        # the playlist and its segments (6 of 2 s at 1.6 Mb/s: about 3 MB), in memory
+        - name: hls
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: web
+          configMap:
+            name: {{ $name }}
+        - name: web-tmp
+          emptyDir:
+            sizeLimit: 16Mi
+{{- end }}
