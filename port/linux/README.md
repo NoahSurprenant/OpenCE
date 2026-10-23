@@ -429,6 +429,7 @@ the setting for one start of the game. It has priority over the file.
 | `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 127. Refer to "Bots". |
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.game_seed` | `0` | `HALO_GAME_SEED` | The start of the game's random numbers instead of the time (0: the time), so that a test's games go the same way each run. |
+| `debug.bot_nav_build_delay` | `0.0` | `HALO_BOT_NAV_BUILD_DELAY` | Seconds more that a bots' walking graph not in the cache takes to build (on its own thread: the game goes on), for the tests. Refer to "The walking graph". |
 | `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays (and, on a map with vehicles, the graph that vehicles drive), logs how much of the map it reaches, and ends the game. Refer to "Bots". |
 | `debug.bot_trace` | `false` | `HALO_BOT_TRACE` | Each bot's way in the log every second. |
 | `debug.bot_difficulties` | `""` | `HALO_BOT_DIFFICULTIES` | The difficulty of each bot that `server.bots` adds, in the order they join, with commas between them (`"easy,normal,hard,legendary"`), for games of bots of each difficulty against each other. Past the end of the list: `server.bot_difficulty`. |
@@ -1294,7 +1295,9 @@ netgame flags. It still fights what it meets on the way.
   within 5 world units of their flag's stand). With one flag, its team
   defends it and the other attacks.
 - **King of the Hill:** to the hill, and stays on it, moving about within
-  it, fighting from it and not chasing anyone off it; a moving hill is
+  it, fighting from it and not chasing anyone off it, nor going for an item
+  more than 3 world units off it (an overshield 8 world units away had bots
+  leave the hill for it and come back, again and again); a moving hill is
   followed.
 - **Oddball:** to a ball lying about, to take it; with it, away from its
   enemies (to the place furthest from them of a few). An enemy who has it
@@ -1344,7 +1347,9 @@ the bot's input, as a person's does, so nothing is new on the wire:
   and people driven at.
 - **Gunners.** In team games a bot takes the gunner's seat of a Warthog
   that a team mate drives (a bot, or a person) when it is near and slow; a
-  bot driver waits a few seconds for a team mate on its way to the gun. The
+  bot driver waits a few seconds for a team mate on its way to the gun, and
+  takes a Warthog whose gun a team mate already sits in, waiting for a
+  driver (whichever of the two got there first). The
   gunner aims and fires the chaingun as it fights on foot (its reaction,
   aim and error by difficulty; its lead takes the vehicle's own way off),
   and gets out when nobody drives. A peaceful bot may ride a gun and never
@@ -1352,7 +1357,10 @@ the bot's input, as a person's does, so nothing is new on the wire:
 - **Fighting from a vehicle.** A driver with a gunner aboard stops near an
   enemy for the gunner's shots (easy, normal) or circles it (hard,
   legendary), and drives on to another place instead of getting out at its
-  goal. A Ghost's driver is its gunner: a bot fights from one, aiming as it
+  goal. A crew that fights from its vehicle (a gunner who fires aboard, or
+  a Ghost's or a Scorpion's driver who may fight) drives to the fight it
+  knows of: a target its driver or gunner saw, or gunfire either heard, in
+  the last 8 seconds. A Ghost's driver is its gunner: a bot fights from one, aiming as it
   steers, closing on a far target and backing off a near one, and a bot that
   may fight takes a Ghost near in a fight. A Warthog's driver alone gets out
   to fight on foot, unless it may run its target over.
@@ -1382,7 +1390,10 @@ the bot's input, as a person's does, so nothing is new on the wire:
 - **Game types.** While a bot drives, its goal follows its game type's
   objective (a race's next flag, a flag or ball to take, a hill or flag
   stand to hold, someone to hunt); it gets out on the hill or stand it
-  holds, and takes no vehicle standing there. A bot with a flag or ball in
+  holds (but in a Ghost or a Scorpion, whose guns are its own, it stays
+  there aboard), and takes no vehicle standing there. Nor does it take one
+  standing within 10 world units of its goal: it would get out as soon as it
+  got in. A bot with a flag or ball in
   hand takes none.
 - **Walking, a board or a vehicle.** Where the host has Skate 3 mode, a bot
   weighs its board (about 1.3 times as quick as walking) against a vehicle
@@ -1398,7 +1409,7 @@ the scoreboard.
 ### The walking graph
 
 The host builds a walking graph of each map that it plays with bots
-(`game/bots_nav.c`, `game/bots_nav_game.c`), when the game starts:
+(`game/bots_nav.c`, `game/bots_nav_game.c`), when the game's map is loaded:
 
 - From the collision of the level and of its static scenery (teleporter
   pads, crates, rocks), in the way of Recast: the level is cut into columns
@@ -1418,7 +1429,19 @@ The host builds a walking graph of each map that it plays with bots
 - Only what the spawns can reach, and what can reach the spawns, is kept.
   The "main part" below is the part of the map that the most spawns can go
   to and come back from.
-- Building takes 0.1 to 6 seconds for a map. The graph is cached in the save
+- Building takes 0.1 to 6 seconds for a map (Blood Gulch's three graphs,
+  with the vehicles' below, about 13). It is built on a thread of its own,
+  while the game and its network go on (the game's collision test, which
+  only the game's thread may make, answers the build's questions in
+  batches, 20 milliseconds a frame; the graph is the same): the host used to stand still for
+  it, sending nothing, and a machine loading the map then could give up on
+  it (15 seconds). A host starting a game with bots waits for their graphs
+  before its game's clock starts, as it waits for a machine still loading
+  the map (`networking/network_server_manager.c`; at most a minute, after
+  which its bots stand still until their graph is done), so the bots begin
+  with the game. `debug.bot_nav_build_delay` makes the walking graph that
+  many seconds slower, for `test_bots_a_client_loading_while_the_graphs_build`.
+  The graph is cached in the save
   root (`z:\bots_nav_<map>_<key>.nav`; the browser's private storage in
   the web build), keyed by the map's checksum, so a machine builds the graph
   of a map once. It is made from the player's own map files, and is never in
@@ -1515,9 +1538,10 @@ map's Scorpions (`z:\bots_tank_<map>_<key>.nav`).
 
 ## Spectators
 
-A spectator watches a network game without playing in it. Set
-`network.spectate` (`HALO_SPECTATE`) to `true`, or type `spectate on` at the
-console, and join a game as usual: a dedicated server, or a game that
+A spectator watches a network game without playing in it. Set JOIN GAMES AS
+to SPECTATOR (Settings > Network Setup > SPECTATING; `network.spectate`,
+`HALO_SPECTATE`), or type `spectate on` at the console, and join a game as
+usual: a dedicated server, or a game that
 someone hosts from the menus. In the browser, add `?spectate` to the page's
 address (with `?join=<code>` to join an internet game).
 
@@ -1538,7 +1562,8 @@ address (with `?join=<code>` to join an internet game).
   and cannot start a vote to kick a player.
 
 Four cameras, which the action key (E, or X on a controller) switches
-between (SPECTATOR CAMERA, `network.spectate_camera`, is the first):
+between (Network Setup's SPECTATOR CAMERA, `network.spectate_camera`, is the
+first):
 
 - **FOLLOW** (first) stays behind the player that it watches. The look keys
   or stick turn it round them, and it turns back behind them two seconds

@@ -135,6 +135,7 @@ static void bot_objective_at(
 	real radius)
 {
 	objective->kind = kind;
+	objective->hill = FALSE;
 	objective->point.x = point->x;
 	objective->point.y = point->y;
 	objective->point.z = point->z;
@@ -281,6 +282,7 @@ static void bot_objective_king(
 	}
 	radius = radius < 1.0e29f ? PIN(radius * 0.6f, 0.8f, 4.0f) : BOT_HILL_RADIUS;
 	bot_objective_at(objective, _bot_objective_hold, &center, radius);
+	objective->hill = TRUE;
 }
 
 /* ---------- oddball */
@@ -469,6 +471,17 @@ void bot_objective_update(
 		break;
 	default:
 		break;
+	}
+	/* (debug.bot_vehicle "gun": by its driving team mate first, the game's
+	objective with them) */
+	{
+		real_point3d mate;
+
+		if (bot_vehicle_gunner_escort(bot, unit_index, &mate) &&
+			bot_flat_distance(&mate, &object_get(unit_index)->object.position) > BOT_ESCORT_RADIUS)
+		{
+			bot_objective_at(objective, _bot_objective_hold, &mate, BOT_ESCORT_RADIUS);
+		}
 	}
 	if (objective->kind != before && config_boolean("debug.bot_trace"))
 	{

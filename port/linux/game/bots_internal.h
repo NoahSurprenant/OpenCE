@@ -315,7 +315,12 @@ struct bot_objective
 	real radius;
 	long object_index;
 	long hunted_player;
+	/* a hill: the bot takes no item further than BOT_HILL_PICKUP_REACH from
+	it (it would leave the hill for the item and come back, again and again) */
+	boolean hill;
 };
+/* how far beyond a hill's radius a bot holding it takes an item (world units) */
+#define BOT_HILL_PICKUP_REACH 3.0f
 
 /* a bot's fighting (bots_combat.c) */
 struct bot_combat
@@ -601,6 +606,16 @@ a bot drives it (or goes to) */
 boolean bots_vehicle_team_mate_drives(
 	long vehicle_index,
 	short team);
+/* (bots_vehicle.c) debug.bot_vehicle "gun" (a bot that takes only a gunner's
+seat): the team mate on foot whose "drive" it keeps by, to be at hand when
+they take a vehicle (FALSE: none) */
+boolean bot_vehicle_gunner_escort(
+	struct bot const *bot,
+	long unit_index,
+	real_point3d *at);
+/* (bots.c) the bot whose unit it is (NULL: a person's, or nobody's) */
+struct bot *bots_bot_of_unit(
+	long unit_index);
 boolean bots_vehicle_bot_drives(
 	long vehicle_index);
 long bots_vehicle_riders(
@@ -738,6 +753,11 @@ struct bots_nav *bots_nav_tank_current(
 	void);
 void bots_nav_update(
 	boolean needed,
+	boolean drive);
+/* (bots_nav_game.c) whether the map's graphs are done (the walking graph,
+and with drive the vehicles' and the tanks'), or the game has waited long
+enough for them, or no map is loaded */
+boolean bots_nav_ready(
 	boolean drive);
 /* a number in [0, 1) from the brain's own random numbers */
 real bot_random_real(

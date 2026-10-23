@@ -600,8 +600,10 @@ static const struct config_setting config_settings[] =
 	{ "debug.bot_vehicle", _config_string, "\"\"", "HALO_BOT_VEHICLE", _environment_value, _platform_all,
 		"How each bot goes about vehicles, with commas between, one for each bot\n"
 		"in the order they join: \"drive\" (it drives whenever its goal is a\n"
-		"little way off and a vehicle is near), \"never\" (it stays on foot),\n"
-		"\"stand\" (it stands still on foot) or anything else (as it sees fit);\n"
+		"little way off and a vehicle is near), \"tank\" (as drive, Scorpions\n"
+		"only), \"gun\" (it takes only gunners' seats, and keeps by a team mate\n"
+		"on foot who drives), \"never\" (it stays on foot), \"stand\" (it stands\n"
+		"still on foot) or anything else (as it sees fit);\n"
 		"one entry after a star (\"*drive\") is every bot's. For the tests.\n"
 		"Empty: all as they see fit." },
 	{ "debug.bot_skate", _config_string, "\"\"", "HALO_BOT_SKATE", _environment_value, _platform_all,
@@ -618,6 +620,10 @@ static const struct config_setting config_settings[] =
 		"hard bot does them, whatever its own) or anything else (as its own\n"
 		"difficulty does them); one entry after a star (\"*off\") is every bot's.\n"
 		"For the tests. Empty: all as their difficulty does them." },
+	{ "debug.bot_nav_build_delay", _config_real, "0.0", "HALO_BOT_NAV_BUILD_DELAY", _environment_value, _platform_all,
+		"Seconds more a bots' walking graph not in the cache takes to build\n"
+		"(it is built aside, the game going on meanwhile), for the tests: a\n"
+		"client loading the map meanwhile must not time out. 0: none." },
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
 		"The bots' random numbers start from this, so that a test's bots do the\n"
 		"same each run." },

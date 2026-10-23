@@ -107,6 +107,11 @@ struct bots_nav_input
 	(the game's collision test), for the drops and jumps found; NULL takes
 	them all */
 	int (*clear)(void *context, struct bots_nav_point const *from, struct bots_nav_point const *to);
+	/* ... or many at once (when not NULL, taken instead): count segments,
+	each two points (from, to) in points, a result each into clear (1 for
+	clear); the same answers as clear's, asked fewer times (a graph built on
+	a thread of its own asks the game's thread, bots_nav_game.c) */
+	void (*clear_batch)(void *context, struct bots_nav_point const *points, unsigned char *clear, long count);
 	void *context;
 };
 

@@ -139,7 +139,8 @@ SCREENS = {
     "network_setup": {
         "screen": "network_settings_screen",
         "header": ("header_profile_network_settings", f"{PE}/network_setup/header_profile_network_settings"),
-        "spacing": 30,
+        # (ten rows with its two categories: closer together)
+        "spacing": 27,
         # (the router, the clipboard and the updates, which the web build
         # has not: the other rows from the top there)
         "platform_places": True,
@@ -234,7 +235,19 @@ _network["categories"] = [
     ("MAP SHARING:", "network_setup/map_sharing",
      "Downloading Custom Edition maps you do not have,\nand helping send them to other players.",
      "desktop android"),
+    ("SPECTATING:", "network_setup/spectating",
+     "Joining games to watch them, with no player.", None),
 ]
+SCREENS["network_setup/spectating"] = {
+    "screen": "spectating_settings_screen", "header": _network["header"], "spacing": 30,
+    "rows": [
+        ("JOIN GAMES AS:", "network.spectate", [("PLAYER", "false"), ("SPECTATOR", "true")],
+         "Play, or watch with no player: a free camera, or\nbehind or through the eyes of anyone.", None),
+        ("SPECTATOR CAMERA:", "network.spectate_camera",
+         [("FOLLOW", "follow"), ("FIRST PERSON", "first"), ("FREE", "free"), ("DIRECTOR", "director")],
+         "A spectator's first camera. DIRECTOR shows whoever\nis most worth watching, as a broadcast does.", None),
+    ],
+}
 SCREENS["network_setup/map_sharing"] = {
     "screen": "map_sharing_settings_screen", "header": _network["header"], "spacing": 30,
     "rows": [
