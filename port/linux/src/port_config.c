@@ -709,6 +709,11 @@ static const struct config_setting config_settings[] =
 		"With debug.network_test_skate_watch on a host, its player steps into the\n"
 		"skater's way every five seconds, for them to ride into; on a dedicated\n"
 		"server, another machine's player on foot (port/skate/README.md)." },
+	{ "debug.network_test_skate_fall", _config_real, "0.0", "HALO_NETWORK_TEST_SKATE_FALL", _environment_value, _platform_all,
+		"Seconds into a game at which this machine's skater is put under the\n"
+		"level, as a fall through a hole in it would leave them (the skate\n"
+		"engine's level puts them back on the board where they last rode), for\n"
+		"the tests. 0: never." },
 	{ "debug.network_test_skate_duel", _config_real, "0.0", "HALO_NETWORK_TEST_SKATE_DUEL", _environment_value,
 		_platform_all,
 		"This many seconds into an automated test game this machine's player gets\n"
