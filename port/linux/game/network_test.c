@@ -82,6 +82,8 @@ void p2p_set_hosting_public(int public);
 /* the server's states (network_server_manager.c's enum network_game_server_state) */
 #define NETWORK_TEST_SERVER_PREGAME 0
 #define NETWORK_TEST_SERVER_POSTGAME 2
+/* ... and the client's (network_client_manager.c's enum network_game_client_state) */
+#define NETWORK_TEST_CLIENT_SEARCHING 0
 /* damage.c's */
 void damage_kill_object_for_player(long object_index, long player_index);
 /* network_distributed.c's */
@@ -129,6 +131,9 @@ static struct
 	boolean map_set;
 	boolean player_added;
 	real joined_seconds;
+	/* how long a joining machine has had no game since it joined (the host
+	went, or dropped it): it joins again after a while */
+	real gone_seconds;
 	boolean team_set;
 	real kill_interval;
 	real shoot_interval;
@@ -1541,6 +1546,27 @@ void network_test_update(
 		}
 		break;
 	case _network_test_join:
+		/* (the game gone - the host restarted, went or dropped this machine -
+		for five seconds: found and joined again, as a stream must be) */
+		if (network_test.joined)
+		{
+			void *client = global_network_game_client_get();
+			short state_data;
+			boolean gone = !client || network_game_client_get_state(client, &state_data) == NETWORK_TEST_CLIENT_SEARCHING;
+
+			network_test.gone_seconds = gone ? network_test.gone_seconds + seconds : 0.0f;
+			if (network_test.gone_seconds >= 5.0f)
+			{
+				platform_log("network test: the game is gone; joining again");
+				network_test.set_up = FALSE;
+				network_test.joined = FALSE;
+				network_test.player_added = FALSE;
+				network_test.team_set = FALSE;
+				network_test.game_over = FALSE;
+				network_test.joined_seconds = 0.0f;
+				network_test.gone_seconds = 0.0f;
+			}
+		}
 		if (!network_test.set_up)
 		{
 			network_test.set_up = TRUE;

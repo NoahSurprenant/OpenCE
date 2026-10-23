@@ -25,6 +25,7 @@ Conventions carried over from the Xbox:
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
 #include "port_config.h"
+#include "stream_output.h"
 #include "main/console.h"
 
 #include <SDL3/SDL.h>
@@ -6278,6 +6279,42 @@ static void visibility_copy_batch(void)
 }
 
 #endif
+#ifndef HALO_GLES
+/* the window's picture, drawn and not yet shown, for the headless stream:
+read back whole (packed RGB, rows bottom first) and handed to its writer */
+static void stream_read_window(int width, int height)
+{
+	static unsigned char *pixels;
+	static size_t capacity;
+	size_t size = (size_t)width * (size_t)height * 3;
+	GLint framebuffer, pack_buffer, alignment;
+
+	if (width <= 0 || height <= 0)
+		return;
+	if (size > capacity)
+	{
+		unsigned char *grown = realloc(pixels, size);
+
+		if (!grown)
+			return;
+		pixels = grown;
+		capacity = size;
+	}
+	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &framebuffer);
+	glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
+	glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	glReadBuffer(GL_BACK);
+	glReadPixels(0, 0, (GLsizei)width, (GLsizei)height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)framebuffer);
+	glBindBuffer(GL_PIXEL_PACK_BUFFER, (GLuint)pack_buffer);
+	glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+	stream_output_frame(pixels, width, height, 1);
+}
+#endif
+
 void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destination_rectangle,
 	void *unused, void *unused2)
 {
@@ -6334,6 +6371,12 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		/* row 0 of the render target is the top of the picture */
 		glBlitFramebuffer(0, 0, (GLint)back_buffer->target.gl_width, (GLint)back_buffer->target.gl_height,
 			x, y + height, x + width, y, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+#ifndef HALO_GLES
+		/* the headless stream's picture: the window as it is about to be
+		shown (stream_output.c) */
+		if (stream_output_enabled())
+			stream_read_window(window_width, window_height);
+#endif
 		platform_video_swap();
 		xgpu_gl_state_invalidate();
 		memory_watch_begin_frame();

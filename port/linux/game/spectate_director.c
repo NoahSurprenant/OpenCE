@@ -7,8 +7,9 @@ a broadcast would, from what every machine of the game already knows.
 
 Each game tick every player gets an interest:
 - a kill in the last seconds (the most), being in a fight (their weapon fired
-  lately, or they were hurt), carrying the flag or the ball, driving fast, and
-  enemies close by;
+  lately, or they were hurt), carrying the flag or the ball, driving fast,
+  riding a board fast or in the air (Skate 3 mode's skaters, as every machine
+  has them: skate_network.c), and enemies close by;
 - a little more the longer since they were shown, so everyone gets a turn.
 
 And the shot rules, so the picture never jitters:
@@ -35,6 +36,7 @@ Every cut is logged with its reason and the game tick, which the tests read
 #include "text/unicode.h"
 #include "units/units.h"
 
+#include "skate.h"
 #include "spectate.h"
 #include "spectate_director.h"
 
@@ -68,6 +70,11 @@ Every cut is logged with its reason and the game tick, which the tests read
 #define HURT_DECAY 0.5f
 #define OBJECTIVE_WEIGHT 2.5f
 #define VEHICLE_WEIGHT 1.0f
+/* a skater riding fast, and more in the air (world units a tick) */
+#define SKATE_WEIGHT 1.5f
+#define SKATE_AIR_WEIGHT 1.0f
+#define FAST_SKATER 0.15f
+#define SKATER_AIR_SPEED 0.04f
 #define NEAR_WEIGHT 0.6f
 /* interest a second since they were last shown, to two minutes */
 #define TURN_WEIGHT 0.02f
@@ -82,6 +89,7 @@ enum
 	_reason_hurt,
 	_reason_objective,
 	_reason_vehicle,
+	_reason_skate,
 	_reason_near,
 	_reason_turn,
 	_reason_time,
@@ -92,7 +100,7 @@ enum
 
 static char const *const reason_names[NUMBER_OF_REASONS] =
 {
-	"start", "kill", "killer", "fight", "hurt", "objective", "vehicle", "near", "turn", "time", "left", "died"
+	"start", "kill", "killer", "fight", "hurt", "objective", "vehicle", "skate", "near", "turn", "time", "left", "died"
 };
 
 /* ---------- globals */
@@ -110,6 +118,7 @@ static struct
 	real hurt;
 	real objective;
 	real vehicle;
+	real skate;
 	real near;
 	real unshown_seconds;
 	/* the ticks of their last kill and death (NONE: none) */
@@ -165,6 +174,7 @@ static real interest(
 	terms[_reason_hurt] = HURT_WEIGHT * director_players[absolute_index].hurt;
 	terms[_reason_objective] = OBJECTIVE_WEIGHT * director_players[absolute_index].objective;
 	terms[_reason_vehicle] = VEHICLE_WEIGHT * director_players[absolute_index].vehicle;
+	terms[_reason_skate] = director_players[absolute_index].skate;
 	terms[_reason_near] = NEAR_WEIGHT * MIN(director_players[absolute_index].near, 3.0f);
 	terms[_reason_turn] = TURN_WEIGHT * MIN(director_players[absolute_index].unshown_seconds, TURN_SECONDS);
 	*reason = _reason_turn;
@@ -267,6 +277,7 @@ static void director_tick(
 		director_players[absolute_index].alive = unit != NULL;
 		director_players[absolute_index].objective = 0.0f;
 		director_players[absolute_index].vehicle = 0.0f;
+		director_players[absolute_index].skate = 0.0f;
 		director_players[absolute_index].near = 0.0f;
 		if (!unit)
 			continue;
@@ -308,6 +319,16 @@ static void director_tick(
 					director_players[absolute_index].vehicle = 1.0f;
 				}
 			}
+		}
+		/* riding a board fast, or in the air */
+		if (skate_network_player_riding((short)absolute_index))
+		{
+			real_vector3d const *velocity = &unit->object.translational_velocity;
+
+			if (velocity->i * velocity->i + velocity->j * velocity->j > FAST_SKATER * FAST_SKATER)
+				director_players[absolute_index].skate += SKATE_WEIGHT;
+			if (velocity->k > SKATER_AIR_SPEED || velocity->k < -SKATER_AIR_SPEED)
+				director_players[absolute_index].skate += SKATE_AIR_WEIGHT;
 		}
 		/* enemies close by */
 		{
