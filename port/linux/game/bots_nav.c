@@ -934,6 +934,171 @@ static int bots_nav_link_clear(
 	return 1;
 }
 
+/* the segments bots_nav_link_clear tests for a drop or a jump (from, to: six
+pairs of points into points), in its order */
+static void bots_nav_link_segments(
+	struct bots_nav_candidate const *candidate,
+	struct bots_nav_point *points)
+{
+	float top = candidate->from.z > candidate->to.z ? candidate->from.z : candidate->to.z;
+	float const heights[3] = { 0.1f, 0.35f, 0.65f };
+	int index;
+
+	for (index = 0; index < 3; index++)
+	{
+		struct bots_nav_point start, corner, end;
+
+		start = candidate->from;
+		start.z += heights[index];
+		end = candidate->to;
+		end.z += heights[index];
+		if (candidate->type == _bots_nav_drop)
+		{
+			corner.x = candidate->to.x;
+			corner.y = candidate->to.y;
+			corner.z = top + heights[index];
+		}
+		else
+		{
+			corner.x = candidate->from.x;
+			corner.y = candidate->from.y;
+			corner.z = top + heights[index] + 0.1f;
+		}
+		points[index * 4] = start;
+		points[index * 4 + 1] = corner;
+		points[index * 4 + 2] = corner;
+		points[index * 4 + 3] = end;
+	}
+}
+
+/* (input's clear_batch) which candidate of each group of the sorted
+candidates without a walk becomes its drop or jump: the first, in order,
+not near a ladder and clear, as the edges below take them one at a time;
+asked in rounds, a round's segments at once. chosen[group start] is the
+index taken, NONE for none; the refused counted as there. 0 without memory */
+static int bots_nav_choose_links(
+	struct bots_nav_builder *builder,
+	struct bots_nav_candidates const *candidates,
+	long *chosen)
+{
+	struct bots_nav_input const *input = builder->input;
+	long *cursor = (long *)malloc((size_t)(candidates->count + 1) * sizeof(long));
+	long *pending = (long *)malloc((size_t)(candidates->count + 1) * sizeof(long));
+	struct bots_nav_point *points = NULL;
+	unsigned char *clear = NULL;
+	long pending_count = 0, capacity = 0;
+	long index = 0;
+
+	if (!cursor || !pending)
+	{
+		free(cursor);
+		free(pending);
+		return 0;
+	}
+	/* (each group's first candidate to ask about, NONE: nothing to ask) */
+	while (index < candidates->count)
+	{
+		long group_end = index, start = index;
+		long first = BOTS_NAV_NONE;
+
+		while (group_end < candidates->count && candidates->items[group_end].from_node == candidates->items[index].from_node &&
+			candidates->items[group_end].to_node == candidates->items[index].to_node)
+		{
+			group_end++;
+		}
+		chosen[start] = BOTS_NAV_NONE;
+		/* (a walk takes it: nothing asked) */
+		if (candidates->items[start].type != _bots_nav_walk)
+		{
+			for (; index < group_end; index++)
+			{
+				if (candidates->items[index].type >= NUMBER_OF_BOTS_NAV_EDGE_TYPES)
+					continue;
+				first = index;
+				break;
+			}
+			if (first != BOTS_NAV_NONE)
+			{
+				cursor[start] = first;
+				pending[pending_count++] = start;
+			}
+		}
+		index = group_end;
+	}
+	while (pending_count > 0)
+	{
+		long asked = 0, kept = 0;
+
+		/* (each pending group's candidate: near a ladder refused unasked) */
+		for (index = 0; index < pending_count; index++)
+		{
+			long start = pending[index];
+
+			while (cursor[start] != BOTS_NAV_NONE && bots_nav_near_ladder(builder, &candidates->items[cursor[start]]))
+			{
+				long next = cursor[start] + 1;
+
+				builder->statistics.rejected_links++;
+				cursor[start] = next < candidates->count && candidates->items[next].from_node == candidates->items[start].from_node &&
+					candidates->items[next].to_node == candidates->items[start].to_node &&
+					candidates->items[next].type < NUMBER_OF_BOTS_NAV_EDGE_TYPES ? next : BOTS_NAV_NONE;
+			}
+			if (cursor[start] != BOTS_NAV_NONE)
+				pending[kept++] = start;
+		}
+		pending_count = kept;
+		if (pending_count == 0)
+			break;
+		if (pending_count * 6 > capacity)
+		{
+			capacity = pending_count * 6;
+			free(points);
+			free(clear);
+			points = (struct bots_nav_point *)malloc((size_t)capacity * 2 * sizeof(struct bots_nav_point));
+			clear = (unsigned char *)malloc((size_t)capacity);
+			if (!points || !clear)
+			{
+				free(points);
+				free(clear);
+				free(cursor);
+				free(pending);
+				return 0;
+			}
+		}
+		for (index = 0; index < pending_count; index++)
+			bots_nav_link_segments(&candidates->items[cursor[pending[index]]], &points[asked++ * 12]);
+		input->clear_batch(input->context, points, clear, asked * 6);
+		kept = 0;
+		for (index = 0; index < pending_count; index++)
+		{
+			long start = pending[index];
+			unsigned char const *answers = &clear[index * 6];
+
+			if (answers[0] && answers[1] && answers[2] && answers[3] && answers[4] && answers[5])
+			{
+				chosen[start] = cursor[start];
+			}
+			else
+			{
+				long next = cursor[start] + 1;
+
+				builder->statistics.rejected_links++;
+				cursor[start] = next < candidates->count && candidates->items[next].from_node == candidates->items[start].from_node &&
+					candidates->items[next].to_node == candidates->items[start].to_node &&
+					candidates->items[next].type < NUMBER_OF_BOTS_NAV_EDGE_TYPES ? next : BOTS_NAV_NONE;
+				if (cursor[start] != BOTS_NAV_NONE)
+					pending[kept++] = start;
+			}
+		}
+		pending_count = kept;
+	}
+	free(points);
+	free(clear);
+	free(cursor);
+	free(pending);
+	return 1;
+}
+
 /* the edges: walks between neighbouring cells' nodes, drops and jumps
 from the cells at the edge, the input's links; then each node's, in order */
 static int bots_nav_make_edges(
@@ -944,6 +1109,7 @@ static int bots_nav_make_edges(
 	long count = builder->cells.count;
 	long reach = (long)ceil(builder->parameters.link_reach / builder->parameters.cell_size);
 	float size = builder->parameters.cell_size;
+	long *chosen = NULL;
 	long cell;
 	long index;
 
@@ -1089,11 +1255,23 @@ static int bots_nav_make_edges(
 	that is clear; and every given link. Sorted by the node they leave,
 	the edges come out in each node's range */
 	qsort(candidates.items, (size_t)candidates.count, sizeof(struct bots_nav_candidate), bots_nav_compare_candidates);
+	/* (the drops and jumps asked about all at once, when the input can) */
+	if (builder->input->clear_batch)
+	{
+		chosen = (long *)malloc((size_t)(candidates.count + 1) * sizeof(long));
+		if (!chosen || !bots_nav_choose_links(builder, &candidates, chosen))
+		{
+			free(chosen);
+			free(candidates.items);
+			return 0;
+		}
+	}
 	builder->edge_count = 0;
 	index = 0;
 	while (index < candidates.count)
 	{
 		long group_end = index;
+		long group_start = index;
 		int walked = 0;
 		int linked = 0;
 
@@ -1123,7 +1301,13 @@ static int bots_nav_make_edges(
 				{
 					if (walked || linked)
 						continue;
-					if (bots_nav_near_ladder(builder, candidate) || !bots_nav_link_clear(builder, candidate))
+					if (chosen)
+					{
+						/* (asked about already: the refused counted) */
+						if (chosen[group_start] != index)
+							continue;
+					}
+					else if (bots_nav_near_ladder(builder, candidate) || !bots_nav_link_clear(builder, candidate))
 					{
 						builder->statistics.rejected_links++;
 						continue;
@@ -1134,6 +1318,7 @@ static int bots_nav_make_edges(
 			if (!bots_nav_reserve((void **)&builder->edges, &builder->edge_capacity, builder->edge_count + 1,
 				sizeof(struct bots_nav_edge)))
 			{
+				free(chosen);
 				free(candidates.items);
 				return 0;
 			}
@@ -1175,6 +1360,7 @@ static int bots_nav_make_edges(
 			builder->nodes[candidate->from_node].edge_count++;
 		}
 	}
+	free(chosen);
 	free(candidates.items);
 	return 1;
 }

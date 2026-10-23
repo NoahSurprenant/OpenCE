@@ -34,6 +34,11 @@ each bot's input for the tick */
 void bots_take_actions(
 	void);
 /* (main.c, every frame) the bots the settings ask for, added and removed */
+/* whether a game this machine hosts may start its clock as far as its bots
+go: none, or their graphs of its map done (bots_nav_game.c builds them aside
+once the map is loaded; network_server_manager.c waits for them as for the
+machines still loading) */
+boolean bots_graphs_ready(void);
 void bots_update(
 	void);
 /* a bot added to the host's lobby or game; FALSE (said) if it cannot be */

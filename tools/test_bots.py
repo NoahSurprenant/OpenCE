@@ -232,6 +232,48 @@ def test_bots_on_a_dedicated_server(tmp_path):
         _stop(games, tmp_path, executables)
 
 
+def test_bots_a_client_loading_while_the_graphs_build(tmp_path):
+    """A dedicated server with two bots on Blood Gulch, no graph in its cache,
+    and a client joining it: at the game's start the server builds the bots'
+    graphs, its walking graph made 20 seconds slower
+    (debug.bot_nav_build_delay) - longer than a client waits for a host that
+    sends nothing (15 seconds). The graphs are built aside
+    (bots_nav_game.c), so the server and its network go on meanwhile, its
+    game waiting for them to start its clock as for a machine still loading:
+    the client, loading the map meanwhile, is not timed out, and sees the
+    bots play once the game starts. About a minute and a half."""
+    maps, paths = _needs("HALO_TEST_GAME", "HALO_TEST_SERVER")
+    addresses = (_test_address(221), _test_address(222))
+    games = {"server": _start(tmp_path, "server", paths["HALO_TEST_SERVER"], maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "5", "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "1",
+        "HALO_SERVER_MAPS": "bloodgulch", "HALO_BOT_NAV_BUILD_DELAY": "20",
+        "HALO_NET_ADDRESS": addresses[0], "HALO_NET_BROADCAST": addresses[1]})}
+    games["client"] = _start(tmp_path, "client", paths["HALO_TEST_GAME"], maps, {
+        "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
+        "HALO_NET_ADDRESS": addresses[1], "HALO_NET_BROADCAST": addresses[0]})
+    executables = {"server": paths["HALO_TEST_SERVER"], "client": paths["HALO_TEST_GAME"]}
+    aside = re.compile(r"bots: walking graph of bloodgulch built aside: (\d+) segments asked of the game's collision, "
+                       r"over (\d+) frames")
+    try:
+        _wait(lambda: aside.search(_log(tmp_path, "server")) and _bots_seen(_log(tmp_path, "client"), 2), 150, games,
+              tmp_path, "the client did not see the bots play after their graph was built")
+    finally:
+        _stop(games, tmp_path, executables)
+    server, client = _log(tmp_path, "server"), _log(tmp_path, "client")
+    segments, frames = (int(n) for n in aside.search(server).groups())
+    built = re.search(r"bots: walking graph of bloodgulch built in (\d+) ms", server)
+    print(f"walking graph built in {built and built[1]} ms, aside: {segments} segments asked over {frames} frames")
+    assert "server: the game starts: slayer on bloodgulch" in server, server[-4000:]
+    # (the server went on, a frame at a time, its network too, while the graph was built)
+    assert frames >= 20 * 30 * 3 // 4, f"the server stood still while the graph was built: {frames} frames"
+    # (and its game waited for the graph to start: the bots began with it)
+    assert "bots: the game waits for the bots' graphs of the map" in server, server[-4000:]
+    # (a client that waited for a host sending nothing gives up: "the game host went down", its game log says)
+    assert not re.search(r"the game host went down|timeout in network", client + _debug(tmp_path, "client")), \
+        _debug(tmp_path, "client")[-3000:]
+    _assert_bots_play(client, _bots_seen(client, 2), {127})
+
+
 def test_bots_with_an_older_client(tmp_path):
     """A build from before bots (HALO_TEST_OLD_CLIENT: fork/main at ed14f98c)
     joins a dedicated server with two bots and plays with them: nothing a bot
@@ -707,7 +749,9 @@ def test_bots_drive_harmless(tmp_path):
 
 
 def test_bots_warthog_crew(tmp_path):
-    """Four bots play a three-minute Team Slayer on Blood Gulch, two a team:
+    """Four bots play a three-minute Team King of the Hill on Blood Gulch, two
+    a team (both crews drive to the hill, so that they meet there: a Team
+    Slayer left whether they ever met to the game's random numbers):
     one of each team drives (debug.bot_vehicle "drive") and the other takes
     only a gunner's seat ("gun"); Red's gunner is normal, Blue's peaceful
     (server.bot_difficulty's peaceful may ride a gun, and never fires). A
@@ -718,7 +762,7 @@ def test_bots_warthog_crew(tmp_path):
     fires; nobody kills a team mate. About three and a half minutes."""
     log = _bots_game(tmp_path, "server", {
         "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "31", "HALO_BOT_DIFFICULTIES": "normal,normal,normal,peaceful",
-        "HALO_BOT_VEHICLE": "drive,drive,gun,gun", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_GAME_TYPES": "team_slayer",
+        "HALO_BOT_VEHICLE": "drive,drive,gun,gun", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_GAME_TYPES": "team_king",
         "HALO_SERVER_TIME_LIMIT": "3", "HALO_NET_ADDRESS": _test_address(207), "HALO_NET_BROADCAST": _test_address(208)},
         seconds=330)
     drives = _drives(log)
@@ -732,7 +776,13 @@ def test_bots_warthog_crew(tmp_path):
     gunner, peaceful = drives["[BOT] Delta"], drives["[BOT] Echo"]
     assert gunner["rides as a gunner"] >= 1 and peaceful["rides as a gunner"] >= 1, f"a gunner never rode: {drives}"
     assert gunner["seconds gunning"] + peaceful["seconds gunning"] >= 20, f"the gunners hardly rode: {drives}"
-    assert re.search(r"bots: player \d+ guns vehicle \w+ \(warthog\), a bot driving", log), "no crew of two bots"
+    # (a crew of two bots: the gunner got in with a bot driving, or first, its
+    # driver getting in while it waited at the gun)
+    waited = re.findall(r"bots: player \d+ guns vehicle (\w+) \(warthog\), its driver to come at tick (\d+)", log)
+    drove = re.findall(r"bots: player \d+ drives vehicle (\w+) \(warthog\) at tick (\d+)", log)
+    crews = re.findall(r"bots: player \d+ guns vehicle \w+ \(warthog\), a bot driving", log) + \
+        [vehicle for vehicle, tick in waited if any(v == vehicle and 0 <= int(t) - int(tick) <= 3 * 30 for v, t in drove)]
+    assert crews, "no crew of two bots"
     assert gunner["ticks fired riding"] >= 30, f"the normal gunner hardly fired the chaingun: {gunner}"
     fired = {m[0]: int(m[1]) for m in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*? fired (\d+) ticks", log)}
     assert fired["[BOT] Echo"] == 0 and peaceful["ticks fired riding"] == 0, f"the peaceful gunner fired: {fired}, {peaceful}"
@@ -815,12 +865,16 @@ def test_bots_share_with_a_person(tmp_path):
       the bot takes its gun ("a person driving");
     - then stands the person beside it: no bot drives that Warthog while a
       person stands by it.
+    The bots are peaceful (sharing is the same at every difficulty): a bot
+    shot dead on its way to the person's Warthog, or fighting beside it,
+    took no gun, and whether an enemy came by was the game's random numbers'.
     About four minutes."""
     maps, paths = _needs("HALO_TEST_SERVER", "HALO_TEST_GAME")
     games = {"server": _start(tmp_path, "server", paths["HALO_TEST_SERVER"], maps, {
         "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "8", "HALO_SERVER_BOTS": "3", "HALO_BOT_SEED": "51",
         "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_GAME_TYPES": "team_slayer", "HALO_SERVER_TIME_LIMIT": "4",
         "HALO_BOT_VEHICLE": "never,drive,never", "HALO_NETWORK_TEST_VEHICLE_SHARE": "10",
+        "HALO_SERVER_BOT_DIFFICULTY": "peaceful",
         "HALO_NET_ADDRESS": _test_address(195), "HALO_NET_BROADCAST": _test_address(196)})}
     games["client"] = _start(tmp_path, "client", paths["HALO_TEST_GAME"], maps, {
         "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
@@ -870,7 +924,10 @@ def test_bots_tank(tmp_path):
     """Scorpions (bots_vehicle.c: the tanks' own drive graph, bots_nav_game.c):
     on Blood Gulch's dedicated server with every vehicle the map places, a
     hard bot and a peaceful one that drive only Scorpions ("tank"), and two
-    normal bots on foot. A Scorpion's cannon is its driver's: the hard bot
+    normal bots on foot, playing King of the Hill (all four go to the hill,
+    so that the tank meets the others: in Slayer whether it ever met anyone
+    in range was the game's random numbers'; a Scorpion holds the hill with
+    its driver aboard). A Scorpion's cannon is its driver's: the hard bot
     fights from it (aiming as it steers, firing nothing at what is near
     enough for the shell's blast to reach the tank, and hunting people on
     foot, as hard bots do) and never kills itself; the peaceful one drives
@@ -878,7 +935,7 @@ def test_bots_tank(tmp_path):
     log = _bots_game(tmp_path, "server", {
         "HALO_SERVER_BOTS": "4", "HALO_BOT_SEED": "63", "HALO_BOT_DIFFICULTIES": "hard,peaceful,normal,normal",
         "HALO_BOT_VEHICLE": "tank,tank,never,never", "HALO_NETWORK_TEST_VEHICLES": "all",
-        "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_SERVER_MAPS": "bloodgulch:king", "HALO_SERVER_TIME_LIMIT": "2",
         "HALO_NET_ADDRESS": _test_address(193), "HALO_NET_BROADCAST": _test_address(194)})
     drives = _drives(log)
     counts = _reports(log)

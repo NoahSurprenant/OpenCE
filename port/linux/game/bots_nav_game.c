@@ -58,6 +58,8 @@ server goes through its map list a map at a time
 /* the platform layer's (port_config.c, the port's log) */
 int config_boolean(const char *name);
 void platform_log(const char *format, ...);
+double config_real(const char *name);
+long config_integer(const char *name);
 
 /* a collision surface seen from both sides (collision_bsp_definitions.h's
 surface flags; skate.c's SKATE_TWO_SIDED_FLAG) */
@@ -103,7 +105,37 @@ static struct bots_nav_drive_graph
 	struct bots_nav nav;
 } bots_nav_drive_graphs[NUMBER_OF_BOTS_NAV_DRIVE_GRAPHS];
 
-/* ---------- the level's triangles */
+/* ---------- a graph built aside
+A graph not in the cache takes seconds to build (10 to 18 for Blood Gulch's
+three). Built on the game's own thread, the game stood still meanwhile: a
+host sent nothing, and a machine loading the map then could time out. So it
+is built on a thread of its own, while the game and its network go on:
+what it needs of the game is gathered first on the game's thread (the
+level's triangles and its scenery's, the spawns, the links), and its one
+question for the game - whether a biped moves straight between two points,
+the game's collision test (bots_nav_clear), which only the game's thread
+may ask - comes in batches (bots_nav_input's clear_batch), answered by the
+game's thread a few milliseconds each frame (bots_nav_job_serve). The graph
+is the one the game's thread would have built. One graph at a time: the
+walking graph, then the vehicles', then the tanks'.
+
+A game's graphs are begun as soon as its map is loaded, and a host that
+starts a game with bots waits for them before its clock starts
+(bots_nav_ready; network_server_manager.c), as it waits for the machines
+still loading the map, who wait for it in silence as they wait for each
+other: the bots begin on the game's first tick with their graphs (the world
+as it is then), and a game with a fixed seed goes the same way each run,
+however fast the machine. */
+
+/* the most a game's start waits for its graphs (milliseconds) */
+#define BOTS_NAV_READY_PATIENCE_MS 60000
+/* the thread's stack (bytes) */
+#define BOTS_NAV_JOB_STACK (4 * 1024 * 1024)
+/* what the game's thread spends answering a graph's questions each frame
+(milliseconds) */
+#define BOTS_NAV_JOB_BUDGET_MS 20
+/* the walking graph's job (else a drive graph's kind) */
+#define BOTS_NAV_JOB_WALKING NONE
 
 struct bots_nav_triangles
 {
@@ -111,6 +143,52 @@ struct bots_nav_triangles
 	long count;
 	long capacity;
 };
+
+static struct
+{
+	/* a thread made for a graph, and not yet done with; which graph, and
+	whether it is no longer wanted (another map); it finished */
+	boolean active;
+	short which;
+	volatile boolean abandoned;
+	volatile boolean finished;
+	HANDLE thread;
+	/* what it builds from and into */
+	struct bots_nav_input input;
+	struct bots_nav_parameters parameters;
+	struct bots_nav nav;
+	int built;
+	struct bots_nav_triangles triangles;
+	/* its questions for the game's thread: a batch (count segments, two
+	points each, a result each) asked (request), how many answered, and
+	answered (answer); the segments asked in all */
+	HANDLE request;
+	HANDLE answer;
+	struct bots_nav_point const *batch_points;
+	unsigned char *batch_clear;
+	long batch_count;
+	volatile long batch_answered;
+	volatile boolean batch_asked;
+	long segments_tested;
+	/* what the log tells of when it is done: the seeds, weapons, links (the
+	walking graph's), the scenery pieces; when it began, and the frames it
+	took */
+	struct bots_nav_point *seeds;
+	long seed_count;
+	struct bots_nav_point *weapons;
+	long weapon_count;
+	struct bots_nav_link links[BOTS_NAV_MAXIMUM_LINKS];
+	long link_count;
+	struct bots_nav_ladder ladders[BOTS_NAV_MAXIMUM_LADDERS];
+	long pieces;
+	unsigned long started;
+	long ticks;
+	/* debug.bot_nav_build_delay's (milliseconds) */
+	long delay_ms;
+	struct bots_nav_statistics stats;
+} bots_nav_job;
+
+/* ---------- the level's triangles */
 
 static boolean bots_nav_triangles_reserve(
 	struct bots_nav_triangles *triangles,
@@ -197,15 +275,16 @@ static boolean bots_nav_add_bsp(
 
 /* the static scenery's collision, each node's BSP (the permutation the
 object shows) placed as the node is */
-static boolean bots_nav_add_scenery(
+static boolean bots_nav_add_objects(
 	struct bots_nav_triangles *triangles,
-	long *pieces)
+	long *pieces,
+	long mask)
 {
 	struct object_iterator iterator;
 	struct object_datum *scenery;
 
 	*pieces = 0;
-	object_iterator_new(&iterator, _object_mask_scenery, 0);
+	object_iterator_new(&iterator, mask, 0);
 	while ((scenery = (struct object_datum *)object_iterator_next(&iterator)) != NULL)
 	{
 		struct collision_model_instance instance;
@@ -353,30 +432,6 @@ static struct bots_nav_override const bots_nav_overrides[] =
 
 /* ---------- the graph */
 
-/* whether a biped moves straight between the points: nothing of the level
-or its scenery in the way */
-static int bots_nav_clear(
-	void *context,
-	struct bots_nav_point const *from,
-	struct bots_nav_point const *to)
-{
-	struct collision_result collision;
-	real_point3d point;
-	real_vector3d vector;
-
-	(void)context;
-	point.x = from->x;
-	point.y = from->y;
-	point.z = from->z;
-	vector.i = to->x - from->x;
-	vector.j = to->y - from->y;
-	vector.k = to->z - from->z;
-	return !collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) |
-		FLAG(_collision_test_back_facing_surfaces_bit) | FLAG(_collision_test_structure_bit) |
-		FLAG(_collision_test_objects_bit) | FLAG(_collision_test_objects_scenery_bit) |
-		FLAG(_collision_test_objects_machines_bit), &point, &vector, NONE, &collision);
-}
-
 static void bots_nav_point_from(
 	struct bots_nav_point *point,
 	real_point3d const *position)
@@ -511,43 +566,257 @@ static long bots_nav_reached(
 	return reached;
 }
 
-/* the graph of the map being played, from the cache or built */
+/* ---------- building aside (above, "a graph built aside") */
+
+/* whether a biped moves straight between the points: nothing of the level
+or its scenery in the way */
+static int bots_nav_clear(
+	void *context,
+	struct bots_nav_point const *from,
+	struct bots_nav_point const *to)
+{
+	struct collision_result collision;
+	real_point3d point;
+	real_vector3d vector;
+
+	(void)context;
+	point.x = from->x;
+	point.y = from->y;
+	point.z = from->z;
+	vector.i = to->x - from->x;
+	vector.j = to->y - from->y;
+	vector.k = to->z - from->z;
+	return !collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) |
+		FLAG(_collision_test_back_facing_surfaces_bit) | FLAG(_collision_test_structure_bit) |
+		FLAG(_collision_test_objects_bit) | FLAG(_collision_test_objects_scenery_bit) |
+		FLAG(_collision_test_objects_machines_bit), &point, &vector, NONE, &collision);
+}
+
+
+/* (the job's thread) the game's answers to a batch of its questions: asked
+of the game's thread, and waited for (none when the graph is no longer
+wanted: every way clear, the graph thrown away) */
+static void bots_nav_job_clear_batch(
+	void *context,
+	struct bots_nav_point const *points,
+	unsigned char *clear,
+	long count)
+{
+	(void)context;
+	bots_nav_job.segments_tested += count;
+	if (bots_nav_job.abandoned)
+	{
+		memset(clear, 1, (size_t)count);
+		return;
+	}
+	bots_nav_job.batch_points = points;
+	bots_nav_job.batch_clear = clear;
+	bots_nav_job.batch_count = count;
+	bots_nav_job.batch_answered = 0;
+	bots_nav_job.batch_asked = TRUE;
+	SetEvent(bots_nav_job.request);
+	WaitForSingleObject(bots_nav_job.answer, INFINITE);
+	if (bots_nav_job.abandoned)
+		memset(clear, 1, (size_t)count);
+}
+
+/* (the job's thread) the graph built from the gathered input */
+static void bots_nav_job_build(
+	void)
+{
+	bots_nav_job.built = bots_nav_build(&bots_nav_job.input, &bots_nav_job.parameters, &bots_nav_job.nav);
+	bots_nav_job.stats = bots_nav_job.nav.statistics;
+}
+
+static DWORD WINAPI bots_nav_job_main(
+	LPVOID parameter)
+{
+	(void)parameter;
+	/* (debug.bot_nav_build_delay: a slower build, for the tests: a client
+	loading meanwhile must not time out) */
+	if (bots_nav_job.delay_ms > 0)
+		Sleep((DWORD)bots_nav_job.delay_ms);
+	bots_nav_job_build();
+	bots_nav_job.finished = TRUE;
+	SetEvent(bots_nav_job.request);
+	return 0;
+}
+
+/* the job's buffers freed (the game's free takes no NULL: debug_memory.c) */
+static void bots_nav_job_free(
+	void)
+{
+	if (bots_nav_job.triangles.points)
+		free(bots_nav_job.triangles.points);
+	if (bots_nav_job.seeds)
+		free(bots_nav_job.seeds);
+	if (bots_nav_job.weapons)
+		free(bots_nav_job.weapons);
+	bots_nav_job.triangles.points = NULL;
+	bots_nav_job.seeds = NULL;
+	bots_nav_job.weapons = NULL;
+}
+
+/* the job begun on its thread, the input gathered (FALSE: no thread to be
+had: it is built here and now then, as before) */
+static boolean bots_nav_job_start(
+	short which)
+{
+	bots_nav_job.which = which;
+	bots_nav_job.abandoned = FALSE;
+	bots_nav_job.finished = FALSE;
+	bots_nav_job.built = 0;
+	bots_nav_job.segments_tested = 0;
+	bots_nav_job.ticks = 0;
+	csmemset(&bots_nav_job.nav, 0, sizeof(bots_nav_job.nav));
+	bots_nav_job.delay_ms = which == BOTS_NAV_JOB_WALKING ? (long)(config_real("debug.bot_nav_build_delay") * 1000.0) : 0;
+	bots_nav_job.batch_asked = FALSE;
+	bots_nav_job.input.clear = bots_nav_clear;
+	bots_nav_job.input.clear_batch = bots_nav_job_clear_batch;
+	bots_nav_job.input.context = NULL;
+	if (!bots_nav_job.request)
+		bots_nav_job.request = CreateEventA(NULL, FALSE, FALSE, NULL);
+	if (!bots_nav_job.answer)
+		bots_nav_job.answer = CreateEventA(NULL, FALSE, FALSE, NULL);
+	bots_nav_job.thread = bots_nav_job.request && bots_nav_job.answer ?
+		CreateThread(NULL, BOTS_NAV_JOB_STACK, bots_nav_job_main, NULL, 0, NULL) : NULL;
+	if (!bots_nav_job.thread)
+	{
+		/* (asked one at a time, here) */
+		bots_nav_job.input.clear_batch = NULL;
+		bots_nav_job_build();
+		bots_nav_job.finished = TRUE;
+		return FALSE;
+	}
+	bots_nav_job.active = TRUE;
+	return TRUE;
+}
+
+static void bots_nav_finish_walking(
+	boolean cached);static void bots_nav_finish_walking(
+	boolean cached);
+static void bots_nav_finish_drive(
+	short kind,
+	boolean cached);
+
+/* (each frame) the job, done, its graph put in place (unless no longer
+wanted) */
+static void bots_nav_job_serve(
+	void)
+{
+	unsigned long deadline = system_milliseconds() + BOTS_NAV_JOB_BUDGET_MS;
+
+	if (!bots_nav_job.active)
+		return;
+	bots_nav_job.ticks++;
+	/* (its questions answered, a batch at a time, for a few milliseconds) */
+	while (!bots_nav_job.finished)
+	{
+		long left = (long)(deadline - system_milliseconds());
+
+		if (!bots_nav_job.batch_asked)
+		{
+			if (left <= 0 || WaitForSingleObject(bots_nav_job.request, (DWORD)left) != WAIT_OBJECT_0)
+				break;
+			continue;
+		}
+		while (bots_nav_job.batch_answered < bots_nav_job.batch_count)
+		{
+			long at = bots_nav_job.batch_answered;
+
+			bots_nav_job.batch_clear[at] = (unsigned char)bots_nav_clear(NULL, &bots_nav_job.batch_points[at * 2],
+				&bots_nav_job.batch_points[at * 2 + 1]);
+			bots_nav_job.batch_answered = at + 1;
+			if ((at & 63) == 63 && (long)(deadline - system_milliseconds()) <= 0)
+				break;
+		}
+		if (bots_nav_job.batch_answered < bots_nav_job.batch_count)
+			break;
+		bots_nav_job.batch_asked = FALSE;
+		SetEvent(bots_nav_job.answer);
+	}
+	if (!bots_nav_job.finished)
+		return;
+	WaitForSingleObject(bots_nav_job.thread, INFINITE);
+	CloseHandle(bots_nav_job.thread);
+	bots_nav_job.thread = NULL;
+	bots_nav_job.active = FALSE;
+	if (bots_nav_job.abandoned)
+	{
+		bots_nav_free(&bots_nav_job.nav);
+		bots_nav_job_free();
+		return;
+	}
+	if (bots_nav_job.which == BOTS_NAV_JOB_WALKING)
+		bots_nav_finish_walking(FALSE);
+	else
+		bots_nav_finish_drive(bots_nav_job.which, FALSE);
+}
+
+/* the job no longer wanted (the game over, another map): its thread runs
+on to its end, and its graph is thrown away */
+static void bots_nav_job_abandon(
+	void)
+{
+	if (!bots_nav_job.active)
+		return;
+	bots_nav_job.abandoned = TRUE;
+	/* (a batch it waits on: given up) */
+	if (bots_nav_job.batch_asked)
+	{
+		bots_nav_job.batch_asked = FALSE;
+		SetEvent(bots_nav_job.answer);
+	}
+}
+
+/* the log's line of a graph built aside */
+static void bots_nav_job_log(
+	char const *name)
+{
+	platform_log("bots: %s graph of %s built aside: %ld segments asked of the game's collision, over %ld frames",
+		name, bots_nav_game.map, bots_nav_job.segments_tested, bots_nav_job.ticks);
+}
+
+/* ---------- the graphs */
+
+/* the walking graph of the map being played: from the cache, else begun
+aside (above); put in place, and told of, when done */
 static void bots_nav_make(
 	void)
 {
 	struct scenario *scenario = global_scenario_get();
 	struct collision_bsp *bsp = global_collision_bsp_get();
-	struct bots_nav_parameters parameters;
-	struct bots_nav_input input;
-	struct bots_nav_triangles triangles;
-	struct bots_nav_point *seeds = NULL;
-	struct bots_nav_point *weapons = NULL;
-	struct bots_nav_link links[BOTS_NAV_MAXIMUM_LINKS];
-	struct bots_nav_ladder ladders[BOTS_NAV_MAXIMUM_LADDERS];
-	long ladder_count = 0;
-	long seed_count = 0, weapon_count = 0, link_count = 0, pieces = 0;
-	unsigned long started = system_milliseconds();
 	boolean cached;
 	long index;
 
 	bots_nav_free(&bots_nav_game.nav);
-	bots_nav_game.built = TRUE;
+	bots_nav_game.built = FALSE;
 	bots_nav_game.scenario_index = global_scenario_index;
 	bots_nav_game.structure_bsp_index = global_structure_bsp_index;
 	bots_nav_map_name(bots_nav_game.map, (int)sizeof(bots_nav_game.map));
 	bots_nav_game.key = cache_files_get_checksum() ^ ((unsigned long)global_structure_bsp_index * 0x9E3779B9UL);
 	bots_nav_game.checked = FALSE;
-	bots_nav_default_parameters(&parameters);
+	bots_nav_default_parameters(&bots_nav_job.parameters);
+	bots_nav_job.started = system_milliseconds();
+	bots_nav_job.which = BOTS_NAV_JOB_WALKING;
+	bots_nav_job.seed_count = 0;
+	bots_nav_job.weapon_count = 0;
+	bots_nav_job.link_count = 0;
+	bots_nav_job.pieces = 0;
 	if (!scenario || !bsp)
+	{
+		bots_nav_game.built = TRUE;
 		return;
+	}
 
 	/* (the spawns, the weapons, the teleporters and the map's own links) */
-	seeds = (struct bots_nav_point *)malloc((size_t)(scenario->players.count + 1) * sizeof(*seeds));
-	weapons = (struct bots_nav_point *)malloc((size_t)(scenario->netgame_equipment.count + 1) * sizeof(*weapons));
-	if (!seeds || !weapons)
+	bots_nav_job.seeds = (struct bots_nav_point *)malloc((size_t)(scenario->players.count + 1) * sizeof(struct bots_nav_point));
+	bots_nav_job.weapons = (struct bots_nav_point *)malloc((size_t)(scenario->netgame_equipment.count + 1) *
+		sizeof(struct bots_nav_point));
+	if (!bots_nav_job.seeds || !bots_nav_job.weapons)
 	{
-		free(seeds);
-		free(weapons);
+		bots_nav_job_free();
+		bots_nav_game.built = TRUE;
 		return;
 	}
 	for (index = 0; index < scenario->players.count; index++)
@@ -555,16 +824,16 @@ static void bots_nav_make(
 		struct player_starting_location *start = TAG_BLOCK_GET_ELEMENT(&scenario->players, index,
 			struct player_starting_location);
 
-		bots_nav_point_from(&seeds[seed_count++], &start->position);
+		bots_nav_point_from(&bots_nav_job.seeds[bots_nav_job.seed_count++], &start->position);
 	}
 	for (index = 0; index < scenario->netgame_equipment.count; index++)
 	{
 		struct scenario_netgame_equipment *equipment = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_equipment, index,
 			struct scenario_netgame_equipment);
 
-		bots_nav_point_from(&weapons[weapon_count++], &equipment->position);
+		bots_nav_point_from(&bots_nav_job.weapons[bots_nav_job.weapon_count++], &equipment->position);
 	}
-	for (index = 0; index < scenario->netgame_flags.count && link_count < BOTS_NAV_MAXIMUM_LINKS; index++)
+	for (index = 0; index < scenario->netgame_flags.count && bots_nav_job.link_count < BOTS_NAV_MAXIMUM_LINKS; index++)
 	{
 		struct scenario_netgame_flag *entrance = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_flags, index,
 			struct scenario_netgame_flag);
@@ -580,42 +849,59 @@ static void bots_nav_make(
 
 			if (exit->type == BOTS_NAV_TELEPORTER_EXIT && exit->team_index == entrance->team_index)
 			{
-				bots_nav_point_from(&links[link_count].from, &entrance->position);
-				bots_nav_point_from(&links[link_count].to, &exit->position);
-				links[link_count].type = _bots_nav_teleport;
-				link_count++;
+				struct bots_nav_link *link = &bots_nav_job.links[bots_nav_job.link_count++];
+
+				bots_nav_point_from(&link->from, &entrance->position);
+				bots_nav_point_from(&link->to, &exit->position);
+				link->type = _bots_nav_teleport;
 				break;
 			}
 		}
 	}
-	for (index = 0; index < (long)NUMBEROF(bots_nav_overrides) && link_count < BOTS_NAV_MAXIMUM_LINKS; index++)
+	for (index = 0; index < (long)NUMBEROF(bots_nav_overrides) && bots_nav_job.link_count < BOTS_NAV_MAXIMUM_LINKS; index++)
 	{
 		if (bots_nav_overrides[index].map && !strcmp(bots_nav_overrides[index].map, bots_nav_game.map))
-			links[link_count++] = bots_nav_overrides[index].link;
+			bots_nav_job.links[bots_nav_job.link_count++] = bots_nav_overrides[index].link;
 	}
 
-	cached = bots_nav_cache_read(&bots_nav_game.nav, &parameters, "nav");
+	cached = bots_nav_cache_read(&bots_nav_job.nav, &bots_nav_job.parameters, "nav");
 	if (!cached)
 	{
-		csmemset(&triangles, 0, sizeof(triangles));
-		if (bots_nav_add_bsp(&triangles, bsp, NULL) && bots_nav_add_scenery(&triangles, &pieces))
+		csmemset(&bots_nav_job.triangles, 0, sizeof(bots_nav_job.triangles));
+
+		if (bots_nav_add_bsp(&bots_nav_job.triangles, bsp, NULL) && bots_nav_add_objects(&bots_nav_job.triangles,
+			&bots_nav_job.pieces, _object_mask_scenery))
 		{
-			csmemset(&input, 0, sizeof(input));
-			input.triangles = triangles.points;
-			input.triangle_count = triangles.count;
-			input.seeds = seeds;
-			input.seed_count = seed_count;
-			input.links = links;
-			input.link_count = link_count;
-			ladder_count = bots_nav_ladders(bsp, ladders, BOTS_NAV_MAXIMUM_LADDERS);
-			input.ladders = ladders;
-			input.ladder_count = ladder_count;
-			input.clear = bots_nav_clear;
-			if (bots_nav_build(&input, &parameters, &bots_nav_game.nav))
-				bots_nav_cache_write(&bots_nav_game.nav, "nav");
+			csmemset(&bots_nav_job.input, 0, sizeof(bots_nav_job.input));
+			bots_nav_job.input.triangles = bots_nav_job.triangles.points;
+			bots_nav_job.input.triangle_count = bots_nav_job.triangles.count;
+			bots_nav_job.input.seeds = bots_nav_job.seeds;
+			bots_nav_job.input.seed_count = bots_nav_job.seed_count;
+			bots_nav_job.input.links = bots_nav_job.links;
+			bots_nav_job.input.link_count = bots_nav_job.link_count;
+			bots_nav_job.input.ladders = bots_nav_job.ladders;
+			bots_nav_job.input.ladder_count = bots_nav_ladders(bsp, bots_nav_job.ladders, BOTS_NAV_MAXIMUM_LADDERS);
+			if (bots_nav_job_start(BOTS_NAV_JOB_WALKING))
+				return;
 		}
-		free(triangles.points);
 	}
+	bots_nav_finish_walking(cached);
+}
+
+/* the walking graph done (read, or built): in place, told of, and (built)
+cached */
+static void bots_nav_finish_walking(
+	boolean cached)
+{
+	long index;
+	long link_count = bots_nav_job.link_count;
+	struct bots_nav_link const *links = bots_nav_job.links;
+
+	bots_nav_game.nav = bots_nav_job.nav;
+	csmemset(&bots_nav_job.nav, 0, sizeof(bots_nav_job.nav));
+	bots_nav_game.built = TRUE;
+	if (!cached && bots_nav_game.nav.nodes)
+		bots_nav_cache_write(&bots_nav_game.nav, "nav");
 	if (!bots_nav_game.nav.nodes)
 	{
 		platform_log("bots: no walking graph for %s: the bots stand still", bots_nav_game.map);
@@ -627,12 +913,16 @@ static void bots_nav_make(
 		platform_log("bots: walking graph of %s %s in %lu ms: %ld nodes, %ld edges (%ld walks, %ld drops, %ld jumps, "
 			"%ld teleporters, %ld ladders, %ld given; %ld refused), %ld triangles with %ld pieces of scenery; spawns %ld/%ld reach the main part, weapons "
 			"%ld/%ld are reached from it",
-			bots_nav_game.map, cached ? "read from the cache" : "built", system_milliseconds() - started,
+			bots_nav_game.map, cached ? "read from the cache" : "built", system_milliseconds() - bots_nav_job.started,
 			bots_nav_game.nav.node_count, bots_nav_game.nav.edge_count, statistics->walk_edges, statistics->drop_edges,
-			statistics->jump_edges, statistics->teleport_edges, statistics->climb_edges, statistics->link_edges, statistics->rejected_links, statistics->triangles, pieces,
-			bots_nav_reached(&bots_nav_game.nav, seeds, seed_count, "spawn", _bots_nav_reaches_bit), seed_count,
-			bots_nav_reached(&bots_nav_game.nav, weapons, weapon_count, "weapon", _bots_nav_reached_bit),
-			weapon_count);
+			statistics->jump_edges, statistics->teleport_edges, statistics->climb_edges, statistics->link_edges, statistics->rejected_links, statistics->triangles,
+			bots_nav_job.pieces,
+			bots_nav_reached(&bots_nav_game.nav, bots_nav_job.seeds, bots_nav_job.seed_count, "spawn", _bots_nav_reaches_bit),
+			bots_nav_job.seed_count,
+			bots_nav_reached(&bots_nav_game.nav, bots_nav_job.weapons, bots_nav_job.weapon_count, "weapon", _bots_nav_reached_bit),
+			bots_nav_job.weapon_count);
+		if (!cached)
+			bots_nav_job_log("walking");
 		/* (each teleporter and given link, where its ends are on the graph) */
 		if (config_boolean("debug.bot_nav_check"))
 		{
@@ -660,14 +950,13 @@ static void bots_nav_make(
 				main->y, main->z, both, statistics->nodes_before_pruning);
 		}
 	}
-	free(seeds);
-	free(weapons);
+	bots_nav_job_free();
 }
 
-/* a drive graph of the map being played, from the cache or built: its seeds
-the level's vehicles of its kind (their placements, whichever the game type
-leaves: every one for the vehicles' graph, the tanks for the tanks'), whose
-part of the level is kept */
+/* a drive graph of the map being played, from the cache or begun aside: its
+seeds the level's vehicles of its kind (their placements, whichever the game
+type leaves: every one for the vehicles' graph, the tanks for the tanks'),
+whose part of the level is kept */
 static void bots_nav_make_drive(
 	short kind)
 {
@@ -676,30 +965,33 @@ static void bots_nav_make_drive(
 	struct collision_bsp *bsp = global_collision_bsp_get();
 	struct tag_block *placements;
 	struct tag_block *palette;
-	struct bots_nav_parameters parameters;
-	struct bots_nav_point *seeds;
 	long element_size = 0;
-	long seed_count = 0, pieces = 0;
-	unsigned long started = system_milliseconds();
 	char const *name = kind == _bots_nav_drive_tanks ? "tank" : "drive";
 	boolean cached;
 	long index;
 
 	bots_nav_free(&graph->nav);
-	graph->built = TRUE;
+	graph->built = FALSE;
 	graph->scenario_index = global_scenario_index;
 	graph->structure_bsp_index = global_structure_bsp_index;
 	if (kind == _bots_nav_drive_tanks)
-		bots_nav_tank_parameters(&parameters);
+		bots_nav_tank_parameters(&bots_nav_job.parameters);
 	else
-		bots_nav_vehicle_parameters(&parameters);
+		bots_nav_vehicle_parameters(&bots_nav_job.parameters);
+	bots_nav_job.started = system_milliseconds();
+	bots_nav_job.which = kind;
+	bots_nav_job.seed_count = 0;
+	bots_nav_job.pieces = 0;
 	if (!scenario || !bsp)
+	{
+		graph->built = TRUE;
 		return;
+	}
 	placements = scenario_get_object_type_scenario_datums(scenario, _object_type_vehicle, &element_size);
 	palette = scenario_get_object_type_scenario_palette(scenario, _object_type_vehicle);
-	seeds = placements && placements->count > 0 ?
-		(struct bots_nav_point *)malloc((size_t)placements->count * sizeof(*seeds)) : NULL;
-	for (index = 0; seeds && index < placements->count; index++)
+	bots_nav_job.seeds = placements && placements->count > 0 ?
+		(struct bots_nav_point *)malloc((size_t)placements->count * sizeof(struct bots_nav_point)) : NULL;
+	for (index = 0; bots_nav_job.seeds && index < placements->count; index++)
 	{
 		struct scenario_object_datum const *placement = (struct scenario_object_datum const *)
 			tag_block_get_element_with_size(placements, index, element_size);
@@ -714,40 +1006,51 @@ static void bots_nav_make_drive(
 			if (!tag || !strstr(tag, "scorpion"))
 				continue;
 		}
-		bots_nav_point_from(&seeds[seed_count++], &placement->position);
+		bots_nav_point_from(&bots_nav_job.seeds[bots_nav_job.seed_count++], &placement->position);
 	}
-	if (seed_count == 0)
+	if (bots_nav_job.seed_count == 0)
 	{
 		if (config_boolean("debug.bot_nav_check"))
 			platform_log("bots: no %s graph for %s: it places no %s", name, bots_nav_game.map,
 				kind == _bots_nav_drive_tanks ? "tanks" : "vehicles");
-		/* (the game's free takes no NULL: debug_memory.c) */
-		if (seeds)
-			free(seeds);
+		bots_nav_job_free();
+		graph->built = TRUE;
 		return;
 	}
-	cached = bots_nav_cache_read(&graph->nav, &parameters, name);
+	cached = bots_nav_cache_read(&bots_nav_job.nav, &bots_nav_job.parameters, name);
 	if (!cached)
 	{
-		struct bots_nav_triangles triangles;
+		csmemset(&bots_nav_job.triangles, 0, sizeof(bots_nav_job.triangles));
 
-		csmemset(&triangles, 0, sizeof(triangles));
-		if (bots_nav_add_bsp(&triangles, bsp, NULL) && bots_nav_add_scenery(&triangles, &pieces))
+		if (bots_nav_add_bsp(&bots_nav_job.triangles, bsp, NULL) && bots_nav_add_objects(&bots_nav_job.triangles,
+			&bots_nav_job.pieces, _object_mask_scenery))
 		{
-			struct bots_nav_input input;
-
 			/* (no teleporters, ladders or a map's links: a vehicle takes none) */
-			csmemset(&input, 0, sizeof(input));
-			input.triangles = triangles.points;
-			input.triangle_count = triangles.count;
-			input.seeds = seeds;
-			input.seed_count = seed_count;
-			input.clear = bots_nav_clear;
-			if (bots_nav_build(&input, &parameters, &graph->nav))
-				bots_nav_cache_write(&graph->nav, name);
+			csmemset(&bots_nav_job.input, 0, sizeof(bots_nav_job.input));
+			bots_nav_job.input.triangles = bots_nav_job.triangles.points;
+			bots_nav_job.input.triangle_count = bots_nav_job.triangles.count;
+			bots_nav_job.input.seeds = bots_nav_job.seeds;
+			bots_nav_job.input.seed_count = bots_nav_job.seed_count;
+			if (bots_nav_job_start(kind))
+				return;
 		}
-		free(triangles.points);
 	}
+	bots_nav_finish_drive(kind, cached);
+}
+
+/* a drive graph done (read, or built): in place, told of, and (built) cached */
+static void bots_nav_finish_drive(
+	short kind,
+	boolean cached)
+{
+	struct bots_nav_drive_graph *graph = &bots_nav_drive_graphs[kind];
+	char const *name = kind == _bots_nav_drive_tanks ? "tank" : "drive";
+
+	graph->nav = bots_nav_job.nav;
+	csmemset(&bots_nav_job.nav, 0, sizeof(bots_nav_job.nav));
+	graph->built = TRUE;
+	if (!cached && graph->nav.nodes)
+		bots_nav_cache_write(&graph->nav, name);
 	if (!graph->nav.nodes)
 	{
 		platform_log("bots: no %s graph for %s", name, bots_nav_game.map);
@@ -758,13 +1061,16 @@ static void bots_nav_make_drive(
 
 		platform_log("bots: %s graph of %s %s in %lu ms: %ld nodes, %ld edges (%ld drives, %ld drops), %ld triangles; "
 			"%s %ld/%ld on its main part",
-			name, bots_nav_game.map, cached ? "read from the cache" : "built", system_milliseconds() - started,
+			name, bots_nav_game.map, cached ? "read from the cache" : "built", system_milliseconds() - bots_nav_job.started,
 			graph->nav.node_count, graph->nav.edge_count, statistics->walk_edges, statistics->drop_edges,
 			statistics->triangles, kind == _bots_nav_drive_tanks ? "tanks" : "vehicles",
-			bots_nav_reached(&graph->nav, seeds, seed_count, kind == _bots_nav_drive_tanks ? "tank" : "vehicle",
-			_bots_nav_reached_bit | _bots_nav_reaches_bit), seed_count);
+			bots_nav_reached(&graph->nav, bots_nav_job.seeds, bots_nav_job.seed_count,
+			kind == _bots_nav_drive_tanks ? "tank" : "vehicle", _bots_nav_reached_bit | _bots_nav_reaches_bit),
+			bots_nav_job.seed_count);
+		if (!cached)
+			bots_nav_job_log(name);
 	}
-	free(seeds);
+	bots_nav_job_free();
 }
 
 struct bots_nav *bots_nav_drive_current(
@@ -783,6 +1089,54 @@ struct bots_nav *bots_nav_tank_current(
 	return graph->built && graph->nav.nodes ? &graph->nav : NULL;
 }
 
+/* a multiplayer game's map is loaded (its clock started, or about to) */
+static boolean bots_nav_map_loaded(
+	void)
+{
+	return game_time_initialized() && game_engine_running() && global_scenario_get() && global_collision_bsp_get();
+}
+
+boolean bots_nav_ready(
+	boolean drive)
+{
+	/* (the map waited for, since when, and whether it waited long enough) */
+	static long waiting_scenario = NONE;
+	static unsigned long waiting_since;
+	static boolean waited_enough;
+	short kind;
+	boolean ready;
+
+	if (!bots_nav_map_loaded())
+		return TRUE;
+	ready = !bots_nav_job.active && bots_nav_game.built && bots_nav_game.scenario_index == global_scenario_index &&
+		bots_nav_game.structure_bsp_index == global_structure_bsp_index;
+	for (kind = 0; ready && drive && kind < NUMBER_OF_BOTS_NAV_DRIVE_GRAPHS; kind++)
+	{
+		ready = bots_nav_drive_graphs[kind].built && bots_nav_drive_graphs[kind].scenario_index == global_scenario_index &&
+			bots_nav_drive_graphs[kind].structure_bsp_index == global_structure_bsp_index;
+	}
+	if (ready)
+	{
+		waiting_scenario = NONE;
+		return TRUE;
+	}
+	if (waiting_scenario != global_scenario_index)
+	{
+		waiting_scenario = global_scenario_index;
+		waiting_since = system_milliseconds();
+		waited_enough = FALSE;
+		platform_log("bots: the game waits for the bots' graphs of the map");
+	}
+	/* (no longer than that: the bots stand still until theirs are done) */
+	if (!waited_enough && system_milliseconds() - waiting_since > BOTS_NAV_READY_PATIENCE_MS)
+	{
+		waited_enough = TRUE;
+		platform_log("bots: the game waited %d s for the bots' graphs: it starts without them",
+			BOTS_NAV_READY_PATIENCE_MS / 1000);
+	}
+	return waited_enough;
+}
+
 struct bots_nav *bots_nav_current(
 	void)
 {
@@ -795,9 +1149,13 @@ void bots_nav_update(
 {
 	boolean check = config_boolean("debug.bot_nav_check") != 0;
 
-	/* (a multiplayer game: not the main menu's scene, nor co-op) */
-	if (!game_in_progress() || !game_engine_running() || !global_scenario_get() || !global_collision_bsp_get())
+	/* (a graph built aside: done, in place) */
+	bots_nav_job_serve();
+	/* (a multiplayer game's map loaded - its clock started or not: a host
+	waits for its graphs - not the main menu's scene, nor co-op) */
+	if (!bots_nav_map_loaded())
 	{
+		bots_nav_job_abandon();
 		if (bots_nav_game.built)
 		{
 			bots_nav_free(&bots_nav_game.nav);
@@ -817,10 +1175,20 @@ void bots_nav_update(
 		}
 		return;
 	}
+	/* (another map while one was built aside: that one thrown away first) */
+	if (bots_nav_job.active && (bots_nav_game.scenario_index != global_scenario_index ||
+		bots_nav_game.structure_bsp_index != global_structure_bsp_index))
+	{
+		bots_nav_job_abandon();
+	}
+	if (bots_nav_job.active)
+		return;
 	if ((needed || check) && (!bots_nav_game.built || bots_nav_game.scenario_index != global_scenario_index ||
 		bots_nav_game.structure_bsp_index != global_structure_bsp_index))
 	{
 		bots_nav_make();
+		if (bots_nav_job.active)
+			return;
 	}
 	/* (the drive graphs, after the walking graph: its map name and key) */
 	{
@@ -834,6 +1202,8 @@ void bots_nav_update(
 				graph->structure_bsp_index != global_structure_bsp_index))
 			{
 				bots_nav_make_drive(kind);
+				if (bots_nav_job.active)
+					return;
 			}
 		}
 	}

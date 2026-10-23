@@ -791,6 +791,10 @@ static void bot_roam(
 within reach (further for one it wants more), best for its distance first,
 gone to: its node the bot's goal. Looked for every few seconds; one not
 reached in time is given up */
+static real bot_flat(
+	real_point3d const *position,
+	struct bots_nav_point const *point);
+
 static void bot_pickup_goal(
 	struct bot *bot,
 	struct bots_nav *nav,
@@ -877,6 +881,13 @@ static void bot_pickup_goal(
 		value = bot_item_value(bot, unit_index, iterator.index);
 		if (value <= 0.0f || distance > BOT_PICKUP_RANGE * value || distance / value >= best_score)
 			continue;
+		/* (a hill held: only an item at it - it would leave the hill for one
+		further and come back, again and again) */
+		if (brain->objective.kind == _bot_objective_hold && brain->objective.hill &&
+			bot_flat(&item->object.position, &brain->objective.point) > brain->objective.radius + BOT_HILL_PICKUP_REACH)
+		{
+			continue;
+		}
 		node = bots_nav_locate(nav, item->object.position.x, item->object.position.y, item->object.position.z);
 		if (node == NONE || !(nav->nodes[node].reach & _bots_nav_reached_bit))
 			continue;

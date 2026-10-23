@@ -505,6 +505,15 @@ static struct bot *bots_of_player(
 	return NULL;
 }
 
+struct bot *bots_bot_of_unit(
+	long unit_index)
+{
+	struct object_datum *object = unit_index != NONE ? object_try_and_get(unit_index) : NULL;
+
+	return object && TEST_FLAG(_object_mask_unit, object->object.type) ?
+		bots_of_player(unit_get(unit_index)->unit.player_index) : NULL;
+}
+
 void bots_note_damage(
 	long object_index,
 	struct damage_data const *damage,
@@ -662,6 +671,12 @@ void bots_make_room(
 
 /* the roster kept to the host's game: bots no longer in it forgotten (the
 host gone, a new one begun), and as many as are wanted */
+boolean bots_graphs_ready(
+	void)
+{
+	return bots_count() == 0 || bots_nav_ready(config_integer("server.bot_vehicles") >= 0);
+}
+
 void bots_update(
 	void)
 {

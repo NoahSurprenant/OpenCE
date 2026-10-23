@@ -2373,7 +2373,10 @@ void network_game_server_client_machine_game_loading_complete(
 		network_event("still waiting for machines to finish loading (%ld left)", loading_machine_count);
 	}
 
-	if (all_machines_loaded == TRUE)
+	/* port: and the host's bots' graphs of the map (port/linux/game/bots.c),
+	which it builds aside meanwhile: checked again each frame till then
+	(network_game_server_idle_pregame_tasks) */
+	if (all_machines_loaded == TRUE && bots_graphs_ready())
 		network_game_server_all_machines_have_loaded(server);
 
 	return;
@@ -2406,6 +2409,8 @@ static void network_game_server_check_loading_complete(
 			return;
 		}
 	}
+	if (!bots_graphs_ready())
+		return;
 	network_game_server_all_machines_have_loaded(server);
 }
 
@@ -5277,6 +5282,11 @@ static boolean network_game_server_idle_pregame_tasks(
 	were told to start loads now, or joins in progress if the game has begun */
 	if (server->sent_start_game_message)
 		network_game_server_release_map_fetchers(server);
+	/* port: every machine loaded, the game waiting for its bots' graphs
+	(network_game_server_client_machine_game_loading_complete): started once
+	they are done */
+	if (server->sent_start_game_message)
+		network_game_server_check_loading_complete(server);
 
 	if (server->sent_start_game_message == FALSE)
 	{
