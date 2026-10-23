@@ -23,6 +23,9 @@ enum
 	_spectate_mode_free,
 	_spectate_mode_follow,
 	_spectate_mode_first_person,
+	/* the auto-director: whoever is most worth watching, from behind
+	(spectate_director.c) */
+	_spectate_mode_director,
 	NUMBER_OF_SPECTATE_MODES
 };
 
@@ -57,11 +60,17 @@ their health and shields, names over players, the scores */
 void spectate_draw(
 	void);
 /* (hs.c) the console's "spectate" command: "on", "off", "next",
-"previous", "free", "follow", "first", "player <name>", "speed <n>",
+"previous", "free", "follow", "first", "director", "player <name>", "speed <n>",
 "scores" (shown until asked again); with
 nothing, what it watches */
 boolean spectate_console_command(
 	char const *text);
+/* (menu_functions.c, the lobby) how many machines of the game watch it: the
+machines with no player but the host's own (machine 0, a dedicated
+server's), counted from the settings every machine has */
+struct network_game;
+short spectate_watching_machines(
+	struct network_game const *game);
 /* (network_test.c, each second) the spectator's view for the log: its
 mode and the player it watches (NONE: none) */
 void spectate_status(

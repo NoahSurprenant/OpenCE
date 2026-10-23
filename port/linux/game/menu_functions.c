@@ -82,6 +82,7 @@ their handlers open opens.
 #include "custom_edition_cache.h"
 #include "custom_edition_maps.h"
 #include "network_voice.h"
+#include "spectate.h"
 #include "text/draw_string.h"
 /* (internet play's server browser: the platform layer's) */
 #include "../src/p2p.h"
@@ -4420,8 +4421,16 @@ static void lobby_update(struct widget_instance *list)
 		ustrncpy(gametype, game->variant.human_readable_game_description, NUMBEROF(gametype) - 1);
 		gametype[NUMBEROF(gametype) - 1] = 0;
 
-		usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%s\r\n%d of %d players\r\n\r\n%s", gametype,
+		/* (and the spectators watching it, who are no players: spectate.c) */
+		short watching = spectate_watching_machines(game);
+		wchar_t spectators[32];
+
+		spectators[0] = 0;
+		if (watching > 0)
+			usnprintf(spectators, NUMBEROF(spectators) - 1, L", %d watching", watching);
+		usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%s\r\n%d of %d players%s\r\n\r\n%s", gametype,
 			engine_names[PIN(game->variant.game_engine_index, 0, 5)], lobby_player_count, game->maximum_players,
+			spectators,
 			waiting ? waits : seconds > 0 ? L"Starting in:" : game->machine_count < 2 ? L"Waiting for players" : L"");
 		text[NUMBEROF(text) - 1] = 0;
 		if (seconds > 0 && !waiting)
