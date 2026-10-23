@@ -91,9 +91,13 @@ COPY docker/stream/stream.sh /opt/opence/stream.sh
 RUN ln -s /state/config.toml /opt/opence/config.toml
 # LP_NUM_THREADS: llvmpipe's threads (else one for each of the machine's CPUs): the CPUs the
 # container may use; set it to its limit.
+# The game's log and the custom_maps folder in the save root too: a client's default for both is
+# the data root, which is read-only here (a dedicated server already keeps them in its save root).
 ENV HALO_DATA_ROOT=/data \
     HALO_SKATE_ASSETS=/skate-data/assets \
     HALO_SAVE_ROOT=/state/saves \
+    HALO_LOG_ROOT=/state/saves \
+    HALO_CUSTOM_MAPS_ROOT=/state/saves/custom_maps \
     HALO_NET_ONLINE=false \
     HALO_UPDATE_ANSWER=never \
     LP_NUM_THREADS=3 \
