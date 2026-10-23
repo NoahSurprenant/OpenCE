@@ -103,16 +103,16 @@ scripted pad's timings) */
 within this, is ridden at */
 #define BOT_SKATE_RAM_DISTANCE 15.0f
 #define BOT_SKATE_RAM_HEIGHT 1.2f
-/* grinds: the most rails and points read; a rail beside the way within reach
-(world units across, no nearer than the nearest) and running within the
-angle of it (radians), with this much of it left ahead; ridden at this
-speed or faster (world units a second); the ollie onto it this near across;
-and the ticks before another try */
+/* grinds: the most rails and points read; a rail beside the way (within the
+reach and angle of bots_tricks.c's bot_tricks_grind_reach, by difficulty) no
+nearer than this (world units across), starting no further ahead than
+this, with this much of it left ahead; ridden at this speed or faster
+(world units a second); the ollie onto it this near across; and the ticks
+before another try */
 #define BOT_SKATE_MAXIMUM_RAILS 2048
 #define BOT_SKATE_MAXIMUM_RAIL_POINTS 8192
-#define BOT_SKATE_GRIND_REACH 1.5f
 #define BOT_SKATE_GRIND_NEAREST 0.05f
-#define BOT_SKATE_GRIND_ALIGN 0.35f
+#define BOT_SKATE_GRIND_AHEAD 3.0f
 #define BOT_SKATE_GRIND_LENGTH 2.5f
 #define BOT_SKATE_GRIND_SPEED 1.2f
 #define BOT_SKATE_GRIND_OLLIE_ACROSS 0.45f
@@ -412,21 +412,27 @@ static void bot_skate_rails_read(
 		platform_log("bots: %d grind rails (%d points) for the boards", bot_skate_rails.rail_count, bot_skate_rails.point_count);
 }
 
-/* a rail beside a riding bot's way: within BOT_SKATE_GRIND_REACH across,
-running within BOT_SKATE_GRIND_ALIGN of the way it goes (course, radians) and
-of the way it heads for (heading), a little above the ground or at it, with
-BOT_SKATE_GRIND_LENGTH or more of it left ahead. TRUE with the point on it
-nearest, the way along it, and how far across */
+/* a rail beside a riding bot's way, or a little ahead of it: within reach
+world units across (no nearer than BOT_SKATE_GRIND_NEAREST), running within
+align (radians) of the way it goes (course) and of the way it heads for
+(heading), a little above the ground or at it, beside it or starting no
+further ahead than BOT_SKATE_GRIND_AHEAD, with BOT_SKATE_GRIND_LENGTH or more
+of it left ahead. TRUE with the point on its line nearest, the way along it,
+how far across, and whether it is beside the bot already (an ollie onto it
+is for then) */
 static boolean bot_skate_rail_beside(
 	real_point3d const *position,
 	real course,
 	real heading,
+	real reach,
+	real align,
 	real *at,
 	real *along,
-	real *across)
+	real *across,
+	boolean *beside)
 {
 	real cx = (real)cos(course), cy = (real)sin(course);
-	real best = BOT_SKATE_GRIND_REACH;
+	real best = reach;
 	boolean found = FALSE;
 	int rail, first = 0;
 
@@ -440,33 +446,35 @@ static boolean bot_skate_rail_beside(
 			float const *b = bot_skate_rails.points[point + 1];
 			real dx = b[0] - a[0], dy = b[1] - a[1];
 			real length = (real)sqrt(dx * dx + dy * dy);
-			real ux, uy, t, px, py, side, height, left;
+			real ux, uy, t, ahead, px, py, side, height, left;
+			boolean forward;
 
 			if (length < 0.05f)
 				continue;
 			ux = dx / length;
 			uy = dy / length;
 			/* (the way along it that goes as the bot does) */
-			if (ux * cx + uy * cy < 0.0f)
+			forward = ux * cx + uy * cy >= 0.0f;
+			if (!forward)
 			{
 				ux = -ux;
 				uy = -uy;
 			}
-			if (ux * cx + uy * cy < (real)cos(BOT_SKATE_GRIND_ALIGN) ||
-				fabs(bot_skate_angle((real)atan2(uy, ux) - heading)) > BOT_SKATE_GRIND_ALIGN)
-			{
+			if (ux * cx + uy * cy < (real)cos(align) || fabs(bot_skate_angle((real)atan2(uy, ux) - heading)) > align)
 				continue;
-			}
 			t = (position->x - a[0]) * dx / length + (position->y - a[1]) * dy / length;
-			if (t < 0.0f || t > length)
+			/* (how far ahead of the bot the rail starts, going its way: 0
+			beside it) */
+			ahead = forward ? -t : t - length;
+			if (ahead > BOT_SKATE_GRIND_AHEAD || (forward ? t > length : t < 0.0f))
 				continue;
 			px = a[0] + dx / length * t;
 			py = a[1] + dy / length * t;
 			side = (real)sqrt((position->x - px) * (position->x - px) + (position->y - py) * (position->y - py));
-			height = a[2] + (b[2] - a[2]) * t / length - position->z;
+			height = a[2] + (b[2] - a[2]) * PIN(t, 0.0f, length) / length - position->z;
 			/* (what is left ahead, this segment's: the next may turn away) */
-			left = (dx / length * ux + dy / length * uy) > 0.0f ? length - t : t;
-			if (side < BOT_SKATE_GRIND_NEAREST || side >= best || height < -0.15f || height > 0.5f ||
+			left = forward ? length - MAX(t, 0.0f) : MIN(t, length);
+			if (side < BOT_SKATE_GRIND_NEAREST || side >= best || height < -0.2f || height > 0.5f ||
 				left < BOT_SKATE_GRIND_LENGTH)
 			{
 				continue;
@@ -478,6 +486,7 @@ static boolean bot_skate_rail_beside(
 			at[2] = position->z + height;
 			*along = (real)atan2(uy, ux);
 			*across = side;
+			*beside = ahead <= 0.0f;
 		}
 	}
 	return found;
@@ -642,6 +651,13 @@ void bot_skate_think(
 			if (view.skating)
 				platform_log("bots: player %ld steps off the board (%s) at tick %ld", DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index),
 					reason, now);
+			/* (in the middle of a trick: told of, for the tests - a trick must
+			cost a fight nothing) */
+			if (view.skating && !strcmp(reason, "a fight") && bot_tricks_under_way(bot, &view))
+			{
+				platform_log("bots: player %ld stops a trick for a fight at tick %ld", DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index),
+					now);
+			}
 		}
 	}
 	else if (now >= skate->off_until_tick && !fighting && !bot_holds_flag(unit_get(unit_index)) && !bot_vehicle_busy(bot) &&
@@ -660,6 +676,9 @@ void bot_skate_think(
 		if (has_skater && (view.skating || now - skate->changed_tick < 2 * TICKS_PER_SECOND))
 			skate_bot_drive(player_index, unit_index, FALSE, NULL);
 		skate->riding = FALSE;
+		skate->tricks.gesture_count = 0;
+		skate->tricks.manual_ticks = 0;
+		skate->tricks.grabbing = FALSE;
 		return;
 	}
 	memset(&pad, 0, sizeof(pad));
@@ -668,6 +687,7 @@ void bot_skate_think(
 		real heading;
 		real speed_wanted = BOT_SKATE_FAST_SPEED;
 		real moved = (real)sqrt(view.velocity[0] * view.velocity[0] + view.velocity[1] * view.velocity[1]);
+		boolean ollie_busy = skate->ollie_ticks > 0;
 
 		if (!skate->riding)
 		{
@@ -719,12 +739,22 @@ void bot_skate_think(
 			{
 				real at[3], rail_along, rail_across;
 				real course = (real)atan2(view.velocity[1], view.velocity[0]);
+				real reach, align;
+				boolean rail, beside = FALSE;
 
 				heading = (real)atan2(target.y - position.y, target.x - position.x);
-				/* a rail beside the way: along it, nearer, and up onto it */
+				/* a rail beside the way: along it, nearer, and up onto it (one
+				it chose to grind: bots_tricks.c, by its difficulty) */
 				bot_skate_rails_read(nav);
-				if (!view.grinding && !view.airborne && moved > BOT_SKATE_GRIND_SPEED && now >= skate->grind_after_tick &&
-					bot_skate_rail_beside(&position, course, heading, at, &rail_along, &rail_across))
+				bot_tricks_grind_reach(bot, &reach, &align);
+				rail = !view.grinding && !view.airborne && moved > BOT_SKATE_GRIND_SPEED && now >= skate->grind_after_tick &&
+					bot_skate_rail_beside(&position, course, heading, reach, align, at, &rail_along, &rail_across, &beside);
+				if (rail && !skate->lining_up && !bot_tricks_grind_wanted(bot))
+				{
+					skate->grind_after_tick = now + BOT_SKATE_GRIND_COOLDOWN_TICKS;
+					rail = FALSE;
+				}
+				if (rail)
 				{
 					real toward = (real)atan2(at[1] - position.y, at[0] - position.x);
 
@@ -735,7 +765,7 @@ void bot_skate_think(
 					}
 					/* (alongside: the rail's way, turned a little toward it) */
 					heading = rail_along + bot_skate_angle(toward - rail_along) * (rail_across > 0.6f ? 0.35f : 0.15f);
-					if (rail_across < BOT_SKATE_GRIND_OLLIE_ACROSS && skate->ollie_ticks == 0)
+					if (beside && rail_across < BOT_SKATE_GRIND_OLLIE_ACROSS && skate->ollie_ticks == 0)
 					{
 						skate->ollie_ticks = BOT_SKATE_OLLIE_DOWN_TICKS + BOT_SKATE_OLLIE_UP_TICKS;
 						skate->grind_after_tick = now + BOT_SKATE_GRIND_COOLDOWN_TICKS;
@@ -759,6 +789,16 @@ void bot_skate_think(
 				speed_wanted = MIN(speed_wanted, BOT_SKATE_SLOW_SPEED);
 		}
 		bot_skate_pad(brain, &view, heading, speed_wanted, &pad);
+		/* (its tricks: to the pad, as the way ahead lets it) */
+		{
+			struct bot_trick_way way;
+
+			way.rolling = rolling;
+			way.turn = moved > 0.3f ? bot_skate_angle(heading - (real)atan2(view.velocity[1], view.velocity[0])) : 0.0f;
+			way.lining_up = skate->lining_up;
+			way.ollie_busy = skate->ollie_ticks > 0 || ollie_busy;
+			bot_tricks_think(bot, player_index, unit_index, &view, &way, &pad);
+		}
 		/* (getting nowhere on the board: off, after a while) */
 		if (speed_wanted > 0.0f && moved < BOT_SKATE_STALL_SPEED && !view.bailing)
 			skate->stuck_ticks++;

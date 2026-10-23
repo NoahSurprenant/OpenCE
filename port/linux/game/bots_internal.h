@@ -74,6 +74,23 @@ struct bot_statistics
 	/* ... the rails it lined up with, and its grinds */
 	long skate_grind_tries;
 	long skate_grinds;
+	/* ... its tricks (bots_tricks.c): as the skate engine's scoring saw them,
+	the tricks landed, their points, the combos (sequences of two or more),
+	the most tricks and points in one sequence, and the sequences a bail
+	ended; and what it tried: flatground flips, late flips, grabs, manuals,
+	flips off grinds, and ollies or flips over what was in its way */
+	long skate_tricks;
+	real skate_trick_points;
+	long skate_combos;
+	long skate_best_combo;
+	real skate_best_points;
+	long skate_trick_bails;
+	long skate_flips;
+	long skate_late_flips;
+	long skate_grabs;
+	long skate_manuals;
+	long skate_pops;
+	long skate_obstacle_pops;
 	/* the times it found itself in a vehicle it never meant to get into
 	(bots_brain.c's bot_vehicle_keep_out) */
 	long vehicle_mistakes;
@@ -167,6 +184,83 @@ struct bot_vehicle
 };
 
 /* a bot on a board (bots_skate.c) */
+/* the most points of a trick's gesture (halo_skate_gesture) */
+#define BOT_TRICK_MAXIMUM_POINTS 16
+/* the flips a bot remembers flicking lately (it flicks none of them again) */
+#define BOT_TRICK_RECENT 4
+
+/* a riding bot's tricks (bots_tricks.c) */
+struct bot_tricks
+{
+	/* the gesture it flicks: its points (the right stick's), how many (0:
+	none under way), the next, the ticks left on it; its kind and which */
+	float gesture[BOT_TRICK_MAXIMUM_POINTS][2];
+	short gesture_count;
+	short gesture_next;
+	short gesture_ticks;
+	short gesture_kind;
+	short gesture_index;
+	/* the flips it flicked lately, last first (index + 1; 0: none) */
+	short recent[BOT_TRICK_RECENT];
+	/* a grab held (its trigger: 0 left, 1 right); the ticks left of a
+	manual; when it flips off the grind it is on (NONE: it does not), and
+	when it begins a late flip too late (NONE: it does not) */
+	boolean grabbing;
+	short grab_trigger;
+	short manual_ticks;
+	long pop_tick;
+	long sloppy_tick;
+	real sloppy_air;
+	/* in the air, since when, its vertical speed last tick and the gravity
+	it measured (world units a second, and a second squared); on a grind;
+	how high its origin rides above the ground */
+	boolean airborne;
+	long air_tick;
+	/* when it last popped (a gesture or an ollie under way) and pushed; in
+	the air by a pop of its own */
+	long popped_tick;
+	long pushed_tick;
+	boolean popped;
+	real last_vz;
+	real gravity;
+	/* the trick it began last (for the log: what a bail came of), when, and
+	the time in the air it expected then (seconds) */
+	char const *doing;
+	char const *doing_name;
+	long doing_tick;
+	real doing_air;
+	boolean grinding;
+	boolean ride_height_known;
+	real ride_height;
+	/* the tick before which it begins no other trick on the ground, nor
+	pops over another thing in its way */
+	long next_tick;
+	long obstacle_tick;
+	/* a flatground flip meant: flicked by this tick, once it rolls with its
+	feet on the board (NONE: none meant) */
+	long flip_until_tick;
+	/* the skate engine's tally of its skater as last looked at (its session:
+	another, afresh) */
+	int session;
+	unsigned long sequences;
+	unsigned long bails;
+	unsigned long landed;
+	unsigned long combos;
+	real points;
+};
+
+/* what the way ahead lets a riding bot do (bots_skate.c for bots_tricks.c):
+how far it rolls (world units), how far the way it heads turns from its
+course (radians), and whether it lines up with a rail, or its riding's own
+ollie is under way */
+struct bot_trick_way
+{
+	real rolling;
+	real turn;
+	boolean lining_up;
+	boolean ollie_busy;
+};
+
 struct bot_skate
 {
 	/* the unit it rides as (another: a new life, afresh) */
@@ -191,6 +285,8 @@ struct bot_skate
 	long stall_ticks;
 	long ollie_ticks;
 	long walking_ticks;
+	/* its tricks */
+	struct bot_tricks tricks;
 };
 
 /* a game type's objective for a bot (bots_objectives.c) */
@@ -426,6 +522,38 @@ void bot_skate_think(
 	long player_index,
 	long unit_index,
 	struct player_action *action);
+struct skate_bot_view;
+struct halo_skate_pad;
+/* (bots_tricks.c, from bot_skate_think) a riding bot's tricks: to the pad
+that rides along its way, the right stick, the triggers and no push, as
+its trick wants this tick */
+void bot_tricks_think(
+	struct bot *bot,
+	long player_index,
+	long unit_index,
+	struct skate_bot_view const *view,
+	struct bot_trick_way const *way,
+	struct halo_skate_pad *pad);
+/* (bots_tricks.c) whether the bot lines up with a rail it found beside its
+way (its difficulty's chance, asked once for each rail) */
+boolean bot_tricks_grind_wanted(
+	struct bot *bot);
+/* (bots_tricks.c) how far across the bot looks for a rail beside its way
+(world units), and how far off its way the rail may run (radians) */
+void bot_tricks_grind_reach(
+	struct bot const *bot,
+	real *reach,
+	real *align);
+/* (bots_tricks.c) whether the bot is in the middle of a trick of its own: a
+gesture flicked, a manual or a grab held, or in the air of a trick */
+boolean bot_tricks_under_way(
+	struct bot const *bot,
+	struct skate_bot_view const *view);
+/* (bots_tricks.c, bots.c's report) its tricks, a line of their own */
+void bot_tricks_report(
+	struct bot const *bot,
+	char const *name,
+	long now);
 /* (bots_vehicle.c, in bot_brain_think before it fights or walks) the bot on
 its way to a vehicle, in one, getting out or flipping one: TRUE when its
 action is that (on its way along the walking graph it walks as the brain

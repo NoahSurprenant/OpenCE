@@ -52,6 +52,9 @@ struct skate_bot_view
 	boolean bailing;
 	boolean grinding;
 	boolean airborne;
+	/* its skater steps with this tick's pad (a machine short of processors
+	steps the bots' skaters every few ticks: the pads between go unseen) */
+	boolean steps_now;
 	/* the biped's origin, its velocity (world units a second: the board's,
 	or off the board the skater's own) and the board's forward */
 	real position[3];
@@ -83,6 +86,16 @@ has it): each rail's points (3 floats each, world units) into points (room
 for point_capacity), the count of points before each rail's end into ends
 (room for end_capacity); how many rails, 0 for none (yet) */
 int skate_bot_rails(float *points, int point_capacity, int *ends, int end_capacity);
+struct halo_skate_tricks;
+/* what the skate engine's scoring made of the riding of the bot of
+player_index (a datum) in its skater's session since the session was made
+(halo_skate.h's halo_skate_tricks); and that session's number (another: a
+new session, counting afresh). FALSE when it has no skater */
+boolean skate_bot_tricks(long player_index, struct halo_skate_tricks *tricks, int *session);
+/* the right stick's way through the gesture the skate engine knows name by
+(halo_skate.h's halo_skate_gesture, from the Skate 3 data): pad positions,
+two floats each, into points (room for capacity); how many, 0 for none */
+int skate_bot_gesture(char const *name, float *points, int capacity);
 /* skate_authority.c: whether the unit is a skater the host's engine runs
 (its own player's or a bot's) on the board and not bailing; and whether it is
 such a skater at all (alive, on foot or riding) */

@@ -574,6 +574,13 @@ static const struct config_setting config_settings[] =
 		"\"stand\" (it stands still on foot) or anything else (as it sees fit); one\n"
 		"entry after a star (\"*ram\") is every bot's. For\n"
 		"the tests. Empty: all as they see fit." },
+	{ "debug.bot_tricks", _config_string, "\"\"", "HALO_BOT_TRICKS", _environment_value, _platform_all,
+		"How each bot does skate tricks on its board (Skate 3 mode), with commas\n"
+		"between, one for each bot in the order they join: \"off\" (it only\n"
+		"rides, ollying what is in its way), a difficulty (\"hard\": tricks as a\n"
+		"hard bot does them, whatever its own) or anything else (as its own\n"
+		"difficulty does them); one entry after a star (\"*off\") is every bot's.\n"
+		"For the tests. Empty: all as their difficulty does them." },
 	{ "debug.bot_seed", _config_integer, "0", "HALO_BOT_SEED", _environment_value, _platform_all,
 		"The bots' random numbers start from this, so that a test's bots do the\n"
 		"same each run." },

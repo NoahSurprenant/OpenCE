@@ -383,6 +383,7 @@ static void bots_report(
 			statistics->vehicle_flips, statistics->vehicle_braked, statistics->vehicle_rams, statistics->gunner_rides,
 			statistics->gunner_ticks / TICKS_PER_SECOND, statistics->vehicle_ticks_fired, statistics->vehicle_kills,
 			statistics->run_overs, statistics->person_ticks / TICKS_PER_SECOND);
+		bot_tricks_report(bot, name, now);
 		bots_report_objective(bot, name, now);
 	}
 }

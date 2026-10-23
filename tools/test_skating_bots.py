@@ -269,3 +269,92 @@ def test_skating_bots_crowd(tmp_path):
     assert copied and max(map(int, copied)) < 2000, f"sessions were not copied quickly: {copied[:5]}"
     assert not re.search(r"NOT FINITE|EXCEPTION|fatal error|session could not be made", log), \
         [line for line in log.splitlines() if re.search(r"NOT FINITE|EXCEPTION|fatal|could not be made", line)][:5]
+
+
+TRICKS = re.compile(r"bots: (\[BOT\] \w+)'s tricks at tick \d+: (\d+) landed, (\d+) points, (\d+) combos \(best (\d+) tricks, "
+                    r"(\d+) points\), (\d+) bails; (\d+) flips, (\d+) late flips, (\d+) grabs, (\d+) manuals, "
+                    r"(\d+) flips off grinds, (\d+) pops over things in the way")
+TRICK_FIELDS = ("landed", "points", "combos", "best_tricks", "best_points", "bails", "flips", "late_flips", "grabs",
+                "manuals", "pops", "obstacle_pops")
+
+
+def _tricks(log):
+    """each bot's last report of its tricks: {name: {field: number}}"""
+    return {name: dict(zip(TRICK_FIELDS, (int(n) for n in numbers))) for name, *numbers in TRICKS.findall(log)}
+
+
+def _difficulties(log):
+    """each bot's difficulty, by its name"""
+    return dict(re.findall(r"bots: (\[BOT\] \w+) joined \([^)]*?(peaceful|easy|normal|hard|legendary)", log))
+
+
+def test_skating_bots_tricks(tmp_path):
+    """Tricks (port/linux/game/bots_tricks.c): six bots on Prisoner's
+    dedicated server with Skate 3 data (its ledges and railings are rails),
+    three minutes, three tricking as hard bots do and three as easy ones do
+    (debug.bot_tricks; all peaceful, so that they ride rather than fight,
+    and the numbers come from riding). Riding, they flick flips through the right
+    stick, grab and late-flip in the air, grind the rails they pass and pop
+    off them, and the skate engine's scoring (Skate 3's) counts what they
+    land: tricks and grinds landed, the hard bots chaining combos and scoring
+    far above the easy ones, who trick rarely. About three and a half
+    minutes."""
+    _, maps, assets = _needs_skate()
+    log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
+        "HALO_SERVER_BOTS": "6", "HALO_SERVER_BOT_DIFFICULTY": "peaceful", "HALO_BOT_TRICKS": "hard,easy,hard,easy,hard,easy",
+        "HALO_BOT_SEED": "5",
+        "HALO_SERVER_MAPS": "prisoner", "HALO_SERVER_TIME_LIMIT": "3"}, (_test_address(251), _test_address(252)))
+    boards = _boards(log)
+    tricks = _tricks(log)
+    difficulty = _difficulties(log)
+    landed = re.findall(r"bots: player (\d+) lands (\d+) tricks for (\d+) points \(last (\w+)\)", log)
+    print(f"boards {boards}\ndifficulties {difficulty}\ntricks {tricks}\nsequences landed {len(landed)}: {landed[:30]}")
+    print(f"bails {re.findall(r'bots: player (\d+) bails out of a trick[^\n]*', log)}")
+    assert len(tricks) == 6, f"not every bot told of its tricks: {tricks}"
+    # (in the order they join: hard, easy, hard, easy ...)
+    names = re.findall(r"bots: (\[BOT\] \w+) joined", log)
+    hard = [tricks[name] for name in names[0::2]]
+    easy = [tricks[name] for name in names[1::2]]
+    total = lambda bots, field: sum(b[field] for b in bots)
+    tried = lambda bots: sum(total(bots, f) for f in ("flips", "late_flips", "grabs", "manuals", "pops"))
+    landed = total(hard + easy, "landed")
+    grinds = sum(b[7] for b in boards.values())
+    print(f"landed {landed}, grinds {grinds}; hard: tried {tried(hard)}, {total(hard, 'points')} points, "
+          f"{total(hard, 'combos')} combos, {total(hard, 'bails')} bails; easy: tried {tried(easy)}, "
+          f"{total(easy, 'points')} points, {total(easy, 'combos')} combos, {total(easy, 'bails')} bails")
+    # (locally, over runs: 43 to 75 landed, 2 to 7 grinds; the hard pair 3 to 4
+    # times the easy pair's points, 5 to 13 combos)
+    assert landed >= 30, f"only {landed} tricks landed"
+    assert grinds >= 1, f"no grind: {boards}"
+    assert tried(hard) >= 2 * tried(easy) + 5, f"the hard bots tried hardly more tricks than the easy ones: {tricks}"
+    assert total(hard, "points") >= 1.5 * total(easy, "points"), f"the hard bots did not outscore the easy ones: {tricks}"
+    assert total(hard, "combos") >= 2, f"the hard bots chained no combos: {tricks}"
+    assert total(hard, "bails") * 3 <= total(hard, "landed"), f"the hard bots bailed too often: {tricks}"
+    assert not re.search(r"NOT FINITE|EXCEPTION|fatal error", log), "a pose not finite, or a fatal error"
+
+
+def test_skating_bots_tricks_in_a_fight(tmp_path):
+    """Tricks give way to fights: two hard and two normal bots playing Slayer
+    on Blood Gulch's dedicated server with Skate 3 data, three minutes. They
+    ride and trick between fights, but begin no trick with an enemy about (a
+    target seen or gunfire heard lately), so a fight seldom finds one in the
+    middle of a trick: they step off their boards, fire and kill as without
+    tricks. About three and a half minutes."""
+    _, maps, assets = _needs_skate()
+    log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
+        "HALO_SERVER_BOTS": "4", "HALO_BOT_DIFFICULTIES": "hard,normal,hard,normal", "HALO_BOT_SEED": "7",
+        "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "3", "HALO_SERVER_BOT_VEHICLES": "-1"},
+        (_test_address(251), _test_address(252)))
+    boards = _boards(log)
+    tricks = _tricks(log)
+    fights = len(re.findall(r"bots: player \d+ steps off the board \(a fight\)", log))
+    interrupted = len(re.findall(r"bots: player \d+ stops a trick for a fight", log))
+    fired = {name: int(n) for name, n in re.findall(r"bots: (\[BOT\] \w+) at tick \d+: .*?fired (\d+) ticks", log)}
+    scores = SCORE.findall(log)
+    print(f"boards {boards}\ntricks {tricks}\nsteps off for a fight {fights}, of them in the middle of a trick "
+          f"{interrupted}\nfired {fired}; scores {scores}")
+    kills = sum(int(score[2]) for score in scores)
+    assert sum(b["landed"] for b in tricks.values()) >= 5, f"the bots hardly tricked: {tricks}"
+    assert fights >= 2, f"the bots stepped off their boards for {fights} fights"
+    assert interrupted <= max(1, fights // 3), f"{interrupted} of {fights} fights found a bot in the middle of a trick"
+    assert sum(1 for n in fired.values() if n > 0) >= 3 and kills >= 4, f"the bots hardly fought: fired {fired}, scores {scores}"

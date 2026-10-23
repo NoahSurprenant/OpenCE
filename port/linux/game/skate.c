@@ -2595,6 +2595,25 @@ int skate_bot_rails(float *points, int point_capacity, int *ends, int end_capaci
 	return 0;
 }
 
+boolean skate_bot_tricks(long player_index, struct halo_skate_tricks *tricks, int *session)
+{
+	struct skate_skater *skater = skate_bot_skater(player_index);
+
+	memset(tricks, 0, sizeof(*tricks));
+	*session = -1;
+	if (!skater)
+		return FALSE;
+	*session = skate_session(skater);
+	return halo_skate_tricks_in(*session, tricks) == 0;
+}
+
+int skate_bot_gesture(char const *name, float *points, int capacity)
+{
+	int count = halo_skate_gesture(skate_assets(), name, points, capacity);
+
+	return count > 0 ? count : 0;
+}
+
 boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
 {
 	struct skate_skater *skater = skate_bot_skater(player_index);
@@ -2611,6 +2630,8 @@ boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
 	view->bailing = !strncmp(skater->frame.state, "Wipeout", 7);
 	view->grinding = !strncmp(skater->frame.state, "Grind", 5);
 	view->airborne = strstr(skater->frame.state, "Air") != NULL;
+	view->steps_now = skate_bots_load.every <= 1 ||
+		(game_time_get() + (long)(skater - skate_skaters)) % skate_bots_load.every == 0;
 	velocity = skater->frame.off_board ? skater->frame.skater_velocity : skater->frame.velocity;
 	view->position[0] = skater->frame.position[0];
 	view->position[1] = skater->frame.position[1];
@@ -3581,6 +3602,17 @@ boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
 }
 
 int skate_bot_rails(float *points, int point_capacity, int *ends, int end_capacity)
+{
+	return 0;
+}
+
+boolean skate_bot_tricks(long player_index, struct halo_skate_tricks *tricks, int *session)
+{
+	*session = -1;
+	return FALSE;
+}
+
+int skate_bot_gesture(char const *name, float *points, int capacity)
 {
 	return 0;
 }

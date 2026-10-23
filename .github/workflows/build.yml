@@ -447,7 +447,9 @@ jobs:
     # on boards") runs beside them: a listen host whose bots and own player
     # skate, with a client, and dedicated servers of the server's build
     # with the data (a bot running another over; peaceful bots harming
-    # nobody) and without it (the bots on foot).
+    # nobody; tricks: hard bots flipping, grinding and chaining combos far
+    # more than easy ones, and tricks giving way to fights) and without it
+    # (the bots on foot).
     #
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
     # --skate --lto=off --pgo=off), and the server of
@@ -546,8 +548,8 @@ jobs:
             echo "::error::test_skate_multiplayer, test_skate_hitbox and the five test_dedicated_server tests did not all run and pass"
             exit 1
           fi
-          if ! grep -q '6 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
-            echo "::error::the six tests of tools/test_skating_bots.py did not all run and pass"
+          if ! grep -q '8 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
+            echo "::error::the eight tests of tools/test_skating_bots.py did not all run and pass"
             exit 1
           fi
 
