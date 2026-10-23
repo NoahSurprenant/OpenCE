@@ -1,0 +1,172 @@
+suite: stream
+templates:
+  - templates/stream-deployment.yaml
+  - templates/stream-service.yaml
+  - templates/stream-configmap.yaml
+  - templates/stream-networkpolicy.yaml
+  - templates/networkpolicy.yaml
+release:
+  name: opence-server
+  namespace: games
+set:
+  gameData.existingClaim: halo-maps
+tests:
+  - it: renders nothing of the stream when off
+    templates:
+      - templates/stream-deployment.yaml
+      - templates/stream-service.yaml
+      - templates/stream-configmap.yaml
+      - templates/stream-networkpolicy.yaml
+    asserts:
+      - hasDocuments: { count: 0 }
+
+  - it: runs no stream until something scales it up, one at a time
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+    asserts:
+      - equal: { path: spec.replicas, value: 0 }
+      - equal: { path: spec.strategy.type, value: Recreate }
+      - equal: { path: metadata.name, value: opence-server-stream }
+      - equal: { path: 'spec.selector.matchLabels["app.kubernetes.io/name"]', value: opence-server-stream }
+
+  - it: joins the server pod by the headless Service's name, at 854x480 30 fps
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: STREAM_SERVER, value: opence-server-system-link.games.svc.cluster.local }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: STREAM_WIDTH, value: "854" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: STREAM_HEIGHT, value: "480" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: STREAM_FPS, value: "30" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: STREAM_PRESET, value: veryfast } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: LP_NUM_THREADS, value: "3" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_STREAM_CAMERA, value: director } }
+      - equal: { path: 'spec.template.spec.containers[0].image', value: 'ghcr.io/noahsurprenant/opence-stream:latest' }
+
+  - it: is hardened as the server is, writing only to emptyDirs
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+    asserts:
+      - equal: { path: spec.template.spec.automountServiceAccountToken, value: false }
+      - equal: { path: spec.template.spec.securityContext.runAsNonRoot, value: true }
+      - equal: { path: spec.template.spec.securityContext.seccompProfile.type, value: RuntimeDefault }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem', value: true }
+      - equal: { path: 'spec.template.spec.containers[0].securityContext.capabilities.drop', value: [ALL] }
+      - equal: { path: 'spec.template.spec.containers[1].securityContext.readOnlyRootFilesystem', value: true }
+      - equal: { path: 'spec.template.spec.containers[1].securityContext.allowPrivilegeEscalation', value: false }
+      - contains: { path: 'spec.template.spec.containers[0].volumeMounts', content: { name: game-data, mountPath: /data, readOnly: true } }
+      - contains: { path: 'spec.template.spec.containers[1].volumeMounts', content: { name: hls, mountPath: /hls, readOnly: true } }
+      - contains: { path: spec.template.spec.volumes, content: { name: hls, emptyDir: { medium: Memory, sizeLimit: 64Mi } } }
+      - contains: { path: spec.template.spec.volumes, content: { name: game-data, persistentVolumeClaim: { claimName: halo-maps, readOnly: true } } }
+
+  - it: has the requested resources, and llvmpipe's threads follow renderThreads
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+      stream.renderThreads: 4
+    asserts:
+      - equal: { path: 'spec.template.spec.containers[0].resources.requests.cpu', value: 2500m }
+      - equal: { path: 'spec.template.spec.containers[0].resources.limits.cpu', value: "3" }
+      - equal: { path: 'spec.template.spec.containers[0].resources.requests.memory', value: 700Mi }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: LP_NUM_THREADS, value: "4" } }
+
+  - it: is ready once the playlist has readySegments segments
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+      stream.readySegments: 2
+    asserts:
+      - matchRegex:
+          path: 'spec.template.spec.containers[0].readinessProbe.exec.command[2]'
+          pattern: "/hls/live.m3u8\\)\" -ge 2$"
+
+  - it: mounts the skate data only when the server has it and stream.skateData is on
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+      skateData.existingClaim: skate-data
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].volumeMounts', content: { name: skate-data, mountPath: /skate-data, readOnly: true } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SKATE_ASSETS, value: /skate-data/assets } }
+
+  - it: leaves the skate data out with stream.skateData off
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+      stream.skateData: false
+      skateData.existingClaim: skate-data
+    asserts:
+      - notContains: { path: 'spec.template.spec.containers[0].volumeMounts', content: { name: skate-data, mountPath: /skate-data, readOnly: true } }
+
+  - it: carries an autoscaler's labels on the Deployment
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+      stream.deploymentLabels: { sablier.enable: "true", sablier.group: halo-stream }
+    asserts:
+      - equal: { path: 'metadata.labels["sablier.enable"]', value: "true" }
+      - equal: { path: 'metadata.labels["sablier.group"]', value: halo-stream }
+
+  - it: serves the stream and a headless Service of the server's system link
+    template: templates/stream-service.yaml
+    set:
+      stream.enabled: true
+    asserts:
+      - hasDocuments: { count: 2 }
+      - equal: { path: spec.ports, value: [{ name: http, port: 80, targetPort: http, protocol: TCP }] }
+        documentIndex: 0
+      - equal: { path: metadata.name, value: opence-server-system-link }
+        documentIndex: 1
+      - equal: { path: spec.clusterIP, value: None }
+        documentIndex: 1
+      - equal: { path: 'spec.selector["app.kubernetes.io/name"]', value: opence-server }
+        documentIndex: 1
+
+  - it: pins hls.js with its integrity hash in the watch page
+    template: templates/stream-configmap.yaml
+    set:
+      stream.enabled: true
+      stream.title: My server
+    asserts:
+      - matchRegex: { path: 'data["index.html"]', pattern: 'integrity="sha512-[A-Za-z0-9+/=]+"' }
+      - matchRegex: { path: 'data["index.html"]', pattern: '<title>My server - live</title>' }
+      - matchRegex: { path: 'data["nginx.conf"]', pattern: 'alias /hls/\$1;' }
+
+  - it: lets the stream reach only DNS and the server's system link
+    template: templates/stream-networkpolicy.yaml
+    set:
+      stream.enabled: true
+    asserts:
+      - equal: { path: spec.policyTypes, value: [Ingress, Egress] }
+      - lengthEqual: { path: spec.egress, count: 2 }
+      - equal: { path: 'spec.egress[1].ports', value: [{ protocol: UDP, port: 5150 }, { protocol: TCP, port: 5150 }] }
+      - equal: { path: 'spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/name"]', value: opence-server }
+      - equal: { path: 'spec.ingress[1].ports', value: [{ protocol: UDP, port: 5151 }] }
+
+  - it: lets the stream into the server's system link, and the server back to it
+    template: templates/networkpolicy.yaml
+    set:
+      stream.enabled: true
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            from: [{ podSelector: { matchLabels: { app.kubernetes.io/name: opence-server-stream, app.kubernetes.io/instance: opence-server } } }]
+            ports: [{ protocol: UDP, port: 5150 }, { protocol: TCP, port: 5150 }]
+      - contains:
+          path: spec.egress
+          content:
+            to: [{ podSelector: { matchLabels: { app.kubernetes.io/name: opence-server-stream, app.kubernetes.io/instance: opence-server } } }]
+            ports: [{ protocol: UDP, port: 5151 }]
+
+  - it: has no stream policy without network policies
+    template: templates/stream-networkpolicy.yaml
+    set:
+      stream.enabled: true
+      networkPolicy.enabled: false
+    asserts:
+      - hasDocuments: { count: 0 }

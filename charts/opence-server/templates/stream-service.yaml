@@ -1,0 +1,47 @@
+{{- if .Values.stream.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opence-server.streamName" . }}
+  labels:
+    {{- include "opence-server.streamLabels" . | nindent 4 }}
+    {{- with .Values.stream.service.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.stream.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.stream.service.type }}
+  selector:
+    {{- include "opence-server.streamSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.stream.service.port }}
+      targetPort: http
+      protocol: TCP
+---
+# The server's system link (TCP and UDP 5150), headless: its name is the server pod's own address,
+# which the stream looks up and joins (a game's machines reach each other at their own addresses, so
+# a ClusterIP in between would not do).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opence-server.systemLinkName" . }}
+  labels:
+    {{- include "opence-server.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "opence-server.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: system-link
+      port: 5150
+      targetPort: 5150
+      protocol: UDP
+    - name: system-link-tcp
+      port: 5150
+      targetPort: 5150
+      protocol: TCP
+{{- end }}

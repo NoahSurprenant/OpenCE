@@ -15,10 +15,10 @@ name: Server image
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md", "charts/**", "docs/**", "docker/web/**", ".github/workflows/build.yml", ".github/workflows/helm-chart.yml", ".github/workflows/helm-chart-web.yml"]
+    paths-ignore: ["**.md", "charts/**", "docs/**", "docker/web/**", ".github/workflows/build.yml", ".github/workflows/helm-chart.yml", ".github/workflows/helm-chart-web.yml", ".github/workflows/stream-image.yml", "docker/stream/**"]
   pull_request:
     branches: [main]
-    paths-ignore: ["**.md", "charts/**", "docs/**", "docker/web/**", ".github/workflows/build.yml", ".github/workflows/helm-chart.yml", ".github/workflows/helm-chart-web.yml"]
+    paths-ignore: ["**.md", "charts/**", "docs/**", "docker/web/**", ".github/workflows/build.yml", ".github/workflows/helm-chart.yml", ".github/workflows/helm-chart-web.yml", ".github/workflows/stream-image.yml", "docker/stream/**"]
   schedule:
     - cron: "23 5 * * 1"
   workflow_dispatch:

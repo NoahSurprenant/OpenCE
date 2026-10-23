@@ -58,7 +58,50 @@ ARG CONFIGURE_FLAGS="--release --lto=off --pgo=off --portable --skate"
 RUN HALO_BUILD_NUMBER="${HALO_BUILD_NUMBER}" python3 configure.py ${CONFIGURE_FLAGS} \
  && ninja linux \
  && strip --strip-debug build/linux/halo \
- && test -x build/linux/halo && test -f build/linux/brokers.txt
+ && test -x build/linux/halo && test -f build/linux/brokers.txt \
+ && test -f build/linux/libSDL3.so.0
+
+# The stream (port/linux/README.md, "Streaming"; docker/stream/stream.sh): the same build as a client
+# in stream mode, watching a server's game with the auto-director and encoded by ffmpeg to HLS. Built
+# with --target stream (the default target is the server, below) and published by
+# .github/workflows/stream-image.yml:
+#
+#   docker build -f docker/server/Dockerfile --target stream -t opence-stream .
+#   docker run --rm --read-only --tmpfs /state:uid=10001,gid=10001 --tmpfs /tmp:uid=10001,gid=10001 \
+#     --tmpfs /hls:uid=10001,gid=10001 -v /path/to/halo:/data:ro -e STREAM_SERVER=<server> opence-stream
+#
+# As the server, no game data in the image: the maps at /data, read-only (and optionally the Skate 3
+# data at /skate-data, to draw the skaters' boards). /state (settings, the save root and its map
+# cache), /tmp (the two FIFOs) and /hls (the playlist and its segments, which a web server beside it
+# serves) are the folders it writes. It draws with OpenGL on SDL's offscreen driver through EGL:
+# Mesa's llvmpipe (32-bit, as the game is), so no GPU or display; the portable build's own SDL 3
+# (which has the offscreen driver with EGL), beside the executable. ffmpeg is the 64-bit one.
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS stream
+RUN dpkg --add-architecture i386 \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends libc6:i386 libgcc-s1:i386 libegl1:i386 libegl-mesa0:i386 \
+      libgl1:i386 libopengl0:i386 libgl1-mesa-dri:i386 libgbm1:i386 ffmpeg tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -g 10001 opence \
+ && useradd -u 10001 -g 10001 -d /state -M -s /usr/sbin/nologin opence \
+ && mkdir -p /data /skate-data /state /hls \
+ && chown 10001:10001 /state /hls
+COPY --from=build /src/build/linux/halo /src/build/linux/brokers.txt /src/build/linux/libSDL3.so.0 /opt/opence/
+COPY docker/stream/stream.sh /opt/opence/stream.sh
+RUN ln -s /state/config.toml /opt/opence/config.toml
+# LP_NUM_THREADS: llvmpipe's threads (else one for each of the machine's CPUs): the CPUs the
+# container may use; set it to its limit.
+ENV HALO_DATA_ROOT=/data \
+    HALO_SKATE_ASSETS=/skate-data/assets \
+    HALO_SAVE_ROOT=/state/saves \
+    HALO_NET_ONLINE=false \
+    HALO_UPDATE_ANSWER=never \
+    LP_NUM_THREADS=3 \
+    HOME=/state
+USER 10001:10001
+WORKDIR /state
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/opence/stream.sh"]
 
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 # SDL 3's 32-bit library (the server uses its dummy video and audio drivers; the package also
