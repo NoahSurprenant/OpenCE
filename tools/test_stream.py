@@ -101,9 +101,19 @@ def test_stream_mode(tmp_path):
             reader.keeping = True
         _wait(lambda: len(pictures.chunks) >= 4 * FPS and len(sound.chunks) >= 100, 60, games, tmp_path,
               "the stream sent too little")
-        frames = list(pictures.chunks)
-        distinct = len(set(frames))
-        print(f"{pictures.count} frames read; of the last {len(frames)}, {distinct} different")
+        # (llvmpipe compiles each shader the first time it draws with it: with
+        # a cold shader cache - a new machine, a CI runner - the first seconds
+        # in a game draw few new frames and the rest repeat. So the last 4
+        # seconds are looked at until they change, for up to a minute)
+        started = time.monotonic()
+        while True:
+            frames = list(pictures.chunks)
+            distinct = len(set(frames))
+            if distinct >= 10 or time.monotonic() - started > 60:
+                break
+            time.sleep(2)
+        print(f"{pictures.count} frames read; of the last {len(frames)}, {distinct} different "
+              f"({time.monotonic() - started:.0f} s after 4 s of them)")
         assert distinct >= 10, f"the stream's frames hardly change: {distinct} different of {len(frames)}"
         # (the frames are pictures: not all one colour)
         assert len(set(frames[-1][::3 * 97])) > 8, "the stream's last frame is all one colour"
