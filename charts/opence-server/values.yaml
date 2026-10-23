@@ -322,6 +322,26 @@ stream:
     limits:
       cpu: "3"
       memory: 1Gi
+  # The GPU path (project-igpu-plan): radeonsi render and VAAPI H.264 encode on a node's iGPU
+  # render node, through squat/generic-device-plugin's squat.ai/dri (the homelab repo's
+  # home/manifests/generic-device-plugin). Off by default - CPU (llvmpipe/x264) stays the default
+  # for everyone else, and docker/stream/stream.sh falls back to it by itself if the device is
+  # missing or a one-frame preflight encode through it fails, logging which one it picked either
+  # way. Turning gpu.enabled on only adds the resource request and the render group to the pod; it
+  # does not change width/height/fps/resources by itself - set those alongside it (the homelab
+  # repo's values pair it with 1280x720x30 and a smaller CPU request/limit, since the GPU now does
+  # the drawing and the encoding).
+  gpu:
+    enabled: false
+    # The resource squat/generic-device-plugin advertises for /dev/dri/renderD128.
+    resource: squat.ai/dri
+    # How many of it to request (generic-device-plugin shares the one render node this many ways).
+    count: 1
+    # The host's render group (gid), added to the pod's supplementalGroups so the container (uid
+    # 10001, which the image's own /etc/group knows nothing about) can open the device node.
+    # Checked on k1, k2 and k3 (2026-10-23); confirm it on your own nodes with
+    # `getent group render`.
+    renderGroupId: 992
   # The web server (nginx) that serves the playlist, the segments and the watch page.
   web:
     image:

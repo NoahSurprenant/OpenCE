@@ -73,14 +73,22 @@ RUN HALO_BUILD_NUMBER="${HALO_BUILD_NUMBER}" python3 configure.py ${CONFIGURE_FL
 # As the server, no game data in the image: the maps at /data, read-only (and optionally the Skate 3
 # data at /skate-data, to draw the skaters' boards). /state (settings, the save root and its map
 # cache), /tmp (the two FIFOs) and /hls (the playlist and its segments, which a web server beside it
-# serves) are the folders it writes. It draws with OpenGL on SDL's offscreen driver through EGL:
-# Mesa's llvmpipe (32-bit, as the game is), so no GPU or display; the portable build's own SDL 3
-# (which has the offscreen driver with EGL), beside the executable. ffmpeg is the 64-bit one.
+# serves) are the folders it writes. It draws with OpenGL on SDL's offscreen driver through EGL
+# (the portable build's own SDL 3, which has the offscreen driver with EGL, beside the executable):
+# Mesa's surfaceless EGL platform opens the first DRM render node it finds and otherwise falls back
+# to software - so with no /dev/dri (most of this chart's users: stream.gpu is off by default) it is
+# llvmpipe (32-bit, as the game is), the same as before, and with /dev/dri/renderD128 passed in
+# (stream.gpu, generic-device-plugin's squat.ai/dri) it is radeonsi, the host iGPU. libegl-mesa0:i386
+# already pulls in mesa-libgallium:i386, which both drivers are part of - nothing extra to install
+# for rendering. ffmpeg is the 64-bit one; mesa-va-drivers (also 64-bit, for ffmpeg, not the game)
+# adds VAAPI H.264 encode on the same iGPU through /dev/dri/renderD128, used when stream.sh finds
+# the device - encoding falls back to libx264 otherwise. The game logs "OpenGL ... on ..." and
+# stream.sh logs which encoder it chose, so either path is visible in the pod's logs.
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS stream
 RUN dpkg --add-architecture i386 \
  && apt-get update \
  && apt-get install -y --no-install-recommends libc6:i386 libgcc-s1:i386 libegl1:i386 libegl-mesa0:i386 \
-      libgl1:i386 libopengl0:i386 libgl1-mesa-dri:i386 libgbm1:i386 ffmpeg tini \
+      libgl1:i386 libopengl0:i386 libgl1-mesa-dri:i386 libgbm1:i386 ffmpeg mesa-va-drivers tini \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 10001 opence \
  && useradd -u 10001 -g 10001 -d /state -M -s /usr/sbin/nologin opence \
