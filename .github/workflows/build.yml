@@ -611,8 +611,8 @@ jobs:
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: opence-k8s
-    # (the bots' groups side by side, then the spectators' five tests)
-    timeout-minutes: 40
+    # (the bots' groups side by side, then the spectators' five tests and the stream's)
+    timeout-minutes: 45
     env:
       HALO_SKATE_TEST_HALO_MAPS: /skate-assets/halo/maps
       SDL_VIDEO_DRIVER: dummy
@@ -717,6 +717,28 @@ jobs:
             exit 1
           fi
 
+      # (tools/test_stream.py: the headless stream mode - a stream of a
+      # dedicated server with bots, drawn with OpenGL on SDL's offscreen driver
+      # through EGL and Mesa's llvmpipe, which the runner image has for it -
+      # read from its two pipes as ffmpeg reads them: picture and sound, its
+      # ready file, the server knowing nothing of it (it answers the stream's
+      # search directly), its rejoin when the server restarts, SIGTERM; about
+      # two minutes. Its games on addresses of their own)
+      - name: Stream
+        env:
+          HALO_TEST_STREAM: "1"
+          HALO_TEST_GAME: ${{ runner.temp }}/halo-bots
+          HALO_TEST_SERVER: ${{ runner.temp }}/halo-bots
+          HALO_TEST_STALL_BACKTRACE: ${{ runner.temp }}/stall_backtrace.so
+        run: |
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/stream" tools/test_stream.py \
+            > "$RUNNER_TEMP/stream.log" 2>&1 || true
+          cat "$RUNNER_TEMP/stream.log"
+          if ! grep -q '1 passed' "$RUNNER_TEMP/stream.log" || grep -qiE 'skipped|failed' "$RUNNER_TEMP/stream.log"; then
+            echo "::error::tools/test_stream.py did not run and pass"
+            exit 1
+          fi
+
       - name: Compile cache
         run: ccache --show-stats
 
@@ -733,7 +755,7 @@ jobs:
         run: |
           pkill -KILL -f "$RUNNER_TEMP/halo-" || true
           git worktree remove --force "$RUNNER_TEMP/old-client" || true
-          rm -rf "$RUNNER_TEMP/bots" "$RUNNER_TEMP/spectator.log" "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log" "$RUNNER_TEMP/halo-bots" "$RUNNER_TEMP/halo-old-client" \
+          rm -rf "$RUNNER_TEMP/bots" "$RUNNER_TEMP/spectator.log" "$RUNNER_TEMP/stream.log" "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log" "$RUNNER_TEMP/halo-bots" "$RUNNER_TEMP/halo-old-client" \
             "$RUNNER_TEMP/stall_backtrace.so"
 
   web-dedicated:
