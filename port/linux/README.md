@@ -412,6 +412,7 @@ the setting for one start of the game. It has priority over the file.
 | `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for invites. Empty: no Discord. |
 | `update.auto` | `true` | `HALO_UPDATE_AUTO` | `true`: at start-up, the game looks for a new version. Refer to "Updates". `false`: the game does not look. |
 | `crash_reports.upload` | `"ask"` | `HALO_CRASH_REPORTS` | Windows only. `"yes"`: the game sends a report of each crash to the developers. `"no"`: the game sends no reports. `"ask"`: the game asks at the next crash and writes the answer here. Refer to "Crash reports" in [port/windows/README.md](../windows/README.md#crash-reports). |
+| `server.max_spectators` | `16` | `HALO_SERVER_MAX_SPECTATORS` | The most spectators a hosted game takes: 0 for none, -1 for no limit. Refer to "Spectators". |
 | `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: the game is a dedicated server, without a window, sound or player. Refer to "Dedicated server". |
 | `server.maps` | `"bloodgulch"` | `HALO_SERVER_MAPS` | The maps of a dedicated server, with commas between them, in turn. `"<map>:<game type>"` gives a map its own game type. |
 | `server.game_types` | `"slayer"` | `HALO_SERVER_GAME_TYPES` | The game types (with commas between them) of each map of `server.maps` that has no game type of its own, in turn: `slayer`, `team_slayer`, `ctf`, `king`, `oddball`, `juggernaut`, `race` and the other built-in game types. |
@@ -1523,6 +1524,12 @@ address (with `?join=<code>` to join an internet game).
   and what they do.
 - The lobby says how many machines watch the game ("3 of 16 players, 1
   watching").
+- A host takes up to `server.max_spectators` (`HALO_SERVER_MAX_SPECTATORS`,
+  16) spectators: 0 for none, -1 for no limit. A machine counts as one once it
+  has been in the game ten seconds with no player; past the limit the latest
+  is turned away as a full game turns a machine away. A dedicated server logs
+  the count as it changes (`server: 2 watching`). A spectator does not vote,
+  and cannot start a vote to kick a player.
 
 Four cameras, which the action key (E, or X on a controller) switches
 between (SPECTATOR CAMERA, `network.spectate_camera`, is the first):

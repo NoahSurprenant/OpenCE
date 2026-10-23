@@ -1620,6 +1620,8 @@ boolean network_game_server_idle(
 				success = network_game_server_handle_client_machines(server);
 				if (success)
 				{
+					/* port: the machines watching with no player (server.max_spectators) */
+					network_game_server_port_spectators(server);
 					switch (server->state)
 					{
 					case _network_game_server_state_pregame:
@@ -2823,6 +2825,70 @@ void network_game_server_port_late_joiner_precached(
 	network_event("starting machine #%d in the game in progress with no player (a spectator)",
 		client_machine->machine_index);
 	network_game_server_start_late_joiner(server, client_machine);
+}
+
+/* port: the settings' (port_config.c) and the log's */
+long config_integer(char const *name);
+void platform_log(char const *format, ...);
+
+/* port: how long a machine is in the game with no player before it counts
+as a spectator (milliseconds): one that brings players has asked for them by
+then */
+#define SPECTATOR_MILLISECONDS 10000
+
+/* port: the spectators counted last (network_game_server_port_spectators) */
+static long network_game_server_spectator_count;
+
+/* port: the machines that watch the game with no player of their own:
+spectators (port/linux/game/spectate.c, which asks for none). One counts once
+it has been in the game SPECTATOR_MILLISECONDS with no player, none waiting to
+be added and no map downloading; past server.max_spectators the latest of
+them is refused as a full game refuses a machine. The count is logged as it
+changes. */
+void network_game_server_port_spectators(
+	struct network_game_server *server)
+{
+	long maximum = config_integer("server.max_spectators");
+	unsigned long now = system_milliseconds();
+	long newest = NONE;
+	long count = 0;
+	long index;
+
+	for (index = 0; index < MAXIMUM_NETWORK_MACHINE_COUNT; index++)
+	{
+		struct network_game_server_client_machine *machine = &server->client_machines[index];
+		long machine_index = machine->machine_index;
+
+		if (!network_game_server_client_machine_is_joined_to_game(server, machine) ||
+			network_game_server_client_machine_is_local(server, machine) ||
+			!VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) ||
+			network_game_server_port_machine_is_bot(machine_index) ||
+			network_game_server_machine_has_players(server, machine_index) ||
+			network_game_server_machine_has_waiting_players(server, machine_index) ||
+			(server->queued_player_valid && server->queued_player.machine_index == machine_index) ||
+			map_share_machine_downloading(machine_index) ||
+			now - network_game_server_client_machine_join_times[machine_index] < SPECTATOR_MILLISECONDS)
+		{
+			continue;
+		}
+		count++;
+		if (newest == NONE || (long)(network_game_server_client_machine_join_times[machine_index] -
+			network_game_server_client_machine_join_times[server->client_machines[newest].machine_index]) >= 0)
+		{
+			newest = index;
+		}
+	}
+	if (maximum >= 0 && count > maximum && newest != NONE)
+	{
+		platform_log("server: a spectator is turned away (server.max_spectators %ld)", maximum);
+		network_game_server_refuse_late_joiner(server, &server->client_machines[newest], _rejection_code_game_is_full);
+		count--;
+	}
+	if (count != network_game_server_spectator_count)
+	{
+		platform_log("server: %ld watching", count);
+		network_game_server_spectator_count = count;
+	}
 }
 
 /* a machine joining the game in progress none of whose players could join

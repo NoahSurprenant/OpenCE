@@ -539,6 +539,11 @@ static const struct config_setting config_settings[] =
 	{ "server.max_players", _config_integer, "0", "HALO_SERVER_MAX_PLAYERS", _environment_value, _platform_desktop,
 		"The most players (people and bots) in a dedicated server's games, 2 to\n"
 		"the build's limit; 0 for the build's limit (128)." },
+	{ "server.max_spectators", _config_integer, "16", "HALO_SERVER_MAX_SPECTATORS", _environment_value,
+		_platform_all,
+		"The most machines that watch a game this machine hosts with no player\n"
+		"(spectators: port/linux/README.md's \"Spectators\"); past it the latest is\n"
+		"refused as a full game refuses one. 0 for none, -1 for no limit." },
 	{ "server.bots", _config_integer, "0", "HALO_SERVER_BOTS", _environment_value, _platform_all,
 		"How many bots a game this machine hosts has (a dedicated server's, or\n"
 		"one the menus host): players the host plays itself, named \"[BOT] ...\",\n"
