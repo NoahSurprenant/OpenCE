@@ -45,6 +45,8 @@ mod sound;
 mod sound_defaults;
 mod sound_remote;
 mod sound_set;
+mod tricks;
+pub use tricks::{HaloSkateTricks, halo_skate_gesture, halo_skate_tricks, halo_skate_tricks_in};
 
 use bevy_math::{Mat3, Mat4, Vec3};
 use skate_host::bridge::{InputFrame, Pose, Session};
@@ -653,6 +655,7 @@ impl Worker {
                         result = s.advance();
                         if result.is_ok() {
                             sound::observe(s, detector);
+                            tricks::observe(s);
                             let (contacts, hit) = s.obstacle_contacts();
                             if contacts > 0 || hits.listening() {
                                 let pose = s.pose();
@@ -2146,6 +2149,7 @@ pub extern "C" fn halo_skate_sessions() -> i32 {
 pub extern "C" fn halo_skate_close_in(session: i32) {
     in_session(session, (), || {
         let closed = host_guard().take();
+        tricks::forget(current_session());
         if closed.is_some() {
             eprintln!("halo-skate: session closed");
         }

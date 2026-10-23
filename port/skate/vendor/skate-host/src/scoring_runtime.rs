@@ -75,6 +75,9 @@ pub(crate) struct Runtime {
     pub new_trick: bool,
     pub modified_trick: bool,
     pub close_tricks: bool,
+    /// OpenCE: a sequence settled this tick: its reward, and whether a bail
+    /// (or the skater put back) ended it rather than a landing.
+    pub published: Option<(f32, bool)>,
 }
 impl Runtime {
     pub fn load(data: &Collections) -> Result<Self, String> {
@@ -111,7 +114,17 @@ impl Runtime {
             new_trick: false,
             modified_trick: false,
             close_tricks: false,
+            published: None,
         })
+    }
+
+    /// OpenCE: the name of the trick announced last (the score movie's).
+    pub fn trick_name(&self) -> &str {
+        &self.trick_name
+    }
+    /// OpenCE: the sequence under way's score so far, with its multiplier.
+    pub fn sequence_score(&self) -> f32 {
+        self.sequence_score
     }
 
     fn penalty(&self, id: usize) -> f32 {
@@ -313,6 +326,7 @@ impl Runtime {
         self.new_trick = false;
         self.modified_trick = false;
         self.close_tricks = false;
+        self.published = None;
         let descriptor = f
             .descriptor
             .and_then(|name| self.data.by_name(name))
@@ -555,6 +569,12 @@ impl Runtime {
                 self.session
                     .publish_sequence(&self.data.session_rules(), 1., bailout, true);
             self.sequence_active = false;
+            self.published = Some((self.sequence_score, bailout));
+            // OpenCE: a bail out of the air publishes with the landing
+            // countdown still set (it counts down only while a sequence is
+            // pending, and the publication ends that): left so, no ground or
+            // grind sequence settled again until the next time in the air.
+            self.landing_countdown = 0;
             // 82775328 -> 82774E88 closes only for ScoreModule reset/bail
             // output 14630 (82DA4010/82DA4238), not a banked landing.
             self.close_tricks = bailout;

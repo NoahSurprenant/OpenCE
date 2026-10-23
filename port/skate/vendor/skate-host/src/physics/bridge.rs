@@ -4,7 +4,9 @@ use bevy::prelude::*;
 use skate_data::skate_map::{Collision, Geometry, Rail, SkateMap};
 use std::path::Path;
 
+mod score;
 mod sound;
+pub use score::{ScoreObservation, gesture_patterns};
 pub use sound::SoundObservation;
 /// halo-skate: the host's moving objects the board and skater collide with
 /// (`Session::set_obstacles`).
