@@ -412,6 +412,12 @@ the setting for one start of the game. It has priority over the file.
 | `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for invites. Empty: no Discord. |
 | `update.auto` | `true` | `HALO_UPDATE_AUTO` | `true`: at start-up, the game looks for a new version. Refer to "Updates". `false`: the game does not look. |
 | `crash_reports.upload` | `"ask"` | `HALO_CRASH_REPORTS` | Windows only. `"yes"`: the game sends a report of each crash to the developers. `"no"`: the game sends no reports. `"ask"`: the game asks at the next crash and writes the answer here. Refer to "Crash reports" in [port/windows/README.md](../windows/README.md#crash-reports). |
+| `stream.enabled` | `false` | `HALO_STREAM` | `true`: the Linux build streams a game it joins as a spectator, with no window. Refer to "Streaming". |
+| `stream.width`, `stream.height` | `1280`, `720` | `HALO_STREAM_WIDTH`, `HALO_STREAM_HEIGHT` | The stream's picture size. |
+| `stream.fps` | `30` | `HALO_STREAM_FPS` | The stream's frames a second. |
+| `stream.video`, `stream.audio` | `""` | `HALO_STREAM_VIDEO`, `HALO_STREAM_AUDIO` | The pipes the stream's raw picture and sound go to. Empty: none. |
+| `stream.ready_file` | `""` | `HALO_STREAM_READY_FILE` | A file written once the stream's first frame is read, and removed at exit. |
+| `stream.camera` | `"director"` | `HALO_STREAM_CAMERA` | The stream's camera: `director`, `follow`, `first` or `free`. |
 | `server.max_spectators` | `16` | `HALO_SERVER_MAX_SPECTATORS` | The most spectators a hosted game takes: 0 for none, -1 for no limit. Refer to "Spectators". |
 | `server.dedicated` | `false` | `HALO_DEDICATED` | `true`: the game is a dedicated server, without a window, sound or player. Refer to "Dedicated server". |
 | `server.maps` | `"bloodgulch"` | `HALO_SERVER_MAPS` | The maps of a dedicated server, with commas between them, in turn. `"<map>:<game type>"` gives a map its own game type. |
@@ -1545,7 +1551,8 @@ between (SPECTATOR CAMERA, `network.spectate_camera`, is the first):
   does (`spectate_director.c`). It follows the player most worth watching
   from behind: a kill in the last seconds counts most, then a fight (their
   weapon fired, or they were hurt), carrying the flag or the ball, driving
-  fast and enemies near, and a little the longer since they were shown. A
+  fast, riding a board fast or in the air (Skate 3 mode), enemies near, and
+  a little the longer since they were shown. A
   shot lasts five seconds at least and fifteen at most, and cuts early only
   to someone clearly more worth watching. When the player watched dies, it
   stays on their fall two seconds and then cuts to their killer. A cut to
@@ -1569,6 +1576,66 @@ build or newer, which keeps and starts a machine that brings no player; an
 older host refuses a machine with no player after fifteen seconds. A
 spectator cannot join a lobby or a game that is full of players: the host
 refuses a full game before the spectator can say that it brings no player.
+
+## Streaming
+
+The Linux build can stream a game for people to watch: with
+`stream.enabled` (`HALO_STREAM=1`) it runs with no window and no input, joins
+the game that system link finds as a spectator whose camera is the director
+(`stream.camera`), and sends its picture and sound raw to two pipes, which
+ffmpeg encodes. It joins again when the game is gone (the host restarted or
+went) and shows the lobby and the scores between games.
+
+- **The picture** goes to `stream.video` (`HALO_STREAM_VIDEO`), a FIFO:
+  packed RGB (`rgb24`), `stream.width` x `stream.height` (1280 x 720),
+  `stream.fps` (30) frames a second at a steady rate. The game draws no
+  faster; a frame it draws late repeats the last one, so the rate stays
+  steady. It is drawn in a window no display shows (SDL's offscreen driver,
+  OpenGL through EGL: Mesa's llvmpipe on a machine without a GPU).
+- **The sound** goes to `stream.audio` (`HALO_STREAM_AUDIO`), a FIFO:
+  signed 16-bit little-endian stereo at 48000 Hz (`s16le`), made in real
+  time.
+- **Ready.** Until a reader opens a pipe, what would go to it is thrown away
+  and the game goes on; a reader that goes away is waited for again. The
+  first frame read logs `stream: streaming` and writes
+  `stream.ready_file` (`HALO_STREAM_READY_FILE`), which a readiness probe
+  can wait for; `stream: watching a game` follows once it is in a game. The
+  file is removed at exit. SIGTERM leaves the game and exits at once.
+- **Where to.** System link's search (`debug.network_test` "join"):
+  `network.broadcast` (`HALO_NET_BROADCAST`) set to the server's address
+  finds it on another network, for example a server in the same cluster.
+
+For example, with the FIFOs made first (`mkfifo video audio`):
+
+```sh
+HALO_STREAM=1 HALO_STREAM_VIDEO=video HALO_STREAM_AUDIO=audio HALO_STREAM_READY_FILE=ready \
+  HALO_NET_BROADCAST=<server address> ./halo &
+ffmpeg -f rawvideo -pix_fmt rgb24 -s 1280x720 -r 30 -use_wallclock_as_timestamps 1 -thread_queue_size 64 -i video \
+  -f s16le -ar 48000 -ac 2 -use_wallclock_as_timestamps 1 -thread_queue_size 1024 -i audio \
+  -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p -g 60 -b:v 3M -c:a aac -b:a 128k \
+  -f hls -hls_time 2 -hls_list_size 6 -hls_flags delete_segments live.m3u8
+```
+
+The pipes are read as they come (`-use_wallclock_as_timestamps`), so the
+picture and the sound stay together whenever ffmpeg opens them.
+
+What it costs (measured in a container limited to 4 CPUs, with llvmpipe and
+`LP_NUM_THREADS=3`; the server elsewhere):
+
+| Picture | Frames drawn a second | The game's CPU | ffmpeg's CPU (x264 veryfast) | Memory |
+| --- | --- | --- | --- | --- |
+| 1280 x 720 | about 10 (30 sent) | about 2.5 cores | about 0.7 core | about 470 MB |
+| 854 x 480 | about 18 (30 sent) | about 2.1 cores | about 0.5 core | about 390 MB |
+
+llvmpipe cannot draw 30 frames a second at either size: most of a frame is
+spent waiting for its threads to finish passes that the next pass reads
+(render to texture). A GPU (for example AMD's integrated graphics with Mesa's
+radeonsi) draws it in a fraction of a core, and VA-API encoding (ffmpeg's
+`h264_vaapi`) takes the encoder's core away too. Set `LP_NUM_THREADS` to the
+CPUs the container has: llvmpipe otherwise starts a thread for each of the
+machine's CPUs. The first frame is sent a fraction of a second after the
+start (the loading screen), and the stream watches a game in progress about
+5 to 20 seconds after the start.
 
 ## Map checks
 

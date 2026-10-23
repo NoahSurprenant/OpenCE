@@ -213,8 +213,8 @@ def test_spectator_director(tmp_path):
         for name, index, reason, tick, after, how in cuts:
             print(f"cut to {name} (player {index}) at tick {tick} after {after} s: {reason}, {how}")
         assert cuts[0][2] == "start", cuts[0]
-        reasons = {"start", "kill", "killer", "fight", "hurt", "objective", "vehicle", "near", "turn", "time", "left",
-                   "died"}
+        reasons = {"start", "kill", "killer", "fight", "hurt", "objective", "vehicle", "skate", "near", "turn",
+                   "time", "left", "died"}
         assert all(reason in reasons for _, _, reason, *_ in cuts), cuts
         # (a shot's length in game ticks, from the ticks of its cut and the
         # next: one ends early only when the one watched died - two seconds

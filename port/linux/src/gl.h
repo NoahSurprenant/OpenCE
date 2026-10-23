@@ -203,6 +203,7 @@ context has the extension, never required (gl_functions.c). On ES 3.0 and
 	X(glFramebufferTexture2D) \
 	X(glCheckFramebufferStatus) \
 	X(glBlitFramebuffer) \
+	X(glReadBuffer) \
 	X(glDrawBuffers) \
 	X(glGenRenderbuffers) \
 	X(glDeleteRenderbuffers) \
@@ -438,6 +439,7 @@ pointers, sees the declarations without these aliases */
 #define glFramebufferTexture2D halo_glFramebufferTexture2D
 #define glCheckFramebufferStatus halo_glCheckFramebufferStatus
 #define glBlitFramebuffer halo_glBlitFramebuffer
+#define glReadBuffer halo_glReadBuffer
 #define glDrawBuffers halo_glDrawBuffers
 #define glGenRenderbuffers halo_glGenRenderbuffers
 #define glDeleteRenderbuffers halo_glDeleteRenderbuffers

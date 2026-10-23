@@ -80,6 +80,9 @@ fn flicked_gestures_are_flip_tricks() {
     }
     assert!(gesture(&assets, "NoSuchTrick").is_empty());
     roll(&mut engine, TestMap::OPEN, -40.0);
+    // (the counts go on from the tests that had the engine before this one,
+    // whichever ran first: this test's are what it adds to them)
+    let start = tricks();
     let mut named = Vec::new();
     for n in names {
         let before = tricks();
@@ -92,9 +95,9 @@ fn flicked_gestures_are_flip_tricks() {
     }
     eprintln!("flicked: {named:?}");
     let t = tricks();
-    assert!(t.landed >= 5, "most of the flicks were tricks landed: {named:?}");
-    assert!(t.points > 0.0 && t.sequences >= 5, "they scored");
-    assert_eq!(t.bails, 0, "none bailed");
+    assert!(t.landed - start.landed >= 5, "most of the flicks were tricks landed: {named:?}");
+    assert!(t.points > start.points && t.sequences - start.sequences >= 5, "they scored");
+    assert_eq!(t.bails - start.bails, 0, "none bailed");
 }
 
 /// Rolls down the funbox lane at speed to just before `x` (metres).

@@ -158,6 +158,9 @@ void platform_log(char const *format, ...);
 void input_abstraction_port_input(short controller_index, real *forward, real *strafe, real *yaw,
 	real *pitch, byte *buttons, short button_count);
 int halo_linux_mouse_look(short gamepad_index, real *yaw, real *pitch);
+/* port/linux/src/stream_output.c: the headless stream, which nobody plays */
+int stream_output_enabled(void);
+double stream_output_seconds(void);
 
 /* ---------- private code */
 
@@ -376,7 +379,12 @@ void spectate_update(
 	short control;
 
 	if (spectate.last_game_time > game_time_get() || !spectate.placed)
+	{
+		/* (a stream's watchers see a game from here: its log says when) */
+		if (stream_output_enabled())
+			platform_log("stream: watching a game (%.1f s after the start)", stream_output_seconds());
 		place();
+	}
 	spectate.last_game_time = game_time_get();
 
 	input_abstraction_port_input(0, &forward, &strafe, &yaw, &pitch, buttons, NUMBER_OF_CONTROLS);
@@ -647,7 +655,9 @@ void spectate_draw(
 	text[NUMBEROF(text) - 1] = 0;
 	draw_text(&bounds, 2, &color, text);
 
-	/* the controls, small, at the bottom */
+	/* the controls, small, at the bottom (not on a stream: nobody has them) */
+	if (stream_output_enabled())
+		goto scores;
 	color.alpha = 0.6f;
 	bounds = window;
 	bounds.y1 = (short)(window.y1 - 8);
@@ -655,6 +665,7 @@ void spectate_draw(
 	draw_text(&bounds, 2, &color,
 		L"FIRE: NEXT    ACTION: CAMERA    BACK: SCORES");
 
+scores:
 	/* the scores, while the scoreboard's key is held */
 	if (spectate.scores_shown || (gamepad && gamepad->buttons[_gamepad_binary_button_back]))
 		game_engine_port_draw_spectator_scoreboard();

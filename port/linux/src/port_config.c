@@ -517,6 +517,33 @@ static const struct config_setting config_settings[] =
 		"Sentry project (port/windows/src/win32_crash.c): \"yes\" sends them, \"no\"\n"
 		"never does, \"ask\" asks at the next crash and writes the answer here." },
 
+	{ "stream.enabled", _config_boolean, "false", "HALO_STREAM", _environment_value, _platform_desktop,
+		"Headless stream mode (Linux): join a game as a spectator whose camera is\n"
+		"stream.camera, with no window and no input, and send its picture and\n"
+		"sound raw to stream.video and stream.audio (pipes ffmpeg reads:\n"
+		"port/linux/README.md's \"Streaming\"); system link's join\n"
+		"(debug.network_test \"join\"), again after the game or the host goes." },
+	{ "stream.width", _config_integer, "1280", "HALO_STREAM_WIDTH", _environment_value, _platform_desktop,
+		"The stream's picture: its width." },
+	{ "stream.height", _config_integer, "720", "HALO_STREAM_HEIGHT", _environment_value, _platform_desktop,
+		"The stream's picture: its height." },
+	{ "stream.fps", _config_integer, "30", "HALO_STREAM_FPS", _environment_value, _platform_desktop,
+		"The stream's frames a second (the game draws no more; a frame drawn late\n"
+		"repeats the last)." },
+	{ "stream.video", _config_string, "\"\"", "HALO_STREAM_VIDEO", _environment_value, _platform_desktop,
+		"The pipe (a FIFO) the stream's picture goes to: raw RGB, stream.width x\n"
+		"stream.height, top row first, stream.fps frames a second. Empty: none." },
+	{ "stream.audio", _config_string, "\"\"", "HALO_STREAM_AUDIO", _environment_value, _platform_desktop,
+		"The pipe (a FIFO) the stream's sound goes to: raw signed 16-bit little-endian\n"
+		"stereo at 48000 Hz. Empty: none." },
+	{ "stream.ready_file", _config_string, "\"\"", "HALO_STREAM_READY_FILE", _environment_value,
+		_platform_desktop,
+		"A file the stream writes once its first frame is read (and removes at\n"
+		"exit), for a readiness probe. Empty: none." },
+	{ "stream.camera", _config_string, "\"director\"", "HALO_STREAM_CAMERA", _environment_value,
+		_platform_desktop,
+		"The stream's camera (network.spectate_camera's): \"director\", \"follow\",\n"
+		"\"first\" or \"free\"." },
 	{ "server.dedicated", _config_boolean, "false", "HALO_DEDICATED", _environment_value, _platform_desktop,
 		"Run as a dedicated server: no window, no sound and no player of its own,\n"
 		"hosting the maps below in turn (debug.null_renderer and the rest are\n"
@@ -1360,6 +1387,7 @@ static void config_report_unknown_keys(toml_datum_t table)
 }
 
 static void config_apply_dedicated(void);
+static void config_apply_stream(void);
 
 static void config_load(void)
 {
@@ -1458,6 +1486,7 @@ static void config_load(void)
 		}
 	}
 	config_apply_dedicated();
+	config_apply_stream();
 }
 
 /* a setting's value for this run only, from text (config_set_from_text);
@@ -1556,6 +1585,48 @@ static void config_apply_dedicated(void)
 	}
 	platform_log("settings: a dedicated server, hosting %s",
 		config_values[config_setting_index("debug.network_test")].string + 5);
+}
+
+/* stream.enabled: what a stream nobody sits at needs, for this run (the
+file keeps its own): a spectator of the game system link finds, its camera
+stream.camera, in a window of the stream's size that no display shows (SDL's
+offscreen driver, unless SDL_VIDEO_DRIVER names another), drawn no faster
+than the stream's rate, with its sound (stream_output.c writes both) */
+static void config_apply_stream(void)
+{
+	char size[32];
+	char text[32];
+
+	if (!config_values[config_setting_index("stream.enabled")].boolean)
+		return;
+	config_set_for_run("network.spectate", "true");
+	config_set_for_run("network.spectate_camera", config_values[config_setting_index("stream.camera")].string);
+	if (!config_values[config_setting_index("debug.network_test")].string[0])
+		config_set_for_run("debug.network_test", "join");
+	config_set_for_run("display.fullscreen", "false");
+	snprintf(size, sizeof(size), "%ldx%ld", config_values[config_setting_index("stream.width")].integer,
+		config_values[config_setting_index("stream.height")].integer);
+	config_set_for_run("display.window_size", size);
+	config_set_for_run("display.vsync", "false");
+	snprintf(text, sizeof(text), "%ld", config_values[config_setting_index("stream.fps")].integer);
+	config_set_for_run("display.max_fps", text);
+	config_set_for_run("debug.null_renderer", "false");
+	config_set_for_run("audio.enabled", "true");
+	config_set_for_run("audio.voice_chat", "off");
+	config_set_for_run("network.join_from_clipboard", "false");
+	config_set_for_run("update.auto", "false");
+	config_set_for_run("discord.application_id", "");
+#if !defined(HALO_ANDROID) && !defined(HALO_WEB)
+	/* (0: not over one the environment names) */
+	SDL_setenv_unsafe("SDL_VIDEO_DRIVER", "offscreen", 0);
+#endif
+	platform_log("settings: streaming %s at %ld frames a second, %s camera (picture to %s, sound to %s)", size,
+		config_values[config_setting_index("stream.fps")].integer,
+		config_values[config_setting_index("stream.camera")].string,
+		config_values[config_setting_index("stream.video")].string[0] ?
+			config_values[config_setting_index("stream.video")].string : "nowhere",
+		config_values[config_setting_index("stream.audio")].string[0] ?
+			config_values[config_setting_index("stream.audio")].string : "nowhere");
 }
 
 static const struct config_value *config_value(const char *name, enum config_type type)

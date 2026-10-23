@@ -38,6 +38,7 @@ turns the reverb off; audio.enabled = false skips opening a device
 #include "sdl_platform.h"
 #include "port_config.h"
 #include "voice_audio.h"
+#include "stream_output.h"
 #ifdef HALO_SKATE
 #include "../../skate/include/halo_skate_sound.h"
 #endif
@@ -1333,6 +1334,15 @@ static void SDLCALL audio_callback(void *userdata, SDL_AudioStream *stream, int 
 	}
 }
 
+/* the headless stream's sound: the mix in real time, to its pipe
+(stream_output.c) */
+static void *stream_audio_thread(void *parameter)
+{
+	(void)parameter;
+	stream_output_audio_run(mix);
+	return NULL;
+}
+
 /* without a device, drain voices in real time */
 static void *silent_clock_thread(void *parameter)
 {
@@ -1368,6 +1378,15 @@ static void audio_start(void)
 	resampler_phases_initialize();
 	reverb_initialize();
 
+	/* (the headless stream: no device, its pipe) */
+	if (stream_output_audio_enabled())
+	{
+		pthread_t thread;
+
+		pthread_create(&thread, NULL, stream_audio_thread, NULL);
+		pthread_detach(thread);
+		return;
+	}
 	if (config_boolean("audio.enabled") && platform_sdl_initialize())
 	{
 		spec.format = SDL_AUDIO_F32;
