@@ -170,3 +170,40 @@ tests:
       networkPolicy.enabled: false
     asserts:
       - hasDocuments: { count: 0 }
+
+  - it: stays on CPU (no device resource, no render group) with gpu off, the default
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+    asserts:
+      - notExists: { path: spec.template.spec.securityContext.supplementalGroups }
+      - notExists: { path: 'spec.template.spec.containers[0].resources.requests["squat.ai/dri"]' }
+      - notExists: { path: 'spec.template.spec.containers[0].resources.limits["squat.ai/dri"]' }
+
+  - it: requests the render device and its group with gpu on, keeping the rest of resources
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+      stream.gpu.enabled: true
+      stream.resources.requests.cpu: 500m
+      stream.resources.requests.memory: 700Mi
+      stream.resources.limits.cpu: 1500m
+      stream.resources.limits.memory: 1Gi
+    asserts:
+      - equal: { path: spec.template.spec.securityContext.supplementalGroups, value: [992] }
+      - equal: { path: 'spec.template.spec.containers[0].resources.requests["squat.ai/dri"]', value: "1" }
+      - equal: { path: 'spec.template.spec.containers[0].resources.limits["squat.ai/dri"]', value: "1" }
+      - equal: { path: 'spec.template.spec.containers[0].resources.requests.cpu', value: 500m }
+      - equal: { path: 'spec.template.spec.containers[0].resources.limits.cpu', value: 1500m }
+
+  - it: lets gpu.resource, gpu.count and gpu.renderGroupId be overridden
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+      stream.gpu.enabled: true
+      stream.gpu.resource: example.com/gpu
+      stream.gpu.count: 2
+      stream.gpu.renderGroupId: 44
+    asserts:
+      - equal: { path: spec.template.spec.securityContext.supplementalGroups, value: [44] }
+      - equal: { path: 'spec.template.spec.containers[0].resources.requests["example.com/gpu"]', value: "2" }

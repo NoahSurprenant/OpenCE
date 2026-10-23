@@ -24,6 +24,21 @@
 {{- if include "opence-server.hasCustomMaps" . }}
 {{- $env = append $env (dict "name" "HALO_CUSTOM_MAPS_ROOT" "value" "/custom_maps") }}
 {{- end }}
+{{- /* stream.gpu: the render group added to the pod, and the device resource added to the
+container's requests and limits (both - Kubernetes requires a limit for an extended resource, and
+treats a missing request as the limit). Nothing else here changes: stream.sh picks VAAPI or
+libx264 by itself at runtime, by whether the device actually works. */}}
+{{- $podSecurityContext := .Values.podSecurityContext }}
+{{- $resources := $s.resources }}
+{{- if $s.gpu.enabled }}
+{{- $podSecurityContext = merge (dict "supplementalGroups" (list (int $s.gpu.renderGroupId))) .Values.podSecurityContext }}
+{{- /* A fresh dict per merge call: merge mutates its first (destination) argument, so reusing one
+dict for both requests and limits would leak requests' values into limits. */}}
+{{- $resources = dict
+  "requests" (merge (dict $s.gpu.resource (toString (int $s.gpu.count))) (deepCopy ($s.resources.requests | default dict)))
+  "limits" (merge (dict $s.gpu.resource (toString (int $s.gpu.count))) (deepCopy ($s.resources.limits | default dict)))
+}}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -72,7 +87,7 @@ spec:
       {{- end }}
       terminationGracePeriodSeconds: {{ $s.terminationGracePeriodSeconds }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml $podSecurityContext | nindent 8 }}
       {{- with ($s.nodeSelector | default .Values.nodeSelector) }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -122,7 +137,7 @@ spec:
             failureThreshold: 3
             timeoutSeconds: 2
           resources:
-            {{- toYaml $s.resources | nindent 12 }}
+            {{- toYaml $resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
