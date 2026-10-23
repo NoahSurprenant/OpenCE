@@ -696,7 +696,8 @@ jobs:
 
       # (tools/test_spectator.py: a machine that joins a dedicated server with
       # bots as a spectator, with no player: it sees them play, takes no slot,
-      # and follows one and then another; its games on addresses of their own)
+      # and follows one and then another, and its auto-director cuts between
+      # them; its games on addresses of their own)
       - name: Spectators
         env:
           HALO_TEST_GAME: ${{ runner.temp }}/halo-bots
@@ -705,8 +706,8 @@ jobs:
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/spectator" tools/test_spectator.py \
             > "$RUNNER_TEMP/spectator.log" 2>&1 || true
           cat "$RUNNER_TEMP/spectator.log"
-          if ! grep -q '2 passed' "$RUNNER_TEMP/spectator.log" || grep -qiE 'skipped|failed' "$RUNNER_TEMP/spectator.log"; then
-            echo "::error::the two tests of tools/test_spectator.py did not all run and pass"
+          if ! grep -q '3 passed' "$RUNNER_TEMP/spectator.log" || grep -qiE 'skipped|failed' "$RUNNER_TEMP/spectator.log"; then
+            echo "::error::the three tests of tools/test_spectator.py did not all run and pass"
             exit 1
           fi
 

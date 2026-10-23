@@ -13,13 +13,16 @@ observer.c moves the camera, the sound is heard from it (sound_manager.c),
 and the frame is drawn from it with no player's HUD (main.c, render.c) but
 the lines drawn here.
 
-Three cameras, the action button (E, X) switching between them:
+Four cameras, the action button (E, X) switching between them
+(network.spectate_camera the first):
 - FREE flies where it looks, through walls: the movement keys or left
   stick, jump and crouch up and down, the weapon and grenade switches (the
   mouse wheel) faster and slower;
 - FOLLOW stays behind the player watched, turning with them once the look
   is let go; forward and back bring it nearer and further;
-- FIRST PERSON looks through their eyes.
+- FIRST PERSON looks through their eyes;
+- DIRECTOR follows whoever is most worth watching, cutting between them as
+  a broadcast does (spectate_director.c).
 Fire (the left mouse button, the right trigger) watches the next player, the
 grenade (the right mouse button, the left trigger) the one before; the
 scoreboard key (Tab, Back) shows the scores; the flashlight hides the names.
@@ -35,6 +38,7 @@ scoreboard key (Tab, Back) shows the scores; the flashlight hides the names.
 #include "input/input.h"
 #include "interface/hud_messaging.h"
 #include "memory/data.h"
+#include "networking/network_game_manager.h"
 #include "objects/objects.h"
 #include "rasterizer/rasterizer.h"
 #include "render/render.h"
@@ -45,6 +49,7 @@ scoreboard key (Tab, Back) shows the scores; the flashlight hides the names.
 #include "units/units.h"
 
 #include "spectate.h"
+#include "spectate_director.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -84,6 +89,8 @@ furthest; and its pitch (radians) */
 #define FOLLOW_DISTANCE_MINIMUM 1.25f
 #define FOLLOW_DISTANCE_MAXIMUM 12.0f
 #define FOLLOW_PITCH -0.3f
+/* the director's distance behind the player it watches */
+#define DIRECTOR_DISTANCE 4.5f
 /* seconds after the look is let go that the follow camera turns back behind
 the player, and how much of the turn it makes each second */
 #define FOLLOW_RETURN_SECONDS 2.0f
@@ -127,18 +134,26 @@ static struct
 	boolean names_hidden;
 	/* the console's "spectate scores": the scores shown until asked again */
 	boolean scores_shown;
+	/* whether the first camera (network.spectate_camera) was taken */
+	boolean mode_set;
 	/* the controls held last frame (a press is one frame's) */
 	boolean held[NUMBER_OF_CONTROLS];
 } spectate = { FALSE, FALSE, _spectate_mode_follow, NONE };
 
 static char const *const spectate_mode_names[NUMBER_OF_SPECTATE_MODES] =
 {
-	"free", "follow", "first person"
+	"free", "follow", "first person", "director"
+};
+/* network.spectate_camera's names for them */
+static char const *const spectate_camera_settings[NUMBER_OF_SPECTATE_MODES] =
+{
+	"free", "follow", "first", "director"
 };
 
 /* the platform layer's (port_config.c) and input's (input_abstraction.c,
 xinput_sdl.c) */
 int config_boolean(char const *name);
+const char *config_string(char const *name);
 void platform_log(char const *format, ...);
 void input_abstraction_port_input(short controller_index, real *forward, real *strafe, real *yaw,
 	real *pitch, byte *buttons, short button_count);
@@ -259,7 +274,7 @@ static void set_mode(
 	spectate.mode = mode;
 	spectate.switch_seconds = SWITCH_SECONDS;
 	platform_log("spectate: %s camera", spectate_mode_names[mode]);
-	if (mode != _spectate_mode_free && spectate.player_index == NONE)
+	if (mode != _spectate_mode_free && mode != _spectate_mode_director && spectate.player_index == NONE)
 		watch(next_player(NONE, 1));
 }
 
@@ -268,6 +283,21 @@ over the map's first spawn looking across it */
 static void place(
 	void)
 {
+	/* (the first: the camera network.spectate_camera names) */
+	if (!spectate.mode_set)
+	{
+		char const *setting = config_string("network.spectate_camera");
+		short mode;
+
+		spectate.mode_set = TRUE;
+		for (mode = 0; setting && mode < NUMBER_OF_SPECTATE_MODES; mode++)
+		{
+			if (!strcmp(setting, spectate_camera_settings[mode]))
+				spectate.mode = mode;
+		}
+		platform_log("spectate: %s camera", spectate_mode_names[spectate.mode]);
+	}
+	spectate_director_reset();
 	spectate.placed = TRUE;
 	spectate.player_index = NONE;
 	spectate.focus_valid = FALSE;
@@ -277,7 +307,8 @@ static void place(
 	spectate.position = *global_origin3d;
 	spectate.yaw = 0.0f;
 	spectate.pitch = -0.2f;
-	watch(next_player(NONE, 1));
+	if (spectate.mode != _spectate_mode_director)
+		watch(next_player(NONE, 1));
 	if (spectate.player_index != NONE && player_unit(spectate.player_index) != NONE)
 	{
 		unit_focus(player_unit(spectate.player_index), &spectate.position);
@@ -357,10 +388,13 @@ void spectate_update(
 
 	if (pressed(buttons, _control_action))
 		set_mode((short)((spectate.mode + 1) % NUMBER_OF_SPECTATE_MODES));
-	if (pressed(buttons, _control_primary_trigger))
-		watch(next_player(spectate.player_index, 1));
-	if (pressed(buttons, _control_grenade))
-		watch(next_player(spectate.player_index, -1));
+	/* (a person picking whom to watch takes over from the director) */
+	if (pressed(buttons, _control_primary_trigger) || pressed(buttons, _control_grenade))
+	{
+		if (spectate.mode == _spectate_mode_director)
+			set_mode(_spectate_mode_follow);
+		watch(next_player(spectate.player_index, pressed(buttons, _control_primary_trigger) ? 1 : -1));
+	}
 	if (pressed(buttons, _control_switch_weapons))
 		spectate.speed = MIN(spectate.speed * 2.0f, FREE_SPEED_MAXIMUM);
 	if (pressed(buttons, _control_switch_grenades))
@@ -376,9 +410,35 @@ void spectate_update(
 		spectate.player_index = NONE;
 		watch(next_player(NONE, 1));
 	}
-	else if (spectate.player_index == NONE && spectate.mode != _spectate_mode_free)
+	else if (spectate.player_index == NONE && spectate.mode != _spectate_mode_free &&
+		spectate.mode != _spectate_mode_director)
 	{
 		watch(next_player(NONE, 1));
+	}
+	/* the director's choice: a glide to someone near, else a hard cut, the
+	camera straight behind them */
+	if (spectate.mode == _spectate_mode_director)
+	{
+		boolean glide;
+		long chosen = spectate_director_update(seconds, spectate.player_index, &glide);
+
+		if (chosen != spectate.player_index)
+		{
+			watch(chosen);
+			if (!glide && player_unit(chosen) != NONE)
+			{
+				struct object_datum *unit = object_get(player_unit(chosen));
+
+				spectate.switch_seconds = 0.0f;
+				spectate.follow_yaw = (real)atan2(unit->object.forward.j, unit->object.forward.i);
+				spectate.follow_pitch = FOLLOW_PITCH;
+			}
+		}
+		/* (no hand on the camera: always back round behind them) */
+		yaw = pitch = forward = 0.0f;
+		looked = FALSE;
+		spectate.look_idle_seconds = FOLLOW_RETURN_SECONDS;
+		spectate.follow_distance = DIRECTOR_DISTANCE;
 	}
 	unit_index = player_unit(spectate.player_index);
 
@@ -400,6 +460,7 @@ void spectate_update(
 		}
 		/* (dead: watched from behind until they are back) */
 	case _spectate_mode_follow:
+	case _spectate_mode_director:
 		spectate.follow_yaw = angle_wrap(spectate.follow_yaw + yaw);
 		spectate.follow_pitch = PIN(spectate.follow_pitch + pitch, -1.4f, 1.2f);
 		spectate.follow_distance = PIN(spectate.follow_distance - forward * 6.0f * seconds,
@@ -569,7 +630,8 @@ void spectate_draw(
 		{
 			struct object_datum *unit = object_get(unit_index);
 
-			usnprintf(text, NUMBEROF(text) - 1, L"SPECTATING %s   HEALTH %d%%   SHIELDS %d%%", name,
+			usnprintf(text, NUMBEROF(text) - 1, L"%s %s   HEALTH %d%%   SHIELDS %d%%",
+				spectate.mode == _spectate_mode_director ? L"DIRECTOR:" : L"SPECTATING", name,
 				(int)(PIN(unit->object.body_vitality, 0.0f, 1.0f) * 100.0f + 0.5f),
 				(int)(PIN(unit->object.shield_vitality, 0.0f, 9.0f) * 100.0f + 0.5f));
 		}
@@ -637,6 +699,8 @@ boolean spectate_console_command(
 		set_mode(_spectate_mode_follow);
 	else if (!strcmp(word, "first"))
 		set_mode(_spectate_mode_first_person);
+	else if (!strcmp(word, "director"))
+		set_mode(_spectate_mode_director);
 	else if (!strcmp(word, "scores"))
 		spectate.scores_shown = !spectate.scores_shown;
 	else if (!strcmp(word, "speed") && argument[0])
@@ -665,10 +729,35 @@ boolean spectate_console_command(
 	}
 	else
 	{
-		console_warning("spectate: on, off, next, previous, free, follow, first, player <name>, speed <n>, scores");
+		console_warning("spectate: on, off, next, previous, free, follow, first, director, player <name>, speed <n>, scores");
 		return FALSE;
 	}
 	return TRUE;
+}
+
+short spectate_watching_machines(
+	struct network_game const *game)
+{
+	short count = 0;
+	short machine;
+
+	for (machine = 1; game && machine < HALO_PORT_MAXIMUM_NETWORK_MACHINES; machine++)
+	{
+		boolean has_player = FALSE;
+		short player;
+
+		/* (a slot in use: its machine index; the host's own is 0) */
+		if (game->machines[machine].machine_index <= 0)
+			continue;
+		for (player = 0; player < HALO_PORT_MAXIMUM_NETWORK_PLAYERS && !has_player; player++)
+		{
+			has_player = network_player_is_valid((struct network_player *)&game->players[player]) &&
+				game->players[player].machine_index == game->machines[machine].machine_index;
+		}
+		if (!has_player)
+			count++;
+	}
+	return count;
 }
 
 void spectate_status(

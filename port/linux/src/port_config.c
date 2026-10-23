@@ -370,6 +370,11 @@ static const struct config_setting config_settings[] =
 		"a free camera or behind or through the eyes of any player\n"
 		"(port/linux/game/spectate.c). The console's \"spectate on\" and\n"
 		"\"spectate off\" change it until the game is closed." },
+	{ "network.spectate_camera", _config_string, "\"follow\"", "HALO_SPECTATE_CAMERA", _environment_value,
+		_platform_all,
+		"A spectator's first camera: \"follow\" (behind a player), \"first\" (through\n"
+		"their eyes), \"free\" (flying) or \"director\" (whoever is most worth\n"
+		"watching, cut as a broadcast is)." },
 	{ "network.join_from_clipboard", _config_boolean, "true", "HALO_NET_JOIN_FROM_CLIPBOARD", _environment_value,
 		_platform_all,
 		"Join the game of an invite link found on the clipboard when the game\n"

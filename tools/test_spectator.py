@@ -188,3 +188,45 @@ def test_spectator_in_a_lobby(tmp_path):
         assert _log(tmp_path, "spectator").count("network test: joining") == 1, "the spectator joined more than once"
     finally:
         _stop(games, tmp_path, executables)
+
+
+CUT = re.compile(r"spectate: director cut to (.+?) \(player (-?\d+), (\w+)\) at tick (\d+) after ([\d.]+) s, (glide|hard cut)")
+
+
+def test_spectator_director(tmp_path):
+    """The spectator's auto-director (network.spectate_camera "director",
+    spectate_director.c) on a dedicated server with four bots fighting
+    (fixed seeds): it cuts between them, each cut with its reason, no shot
+    shorter than five seconds but after the one watched died (then the next
+    is their killer, or whoever is most worth watching), none longer than
+    fifteen, and it shows more than one bot. About two minutes."""
+    maps, paths = _needs("HALO_TEST_GAME", "HALO_TEST_SERVER")
+    port = 23980 + os.getpid() % 15
+    games = _dedicated_with_a_spectator(tmp_path, paths["HALO_TEST_GAME"], paths["HALO_TEST_SERVER"], maps, 4,
+                                        (_address(21), _address(22)), port, {"HALO_SPECTATE_CAMERA": "director"})
+    executables = {"server": paths["HALO_TEST_SERVER"], "spectator": paths["HALO_TEST_GAME"]}
+    try:
+        _wait(lambda: len(CUT.findall(_log(tmp_path, "spectator"))) >= 7, 240, games, tmp_path,
+              "the director did not cut six times")
+        cuts = CUT.findall(_log(tmp_path, "spectator"))
+        for name, index, reason, tick, after, how in cuts:
+            print(f"cut to {name} (player {index}) at tick {tick} after {after} s: {reason}, {how}")
+        assert cuts[0][2] == "start", cuts[0]
+        reasons = {"start", "kill", "killer", "fight", "hurt", "objective", "vehicle", "near", "turn", "time", "left",
+                   "died"}
+        assert all(reason in reasons for _, _, reason, *_ in cuts), cuts
+        # (a shot's length in game ticks, from the ticks of its cut and the
+        # next: one ends early only when the one watched died - two seconds
+        # held on them, then their killer or another - or left)
+        for this, following in zip(cuts, cuts[1:]):
+            seconds = (int(following[3]) - int(this[3])) / 30.0
+            if following[2] in ("killer", "died", "left"):
+                assert following[2] == "left" or seconds >= 1.9, f"a death held {seconds:.1f} s: {this}, {following}"
+            else:
+                assert seconds >= 4.9, f"a shot of {seconds:.1f} s, under five: {this} then {following}"
+            assert seconds <= 15.5, f"a shot of {seconds:.1f} s, over fifteen: {this} then {following}"
+        assert len({index for _, index, *_ in cuts}) >= 2, f"the director showed one bot only: {cuts}"
+        assert any(reason in ("kill", "killer", "fight", "hurt") for _, _, reason, *_ in cuts), \
+            f"the director never cut to a fight: {cuts}"
+    finally:
+        _stop(games, tmp_path, executables)

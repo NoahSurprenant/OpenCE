@@ -381,6 +381,7 @@ the setting for one start of the game. It has priority over the file.
 | `network.broadcast` | `""` | `HALO_NET_BROADCAST` | IPv4 addresses, with commas between them, that get the broadcasts of the game. Empty: 255.255.255.255. |
 | `network.online` | `true` | `HALO_NET_ONLINE` | `true`: internet play. `false`: system link on the local network only. |
 | `network.spectate` | `false` | `HALO_SPECTATE` | `true`: join games as a spectator, with no player. Refer to "Spectators". |
+| `network.spectate_camera` | `"follow"` | `HALO_SPECTATE_CAMERA` | The first camera of a spectator: `follow`, `first`, `free` or `director`. Refer to "Spectators". |
 | `network.join_from_clipboard` | `true` | `HALO_NET_JOIN_FROM_CLIPBOARD` | `true`: when the game comes to the front, it joins the game of an invite link on the clipboard. |
 | `network.tunnel_port` | `0` | `HALO_NET_TUNNEL_PORT` | The UDP port for internet play. `0`: the game selects a port. Refer to "Internet play". |
 | `network.allow_upnp` | `true` | `HALO_NET_ALLOW_UPNP` | `true`: internet play can ask the router to forward its port (UPnP). `false`: the game does not ask. Refer to "Internet play". |
@@ -1505,9 +1506,10 @@ map's Scorpions (`z:\bots_tank_<map>_<key>.nav`).
 
 ## Spectators
 
-A spectator watches a network game without playing in it. Set
-`network.spectate` (`HALO_SPECTATE`) to `true`, or type `spectate on` at the
-console, and join a game as usual: a dedicated server, or a game that
+A spectator watches a network game without playing in it. Set JOIN GAMES AS
+to SPECTATOR (Settings > Network Setup > SPECTATING; `network.spectate`,
+`HALO_SPECTATE`), or type `spectate on` at the console, and join a game as
+usual: a dedicated server, or a game that
 someone hosts from the menus. In the browser, add `?spectate` to the page's
 address (with `?join=<code>` to join an internet game).
 
@@ -1518,9 +1520,11 @@ address (with `?join=<code>` to join an internet game).
   it. Refer to `NETCODE.md`, "Spectators".
 - It sees what a player's machine sees: every player, the bots, vehicles
   and what they do.
+- The lobby says how many machines watch the game ("3 of 16 players, 1
+  watching").
 
-Three cameras, which the action key (E, or X on a controller) switches
-between:
+Four cameras, which the action key (E, or X on a controller) switches
+between (SPECTATOR CAMERA, `network.spectate_camera`, is the first):
 
 - **FOLLOW** (first) stays behind the player that it watches. The look keys
   or stick turn it round them, and it turns back behind them two seconds
@@ -1529,6 +1533,16 @@ between:
 - **FREE** flies where it looks, through walls. The movement keys or left
   stick move it, jump and crouch move it up and down, and the weapon and
   grenade switches (and the mouse wheel) make it faster and slower.
+- **DIRECTOR** chooses whom to watch, as a person directing a broadcast
+  does (`spectate_director.c`). It follows the player most worth watching
+  from behind: a kill in the last seconds counts most, then a fight (their
+  weapon fired, or they were hurt), carrying the flag or the ball, driving
+  fast and enemies near, and a little the longer since they were shown. A
+  shot lasts five seconds at least and fifteen at most, and cuts early only
+  to someone clearly more worth watching. When the player watched dies, it
+  stays on their fall two seconds and then cuts to their killer. A cut to
+  someone near glides; to someone far, it is a hard cut. Picking a player
+  (fire, grenade) hands the camera back to FOLLOW.
 
 Fire (the left mouse button, the right trigger) watches the next player,
 and the grenade (the right mouse button, the left trigger) the one before.
@@ -1539,7 +1553,7 @@ who is watched, with their health and shields.
 The console's `spectate` command does the same: `spectate next`,
 `spectate previous`, `spectate free`, `spectate follow`, `spectate first`,
 `spectate player <name>` (or the start of the name), `spectate speed <n>`
-(world units a second), `spectate scores` (the scores shown until it is
+(world units a second), `spectate director`, `spectate scores` (the scores shown until it is
 typed again), and `spectate` alone says what it watches.
 
 A spectator joins a game in its lobby or in progress. It needs a host of this
