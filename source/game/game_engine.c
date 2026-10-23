@@ -593,6 +593,7 @@ struct network_game *network_game_server_get_game(struct network_game_server *se
 #include "units/bipeds.h"
 #include "units/units.h"
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
+#include "infection.h" /* port: port/linux/game/infection.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -1164,10 +1165,10 @@ static void game_engine_generate_title_string(
 	}
 
 	/* port: the gametype's time limit's time left (game_variant_options) */
-	if (game_variant_options_get()->time_limit > 0 &&
+	if (game_engine_port_time_limit_ticks() > 0 &&
 		game_engine_globals.postgame_state == game_engine_mode_active)
 	{
-		long left = game_variant_options_get()->time_limit * 60L * TICKS_PER_SECOND - game_time_get();
+		long left = game_engine_port_time_limit_ticks() - game_time_get();
 		wchar_t time_string[32];
 
 		ticks_to_unicode_time_string(MAX(left, 0), NUMBEROF(time_string), time_string);
@@ -4283,6 +4284,8 @@ void game_engine_game_starting(
 	{
 		if (game_engine->game_starting)
 			game_engine->game_starting();
+		/* port: Infection's first infected (the host) */
+		infection_game_starting();
 
 		game_engine_build_lighting();
 	}
@@ -4859,6 +4862,9 @@ void game_engine_update(
 			}
 		}
 
+		/* port: Infection (every machine; the host decides) */
+		infection_update();
+
 		if (game_engine->update)
 			game_engine->update();
 
@@ -5018,7 +5024,8 @@ void game_engine_player_killed(
 	killer (port/linux/game/network_distributed.c) */
 	network_distributed_player_killed(&killing_player_index, &killing_object_index, dead_player_index,
 		&friendly_fire);
-	/* port: a killer who has left the game since is no one's kill */
+	/* port: a killer who has left the game since is no one's kill (and
+	Infection's dead survivor infected, below) */
 	if (killing_player_index != NONE && !player_try_and_get(killing_player_index))
 		killing_player_index = NONE;
 	/* the host's kill of a player who quit, ahead of this client's clock
@@ -5116,6 +5123,9 @@ void game_engine_player_killed(
 				(short)(game_variant_options_get()->friendly_fire_penalty * TICKS_PER_SECOND);
 		}
 	}
+
+	/* port: Infection: a survivor who dies comes back infected (the host) */
+	infection_player_killed(dead_player_index, killing_player_index);
 
 	dead_player->respawn_timer = MAX(dead_player->respawn_timer, 90);
 	dead_player = player_get(dead_player_index);
@@ -5604,13 +5614,60 @@ boolean game_engine_should_end_game(
 	if (game_engine && !multiple_teams_alive())
 		should_end_game = TRUE;
 	/* port: the gametype's time limit (game_variant_options) */
-	if (game_engine && game_variant_options_get()->time_limit > 0 &&
-		game_time_get() >= game_variant_options_get()->time_limit * 60L * TICKS_PER_SECOND)
+	if (game_engine && game_engine_port_time_limit_ticks() > 0 &&
+		game_time_get() >= game_engine_port_time_limit_ticks())
 	{
 		should_end_game = TRUE;
 	}
 
 	return should_end_game;
+}
+
+/* port: the game's time limit in ticks, 0 for none: the gametype's
+(game_variant_options), or Infection's round, the shorter */
+long game_engine_port_time_limit_ticks(
+	void)
+{
+	long minutes = game_variant_options_get()->time_limit;
+
+	if (infection_active())
+		return infection_time_limit_ticks(minutes);
+	return minutes > 0 ? minutes * 60L * TICKS_PER_SECOND : 0;
+}
+
+/* port: the game is under way (not over) */
+boolean game_engine_port_game_active(
+	void)
+{
+	return game_engine && game_engine_globals.postgame_state == game_engine_mode_active;
+}
+
+/* port: the player's own score, 0 without a game */
+long game_engine_port_player_score(
+	long player_index)
+{
+	if (!game_engine || !game_engine->get_player_score)
+		return 0;
+	return game_engine->get_player_score(player_index, _get_score_individual);
+}
+
+/* port: the host moves the player to a team (auto team balance, Infection):
+their next unit is that team's, which the clients take it from
+(network_player_attach_unit); and the host's game record, which late joins
+count and the lobby shows */
+void game_engine_port_set_player_team(
+	long player_index,
+	long team_index)
+{
+	struct player_datum *player = player_get(player_index);
+	struct network_game_server *server = global_network_game_server_get();
+	struct network_game *game = server ? network_game_server_get_game(server) : NULL;
+	long list_index = player->network_player_data.player_list_index;
+
+	player->team_index = team_index;
+	player->network_player_data.team_index = (char)team_index;
+	if (game && VALID_INDEX(list_index, HALO_PORT_MAXIMUM_NETWORK_PLAYERS))
+		game->players[list_index].team_index = (char)team_index;
 }
 
 void game_engine_clear_goal_position(
@@ -5711,6 +5768,8 @@ void game_engine_end_game(
 {
 	if (game_engine_globals.postgame_state==game_engine_mode_active)
 	{
+		/* port: Infection's winner, logged (the host) */
+		infection_game_over();
 		game_engine_globals.postgame_state = game_engine_mode_postgame_delay;
 		game_engine_globals.postgame_timer = 7.0f;
 		game_engine_play_multiplayer_sound(_multiplayer_sound_game_over);
@@ -5898,6 +5957,9 @@ boolean game_engine_allow_pick_up(
 {
 	boolean allow_pick_up = TRUE;
 
+	/* port: the infected pick up nothing (port/linux/game/infection.c) */
+	if (infection_unit_restricted(unit_index))
+		return FALSE;
 	if (game_engine && game_engine->allow_pick_up)
 		allow_pick_up = game_engine->allow_pick_up(unit_index, weapon_index);
 
@@ -6486,7 +6548,33 @@ struct game_variant *build_game_variant_juggernaut(
 	return variant;
 }
 
+/* port: Infection (port/linux/game/infection.c): Team Slayer whose infected
+skate and run the survivors over. No vehicles (a survivor in one is out of
+the infected's reach); the infected respawn at the engine's least. */
+struct game_variant *build_game_variant_infection(
+	struct game_variant *variant)
+{
+	struct game_variant result;
+
+	build_game_variant_team_slayer(&result);
+	result.universal_variant.respawn_time = 0;
+	result.universal_variant.suicide_penalty = 0;
+	result.universal_variant.vehicle_set = _game_engine_vehicles_none;
+	result.universal_variant.score_to_win = 1;
+	result.game_engine_variant.slayer.no_death_bonus = TRUE;
+	result.game_engine_variant.slayer.no_kill_penalty = TRUE;
+	result.game_engine_variant.slayer.infection = TRUE;
+	result.game_engine_variant.slayer.infection_run_over = INFECTION_DEFAULT_RUN_OVER;
+	result.game_engine_variant.slayer.infection_minutes = 5;
+	result.game_engine_variant.slayer.infection_ratio = 8;
+
+	*variant = result;
+
+	return variant;
+}
+
 struct game_variant *build_game_variant_stalker(
+
 	struct game_variant *variant)
 {
 	struct game_variant result = { 0 };
@@ -7120,6 +7208,18 @@ struct game_variant *game_engine_get_variant_by_name(
 	server's server.game_types */
 	else if (csstrcmp(name, "juggernaut") == 0)
 		result = *build_game_variant_juggernaut(&temporary);
+	/* port: and Infection (port/linux/game/infection.c) */
+	else if (csstrcmp(name, "infection") == 0)
+	{
+		extern long config_integer(char const *name);
+		long run_over = config_integer("server.infection_run_over");
+
+		result = *build_game_variant_infection(&temporary);
+		/* (server.infection_run_over: the dedicated server's own) */
+		if (run_over > 0)
+			result.game_engine_variant.slayer.infection_run_over = (short)MIN(run_over, 5000);
+	}
+
 
 	*variant = result;
 
@@ -7186,7 +7286,10 @@ real_rgb_color *game_engine_player_get_change_color(
 	struct player_datum *player = player_get(player_index);
 	real_rgb_color result;
 
-	if (global_variant.universal_variant.teams)
+	/* port: Infection's survivors red, its infected green */
+	if (infection_active())
+		result = *infection_change_color(player->team_index);
+	else if (global_variant.universal_variant.teams)
 	{
 		if (player->team_index == 0)
 			result = *global_real_rgb_red;
@@ -7282,6 +7385,11 @@ void game_engine_variant_cleanup(
 		variant->game_engine_variant.slayer.no_death_bonus = !!variant->game_engine_variant.slayer.no_death_bonus;
 		variant->game_engine_variant.slayer.no_kill_penalty = !!variant->game_engine_variant.slayer.no_kill_penalty;
 		variant->game_engine_variant.slayer.kill_in_order = !!variant->game_engine_variant.slayer.kill_in_order;
+		variant->game_engine_variant.slayer.infection = !!variant->game_engine_variant.slayer.infection;
+		variant->game_engine_variant.slayer.infection_run_over =
+			PIN(variant->game_engine_variant.slayer.infection_run_over, 0, 5000);
+		if (variant->game_engine_variant.slayer.infection)
+			variant->universal_variant.teams = TRUE;
 		break;
 
 	case game_engine_oddball:
@@ -7499,6 +7607,8 @@ void game_engine_player_added(
 
 		if (game_engine->player_added)
 			game_engine->player_added(player_index);
+		/* port: Infection: one joining later starts infected (the host) */
+		infection_player_added(player_index);
 	}
 
 	return;

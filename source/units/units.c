@@ -695,6 +695,7 @@ symbols in this file:
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
 #include "coop_scripts.h" /* port: port/linux/game/coop_scripts.c */
 #include "coop_enemies.h" /* port: port/linux/game/coop_enemies.c */
+#include "infection.h" /* port: port/linux/game/infection.c */
 
 /* port: the control and animation impulses the host's actors give their
 units go to the clients' copies (port/linux/game/network_actors.c) */
@@ -2997,6 +2998,10 @@ boolean unit_can_enter_seat(
 	{
 		result = FALSE;
 	}
+	/* port: Infection: the infected board no vehicle */
+	if (infection_unit_restricted(unit_index))
+		result = FALSE;
+
 
 	child_object_index = target_unit->object.first_child_object_index;
 

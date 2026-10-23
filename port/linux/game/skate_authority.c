@@ -57,6 +57,7 @@ decides), and its client's skater decides its own hits as before. */
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include "infection.h"
 
 /* the platform layer's (the port's log) */
 void platform_log(const char *format, ...);
@@ -756,9 +757,11 @@ static void skate_authority_run_over(struct skate_verdict const *verdict, boolea
 	struct object_datum *object = object_try_and_get(object_index);
 	struct object_datum *skater = object_try_and_get(skater_index);
 	struct skate_run_over_watch *watch;
-	real share = skate_run_over_share(verdict->closing);
+	/* (Infection: an infected skater's, scaled by the variant) */
+	real share = infection_run_over_share(skater_index, skate_run_over_share(verdict->closing));
 
-	/* (one dead here already, the host's killing blow come first, is watched
+	/* (one dead here already
+, the host's killing blow come first, is watched
 	too: its death is told at once) */
 	if (!object || object->object.type != _object_type_biped)
 		return;

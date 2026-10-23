@@ -56,6 +56,7 @@ objects (render.c). */
 #include <xtl.h>
 
 #include "../../skate/include/halo_skate.h"
+#include "infection.h"
 
 /* the platform layer's (sdl_platform.c, xinput_sdl.c, d3d8_gl.c) */
 int halo_skate_platform_toggle_pressed(void);
@@ -2598,7 +2599,24 @@ boolean skate_bots_available(void)
 
 boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad)
 {
-	struct skate_skater *skater = on_board ? skate_bot_skater_for(player_index) : skate_bot_skater(player_index);
+	struct skate_skater *skater;
+
+	/* Infection: the infected stay on the board (a bot asking off rides on,
+	holding nothing) */
+	if (!on_board && infection_unit_restricted(unit_index))
+	{
+		static long told_tick = -1000000;
+
+		if (game_time_get() - told_tick >= 5 * TICKS_PER_SECOND)
+		{
+			told_tick = game_time_get();
+			platform_log("skate: infected player %ld asked off the board, stays on at tick %ld",
+				DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), game_time_get());
+		}
+		on_board = TRUE;
+		pad = NULL;
+	}
+	skater = on_board ? skate_bot_skater_for(player_index) : skate_bot_skater(player_index);
 
 	if (!skater)
 		return FALSE;
@@ -2823,7 +2841,24 @@ static void skate_local_update(void)
 		(skater->previous_buttons & SKATE_THUMB_CLICKS) != SKATE_THUMB_CLICKS);
 	skater->previous_buttons = pad.buttons;
 	skate_test_pad(&pad, &toggle);
+	/* Infection: the infected are always on the board, J or not */
+	if (infection_unit_restricted(unit_index))
+	{
+		if (toggle && (skater->skating || skater->activate_when_ready))
+		{
+			toggle = FALSE;
+			console_printf(FALSE, "skate: the infected stay on the board");
+		}
+		/* (asked again each second: a failed engine is not asked every tick) */
+		else if (!skater->skating && !skater->activate_when_ready && skate_unit_can_skate(unit_index) &&
+			game_time_get() % TICKS_PER_SECOND == 0)
+		{
+			toggle = TRUE;
+		}
+
+	}
 	skate_test_scenery();
+
 	/* (other machines' skaters carried on: skate_network.c) */
 	skate_network_update_before_objects();
 	/* the structure bsp loaded since the last tick, with its scenery placed

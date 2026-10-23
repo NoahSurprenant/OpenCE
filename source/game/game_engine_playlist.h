@@ -39,6 +39,9 @@ struct game_variant *build_game_variant_accumulation(
 	struct game_variant *variant);
 struct game_variant *build_game_variant_juggernaut(
 	struct game_variant *variant);
+/* port: Infection (port/linux/game/infection.c) */
+struct game_variant *build_game_variant_infection(
+	struct game_variant *variant);
 struct game_variant *build_game_variant_stalker(
 	struct game_variant *variant);
 struct game_variant *build_game_variant_king(
