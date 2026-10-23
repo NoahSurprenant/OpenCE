@@ -674,7 +674,11 @@ static int delayed_enabled(void)
 		delayed.corrupt_stream_percent = (int)corrupt_stream;
 		delayed.corrupt_after = (DWORD)(corrupt_after * 1000.0);
 		delayed.started_time = GetTickCount();
-		delayed.corrupt_seed = (unsigned)GetTickCount() ^ (unsigned)(size_t)&delayed.checked;
+		/* (with debug.game_seed, the same losses and damage each run: a test's
+		games go the same way, as the game's own random numbers do) */
+		delayed.corrupt_seed = config_integer("debug.game_seed") ?
+			(unsigned)config_integer("debug.game_seed") * 2654435761u + 0x5eedu :
+			(unsigned)GetTickCount() ^ (unsigned)(size_t)&delayed.checked;
 		delayed.checked = 1;
 		if (delayed.latency || delayed.loss_percent || delayed.corrupt_percent || delayed.corrupt_stream_percent)
 		{
@@ -851,7 +855,10 @@ static int delayed_receive_locked(SOCKET socket, char *buffer, int length, int f
 		/* (a stream closing is at once) */
 		if (!datagram && result == 0)
 			return 0;
-		if (datagram && rand() % 100 < delayed.loss_percent)
+		/* (the test's own numbers, as for the damage: the game's rand() was
+		drawn on here, from the network threads, so that neither went the same
+		way twice) */
+		if (datagram && (int)(delayed_random() % 100u) < delayed.loss_percent)
 			continue;
 		/* (a stream's reads by their own share: a damaged stream is dropped,
 		and the game must go on for its datagrams to be tested) */

@@ -815,6 +815,8 @@ def test_skate_multiplayer(tmp_path):
     common = {"HALO_FULLSCREEN": "0", "HALO_NO_AUDIO": "1", "HALO_EXIT_AFTER": str(seconds),
               "HALO_UPDATE_ANSWER": "never", "HALO_NULL_RENDERER": "1", "HALO_HIDDEN_WINDOW": "1",
               "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75", "HALO_NETWORK_LOSS": "10",
+              # (the same datagrams lost, and the game's random numbers, each run)
+              "HALO_GAME_SEED": "1101",
               # (no STUN: the two play over loopback, and a CI runner may not
               # reach the STUN servers)
               "HALO_NET_STUN": ""}
@@ -1368,7 +1370,7 @@ def test_dedicated_server_skaters(tmp_path):
     addresses = {"server": _test_address(214), "first": _test_address(215), "second": _test_address(216)}
     clients = {"HALO_NETWORK_TEST": "join", "HALO_FULLSCREEN": "0", "HALO_NO_AUDIO": "1", "HALO_NULL_RENDERER": "1",
                "HALO_HIDDEN_WINDOW": "1", "HALO_SKATE_ASSETS": assets, "HALO_NETWORK_LATENCY": "75",
-               "HALO_NETWORK_LOSS": "10", "HALO_NET_BROADCAST": addresses["server"]}
+               "HALO_NETWORK_LOSS": "10", "HALO_GAME_SEED": "1102", "HALO_NET_BROADCAST": addresses["server"]}
     machines = {"server": {"HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "12",
                            "HALO_NETWORK_TEST_SKATE_BLOCK": "1",
                            "HALO_NET_BROADCAST": f"{addresses['first']},{addresses['second']}"},
