@@ -962,6 +962,36 @@ is never in the image.
   it rides into someone by accident, the hit is decided as any skater's (a
   run-over at speed). Bots die as people do: riding off a ledge, a fall or a
   bail can kill them.
+- **Tricks** (`port/linux/game/bots_tricks.c`): riding, a bot skates as
+  well as travels, through the same pad a person holds: it flicks the right
+  stick through the gestures of your data (above, "Tricks"), holds a trigger
+  in the air for a grab and the right stick part way for a manual, and lines
+  up with the rails it passes. It ollies a lip in its way (a steep face low
+  ahead) or pops off a drop or over a gap; rolling fast and straight with
+  room ahead it flips now and then (it stops pushing for it); in the air of
+  its own pop, with time enough, it late-flips as it leaves the ground or
+  grabs to the landing (none on a long fall); on a grind it flips off after
+  a while; after landing it may manual. How often and how well go by
+  difficulty: peaceful and easy bots rarely, the simplest flips, few rails,
+  and now and then a late flip begun too late (a bail); normal ones often,
+  with grinds; hard and legendary ones whenever they can, the harder flips
+  (none of their last four again: the scoring pays less for a trick
+  repeated), rails up to 3.5 or 4 world units off their way, chaining
+  combos and hardly ever bailing. A trick never steers (the riding code
+  keeps its line) and none begins where the way ahead turns or ends soon,
+  nor with an enemy about (a target seen or gunfire heard in the last 3
+  seconds, a person ridden at): then it only ollies what is in its way, so
+  that a fight finds it on its wheels, ready to step off. The skate
+  engine's scoring says what came of it: each sequence landed is logged
+  ("bots: player N lands 3 tricks for 250 points (last FLIP_KICKFLIP)"),
+  each bail too, with the trick under way, and each bot's report has a line
+  of its own ("[BOT] X's tricks at tick T: N landed, P points, C combos
+  (best ...), B bails; ... flips, ... late flips, ... grabs, ... manuals,
+  ... flips off grinds, ... pops over things in the way").
+  `debug.bot_tricks` (`HALO_BOT_TRICKS`), one entry for each bot as
+  `debug.bot_skate`: `off` (it only rides, ollying what is in its way) or a
+  difficulty (it tricks as that difficulty does, whatever its own: the
+  tests' peaceful bots, who fight nobody, tricking as hard and easy ones do).
 - The other machines see a bot's skater as any skater (states 90/91, sounds
   94/95, its player's index): nothing new on the wire.
 
@@ -977,7 +1007,12 @@ listen host whose own player skates beside three bots (two normal, one
 peaceful) with a client that sees the bots' skaters posed with their boards;
 a ramming bot running over a bot standing on foot on Blood Gulch, the kill its own; and
 two peaceful bots told to ram that ride and grind but never ride at anyone
-(an accident, a fall, is allowed).
+(an accident, a fall, is allowed); three bots tricking as hard ones do and
+three as easy ones do on Prisoner (at least 30 tricks landed with a grind among
+them, the hard pair trying twice the tricks, scoring half as much
+again or more, chaining combos and bailing at most once in three landed);
+and hard and normal bots playing Slayer on Blood Gulch, whom a fight seldom
+finds in the middle of a trick and who fire and kill as before.
 
 ## Multiplayer
 
