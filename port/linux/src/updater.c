@@ -551,10 +551,10 @@ void updater_start(void)
 {
 	char *slash;
 
-	/* (not a dedicated server's: its new versions come as a new image, and
-	its install folder may be read-only, where even the clean-up's deletes
-	are refused) */
-	if (config_boolean("server.dedicated"))
+	/* (not a dedicated server's, nor a stream's: their new versions come as
+	a new image, and their install folder may be read-only, where even the
+	clean-up's deletes are refused) */
+	if (config_boolean("server.dedicated") || config_boolean("stream.enabled"))
 		return;
 	if (!update_executable_path(updater_executable, sizeof(updater_executable)))
 		return;
