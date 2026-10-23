@@ -44,12 +44,13 @@ render_device=${STREAM_RENDER_DEVICE:-/dev/dri/renderD128}
 
 log() { echo "stream.sh: $*" >&2; }
 
-# A real encode through the render node, one black frame: proves the device is both present and
+# A real encode through the render node, one black frame (256x256: the 680M's encoder refuses
+# frames under 128x128, which made this check fail every time): proves the device is both present and
 # usable (not just a stale node left by a crashed neighbour - the 680M's known ring timeouts, say)
 # before committing the real pipeline to it. Quiet either way; the caller logs the decision.
 vaapi_works() {
   timeout 5 ffmpeg -hide_banner -loglevel quiet -y -vaapi_device "$render_device" \
-    -f lavfi -i color=c=black:s=64x64:d=0.1 -vf format=nv12,hwupload -frames:v 1 \
+    -f lavfi -i color=c=black:s=256x256:d=0.1 -vf format=nv12,hwupload -frames:v 1 \
     -c:v h264_vaapi -f null - >/dev/null 2>&1
 }
 
