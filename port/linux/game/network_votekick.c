@@ -447,6 +447,26 @@ static short votekick_machines(
 	return count;
 }
 
+/* whether a client machine has a player in the game (a spectator has none:
+spectate.c) */
+static boolean votekick_machine_has_player(
+	long machine_index)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		if (!player->quit_out_of_game &&
+			distributed_player_machine((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index)) == machine_index)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 /* a machine (NONE: the host's own) as the count sees it */
 static void votekick_voter_get(
 	long machine_index,
@@ -718,6 +738,12 @@ static void votekick_host_request(
 		snprintf(notice, sizeof(notice), "votekick: the next vote can start in %lu seconds",
 			(votekick_next_allowed - now + 999) / 1000);
 		votekick_refuse(machine_index, notice);
+		return;
+	}
+	/* (a spectator, which has no player, is no voter: it starts none) */
+	if (!voter.host && !votekick_machine_has_player(machine_index))
+	{
+		votekick_refuse(machine_index, "votekick: a spectator cannot start a vote");
 		return;
 	}
 	if (!voter.host && votekick_played_ticks[machine_index] < votekick_starter_ticks())

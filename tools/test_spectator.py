@@ -14,7 +14,7 @@ import re
 import socket
 import time
 
-from tools.test_bots import _bots_seen, _log, _needs, _samples, _start, _stop, _travelled, _wait
+from tools.test_bots import _bots_seen, _debug, _log, _needs, _samples, _start, _stop, _travelled, _wait
 
 TICK = re.compile(r"network test: tick (\d+).*\| local (-?\d+) camera \((-?[\d.]+) (-?[\d.]+) (-?[\d.]+)\)"
                   r"(?: respawn -?\d+)?(?: \| spectating (\w+) watching (-?\d+))?")
@@ -199,7 +199,8 @@ def test_spectator_director(tmp_path):
     (fixed seeds): it cuts between them, each cut with its reason, no shot
     shorter than five seconds but after the one watched died (then the next
     is their killer, or whoever is most worth watching), none longer than
-    fifteen, and it shows more than one bot. About two minutes."""
+    fifteen (but by the two seconds held on one who died), and it shows more
+    than one bot. About two minutes."""
     maps, paths = _needs("HALO_TEST_GAME", "HALO_TEST_SERVER")
     port = 23980 + os.getpid() % 15
     games = _dedicated_with_a_spectator(tmp_path, paths["HALO_TEST_GAME"], paths["HALO_TEST_SERVER"], maps, 4,
@@ -222,11 +223,90 @@ def test_spectator_director(tmp_path):
             seconds = (int(following[3]) - int(this[3])) / 30.0
             if following[2] in ("killer", "died", "left"):
                 assert following[2] == "left" or seconds >= 1.9, f"a death held {seconds:.1f} s: {this}, {following}"
+                # (one who dies near the shot's end is held on two seconds more)
+                assert seconds <= 15.5 + 2.5, f"a shot of {seconds:.1f} s, over seventeen: {this} then {following}"
             else:
                 assert seconds >= 4.9, f"a shot of {seconds:.1f} s, under five: {this} then {following}"
-            assert seconds <= 15.5, f"a shot of {seconds:.1f} s, over fifteen: {this} then {following}"
+                assert seconds <= 15.5, f"a shot of {seconds:.1f} s, over fifteen: {this} then {following}"
         assert len({index for _, index, *_ in cuts}) >= 2, f"the director showed one bot only: {cuts}"
         assert any(reason in ("kill", "killer", "fight", "hurt") for _, _, reason, *_ in cuts), \
             f"the director never cut to a fight: {cuts}"
+    finally:
+        _stop(games, tmp_path, executables)
+
+
+def test_spectator_limit(tmp_path):
+    """server.max_spectators 1 on a dedicated server with two bots, and two
+    spectators joining its game in progress: the server counts one watching,
+    turns the other away as a full game would, and the first watches on. About a minute and a half."""
+    maps, paths = _needs("HALO_TEST_GAME", "HALO_TEST_SERVER")
+    games = {"server": _start(tmp_path, "server", paths["HALO_TEST_SERVER"], maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "5", "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "7",
+        "HALO_SERVER_MAX_SPECTATORS": "1", "HALO_NET_ADDRESS": _address(41),
+        "HALO_NET_BROADCAST": f"{_address(42)},{_address(43)}"})}
+    executables = {"server": paths["HALO_TEST_SERVER"], "first": paths["HALO_TEST_GAME"],
+                   "second": paths["HALO_TEST_GAME"]}
+    try:
+        _wait(lambda: re.search(r"bots: \[BOT\] \w+ at tick \d+", _log(tmp_path, "server")), 180, games, tmp_path,
+              "the server's bots did not play")
+        for name, last in (("first", 42), ("second", 43)):
+            games[name] = _start(tmp_path, name, paths["HALO_TEST_GAME"], maps, {
+                "HALO_NETWORK_TEST": "join", "HALO_SPECTATE": "1", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+                "HALO_NET_ADDRESS": _address(last), "HALO_NET_BROADCAST": _address(41)})
+            # (one after the other: the first is the one that stays)
+            _wait(lambda: "spectate: watching" in _log(tmp_path, name), 90, games, tmp_path,
+                  f"the {name} spectator did not watch")
+        _wait(lambda: "server: a spectator is turned away" in _log(tmp_path, "server"), 60, games, tmp_path,
+              "the server did not turn the second spectator away")
+        server = _log(tmp_path, "server")
+        print(re.findall(r"server: (\d+ watching|a spectator is turned away.*)", server))
+        assert "server: 1 watching" in server, server[-3000:]
+        assert "server: 2 watching" not in server, server[-3000:]
+        # the second is let go (a machine in the game hears it as the host
+        # going); the first watches on, a tick logged every second
+        _wait(lambda: re.search(r"the game host went down|game_is_full", _debug(tmp_path, "second")), 30, games,
+              tmp_path, "the second spectator was not let go")
+        ticks = len(_ticks(_log(tmp_path, "first")))
+        time.sleep(5)
+        assert len(_ticks(_log(tmp_path, "first"))) > ticks, "the first spectator stopped watching"
+    finally:
+        _stop(games, tmp_path, executables)
+
+
+def test_spectator_with_an_older_client(tmp_path):
+    """A build from before spectators (HALO_TEST_OLD_CLIENT, as
+    tools/test_bots.py's test_bots_with_an_older_client has it) plays on a
+    dedicated server with two bots while a spectator watches: nothing on the
+    wire is new, so the older client gets its player and sees the bots as
+    before, and the spectator sees the older client's player too. About a
+    minute and a half."""
+    maps, paths = _needs("HALO_TEST_OLD_CLIENT", "HALO_TEST_GAME", "HALO_TEST_SERVER")
+    games = {"server": _start(tmp_path, "server", paths["HALO_TEST_SERVER"], maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "5", "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "8",
+        "HALO_NET_ADDRESS": _address(51), "HALO_NET_BROADCAST": f"{_address(52)},{_address(53)}"})}
+    executables = {"server": paths["HALO_TEST_SERVER"], "spectator": paths["HALO_TEST_GAME"],
+                   "older": paths["HALO_TEST_OLD_CLIENT"]}
+    try:
+        _wait(lambda: re.search(r"bots: \[BOT\] \w+ at tick \d+", _log(tmp_path, "server")), 180, games, tmp_path,
+              "the server's bots did not play")
+        games["spectator"] = _start(tmp_path, "spectator", paths["HALO_TEST_GAME"], maps, {
+            "HALO_NETWORK_TEST": "join", "HALO_SPECTATE": "1", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+            "HALO_NET_ADDRESS": _address(52), "HALO_NET_BROADCAST": _address(51)})
+        _wait(lambda: "spectate: watching" in _log(tmp_path, "spectator"), 90, games, tmp_path,
+              "the spectator did not watch")
+        games["older"] = _start(tmp_path, "older", paths["HALO_TEST_OLD_CLIENT"], maps, {
+            "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:9",
+            "HALO_NET_ADDRESS": _address(53), "HALO_NET_BROADCAST": _address(51)})
+
+        def older_plays():
+            ticks = re.findall(r"\| local (-?\d+) camera", _log(tmp_path, "older"))
+            return ticks and ticks[-1] != "-1" and _bots_seen(_log(tmp_path, "older"), 2)
+        _wait(older_plays, 150, games, tmp_path, "the older client did not play beside the spectator")
+        older_player = re.findall(r"\| local (-?\d+) camera", _log(tmp_path, "older"))[-1]
+        print(f"the older client plays as player {older_player}")
+        _wait(lambda: len(_samples(_log(tmp_path, "spectator")).get(int(older_player), [])) >= 5, 60, games, tmp_path,
+              "the spectator did not see the older client's player")
+        server = _log(tmp_path, "server")
+        assert re.search(r"server: (?!\[BOT\])\S.* joined \(3 players\)", server), server[-3000:]
     finally:
         _stop(games, tmp_path, executables)
