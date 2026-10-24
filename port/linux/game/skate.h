@@ -24,8 +24,15 @@ void skate_update_after_objects(void);
 /* render_window: the board under the skater, drawn with the objects */
 void skate_render_board(void);
 
+/* (skate.c) a skater's biped at position (its feet height under it) raised
+onto the floor if it is in it: neither the skate engine's wipeouts nor
+another machine's skater carried on between its states leave one under the
+floor (where Halo's physics, and the board's ground probe, put it under) */
+void skate_floor_lift(long unit_index, union real_point3d *position, real height);
+
 /* whether the unit is on a board: its biped's own movement stops, and its
 camera follows it */
+
 boolean skate_unit_is_skating(long unit_index);
 /* object_damage_aftermath: a blast's push (Halo's acceleration, world units a
 tick) on this machine's living skater, given to the skate engine instead of

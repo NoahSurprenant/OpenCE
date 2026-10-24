@@ -361,3 +361,91 @@ def test_skating_bots_tricks_in_a_fight(tmp_path):
     assert fights >= 2, f"the bots stepped off their boards for {fights} fights"
     assert interrupted <= max(1, fights // 3), f"{interrupted} of {fights} fights found a bot in the middle of a trick"
     assert sum(1 for n in fired.values() if n > 0) >= 3 and kills >= 4, f"the bots hardly fought: fired {fired}, scores {scores}"
+
+
+
+THROUGH = re.compile(r"skate: THROUGH THE FLOOR: player \d+'s biped \(skating.*")
+FELL_OUT = re.compile(r"skate: .*fell out of the level.*")
+
+
+def _floors_game(tmp_path, game_map, seed, minutes, addresses):
+    """a dedicated server (the server image's build) of eight hard bots that
+    skate, ram and fight (half ride at people on foot from their boards, half
+    step off to fight), and a client that joins it and looks about: the
+    server's log and the client's"""
+    import os
+    _, maps, assets = _needs_skate()
+    name = game_map
+    server = _start(tmp_path, name, _server(), maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SKATE_ASSETS": assets,
+        "HALO_SERVER_BOT_VEHICLES": "-1", "HALO_SERVER_BOTS": "8", "HALO_BOT_DIFFICULTIES": "hard",
+        "HALO_BOT_SKATE": os.environ.get("FLOORS_SKATE") or "ram,normal,ram,normal,ram,normal,ram,normal",
+        "HALO_BOT_SEED": str(seed), "HALO_GAME_SEED": str(seed), "HALO_SERVER_MAPS": f"{game_map}:slayer",
+        "HALO_SERVER_TIME_LIMIT": str(minutes), "HALO_SERVER_SCORE_LIMIT": "999",
+        "HALO_NET_ADDRESS": addresses[0], "HALO_NET_BROADCAST": addresses[1]})
+    games = {name: server}
+    games[name + "-join"] = _start(tmp_path, name + "-join", os.environ.get("HALO_TEST_GAME"), maps, {
+        "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "look:3",
+        "HALO_NETWORK_LOSS": "15", "HALO_NETWORK_LATENCY": "60", "HALO_GAME_SEED": str(seed),
+        "HALO_SKATE_ASSETS": assets, "HALO_NET_ADDRESS": addresses[1], "HALO_NET_BROADCAST": addresses[0]})
+    try:
+        _wait(lambda: len(SCORE.findall(_log(tmp_path, name))) >= 8, minutes * 60 + 400, games, tmp_path,
+              "the skating game did not end with the bots' scores")
+    finally:
+        _stop(games, tmp_path, {name: _server(), name + "-join": os.environ.get("HALO_TEST_GAME")})
+        for cache in tmp_path.rglob("cache*.map"):
+            cache.unlink()
+    return _log(tmp_path, name), _log(tmp_path, name + "-join")
+
+
+def test_skating_bots_floors(tmp_path):
+    """No skater goes through a floor, as the server has them or as a client
+    sees them: eight hard bots skate Blood Gulch, Sidewinder and Hang 'Em High
+    for two minutes each (seeded), into the bases and up and down their ramps,
+    wiping out, with a client watching over a lossy link (15% lost, 60 ms each
+    way). Every machine checks each player's biped each tick against the level
+    (skate.c's skate_bipeds_floor_check: its feet end more than a step - 0.15
+    world units - under a floor right over them) and no skater's does on
+    either (one riding off a ledge falls past it, not through it); no skater
+    falls out of the level.
+    About nine minutes."""
+    import os
+    maps = (os.environ.get("FLOORS_MAPS") or "bloodgulch,sidewinder,hangemhigh").split(",")
+    minutes = int(os.environ.get("FLOORS_MINUTES") or "2")
+    seed = int(os.environ.get("FLOORS_SEED") or "5")
+    found = {}
+    for game_map in maps:
+        server, client = _floors_game(tmp_path, game_map, seed, minutes, (_test_address(177), _test_address(178)))
+        boards = _boards(server)
+        found[game_map] = (THROUGH.findall(server), THROUGH.findall(client), FELL_OUT.findall(server))
+        print(f"{game_map}: {sum(b[2] for b in boards.values())} world units ridden by {len(boards)} bots; through "
+              f"floors {len(found[game_map][0])} (server), {len(found[game_map][1])} (client); fell out "
+              f"{len(found[game_map][2])}")
+        for line in found[game_map][0][:6] + found[game_map][1][:6] + found[game_map][2][:4]:
+            print("  ", line)
+        assert sum(b[2] for b in boards.values()) >= 100, f"the bots hardly rode {game_map}: {boards}"
+        assert re.search(r"skate network: player \d+ skates on another machine", client), "the client saw no skater"
+    if os.environ.get("FLOORS_TRIAL"):
+        return
+    assert not any(a or b or c for a, b, c in found.values()), found
+
+
+UNDER = re.compile(r"skate test: a skater got on the board from 0.15 in the floor at \(([-0-9.]+) ([-0-9.]+)\), the floor at "
+                   r"([-0-9.]+): the board at ([-0-9.]+), ([-0-9.]+) from the floor")
+
+
+def test_skating_bots_get_on_in_the_floor(tmp_path):
+    """A bot's biped left a little in the floor (as a skater's wipeout leaves
+    one: debug.skate_test_under_floor) gets on its board on that floor, not on
+    whatever lies under it (the ground probe started at its origin, under the
+    floor's surface, and missed it: the board went under the floor and fell
+    through), on Blood Gulch's dedicated server. About a minute and a half."""
+    _, maps, assets = _needs_skate()
+    log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
+        "HALO_SERVER_BOTS": "2", "HALO_BOT_DIFFICULTIES": "hard", "HALO_BOT_SKATE": "*ram", "HALO_BOT_SEED": "6",
+        "HALO_GAME_SEED": "6", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_SKATE_TEST_UNDER_FLOOR": "20"}, (_test_address(175), _test_address(176)), done=lambda log: UNDER.search(log))
+    found = UNDER.search(log)
+    print(found and found.group(0))
+    assert found, "no skater got on the board from in the floor"
+    assert abs(float(found.group(5))) < 0.1, f"the board was not on the floor: {found.group(0)}"

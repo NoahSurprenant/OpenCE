@@ -1093,7 +1093,11 @@ void skate_network_update_before_objects(void)
 		position.x = object->object.position.x + velocity->i;
 		position.y = object->object.position.y + velocity->j;
 		position.z = object->object.position.z + velocity->k;
+		/* (not on into the floor: a skater landing, or riding down a ramp
+		onto the flat, carried on would go under it until the next word) */
+		skate_floor_lift(unit_index, &position, 0.f);
 		object_set_position(unit_index, &position, &object->object.forward, &object->object.up);
+
 	}
 }
 
@@ -1913,6 +1917,17 @@ void skate_network_update_after_objects(void)
 		boolean posed = FALSE;
 		short count;
 
+		/* (on the floor, not in it: the host's places come between ticks
+		and over bumps, and a chord of the way it went dips under the ground) */
+		if (skate_network_player_skating(index) && (unit_index = skate_network_player_unit(index)) != NONE)
+		{
+			struct object_datum *unit = object_get(unit_index);
+			real_point3d position = unit->object.position;
+
+			skate_floor_lift(unit_index, &position, 0.f);
+			if (position.z != unit->object.position.z)
+				object_set_position(unit_index, &position, &unit->object.forward, &unit->object.up);
+		}
 		if (!skate_network_player_skating(index) || (unit_index = skate_network_player_unit(index)) == NONE ||
 			!skate_state_read(player->entry, player->entry + player->size, &player_index, &state))
 		{
