@@ -563,8 +563,8 @@ jobs:
             echo "::error::the eight tests of tools/test_skating_bots.py did not all run and pass"
             exit 1
           fi
-          if ! grep -q '4 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
-            echo "::error::the four tests of tools/test_infection.py did not all run and pass"
+          if ! grep -q '5 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
+            echo "::error::the five tests of tools/test_infection.py did not all run and pass"
             exit 1
           fi
 

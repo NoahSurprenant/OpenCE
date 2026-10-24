@@ -18,9 +18,18 @@ skater's; tuned with the bots: tools/test_infection.py) */
 /* ... and how much wider a survivor is to an infected's board (hundredths of
 a world unit) */
 #define INFECTION_DEFAULT_REACH 80
+/* ... and their boards' speed (percent of any skater's) */
+#define INFECTION_DEFAULT_SPEED 115
 
+
+struct game_variant;
+/* the variant's Infection settings left 0 (a Slayer variant, a gametype
+saved before them) made the game type's own; the round and run-over's 0 were
+already read so */
+void infection_variant_defaults(struct game_variant *variant);
 
 /* the teams */
+
 
 #define INFECTION_TEAM_SURVIVORS 0
 #define INFECTION_TEAM_INFECTED 1
@@ -68,6 +77,11 @@ real infection_damage_taken_scale(long damaged_player_index);
 /* skate.c: how much wider (world units) a survivor's biped is to an infected
 skater's board, the variant's infection_reach (0 for any other) */
 real infection_board_reach(long skater_unit_index, long biped_index);
+/* skate.c: how much faster than the game the unit's skate session steps -
+the variant's infection_speed for an infected skater (their board is that
+much quicker, pushing and at speed), else 1 */
+real infection_skate_time_scale(long unit_index);
+
 
 
 /* game_engine.c: a team's change colour (the infected green) */

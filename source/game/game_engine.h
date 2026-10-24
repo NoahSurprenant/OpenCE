@@ -118,6 +118,10 @@ struct slayer_variant
 	/* how much wider a survivor is to an infected skater's board, hundredths
 	of a world unit (skate.c) */
 	byte infection_reach;
+	/* the infected's boards' speed, in percent of any skater's: their skate
+	sessions run that much faster (skate.c); 0: 100 */
+	byte infection_speed;
+
 
 
 };

@@ -904,6 +904,7 @@ static boolean skate_unit_can_skate(long unit_index)
 /* starting: getting on the board, when the camera takes the board's heading */
 static void skate_apply_frame(struct skate_skater *skater, long unit_index, boolean starting)
 {
+
 	struct object_datum *object = object_get(unit_index);
 	real_point3d position;
 	real_vector3d forward, up;
@@ -2788,7 +2789,9 @@ static void skate_bots_begin_steps(void)
 		if (skate_bots_load.every > 1 && (game_time_get() + index) % skate_bots_load.every != 0)
 			continue;
 		skate_send_obstacles(skater, skater->unit_index);
-		skater->stepping = halo_skate_step_begin_in(index, &skater->pad, 1.f / TICKS_PER_SECOND) == 0;
+		/* (Infection: an infected's board quicker, its session faster) */
+		skater->stepping = halo_skate_step_begin_in(index, &skater->pad,
+			infection_skate_time_scale(skater->unit_index) / TICKS_PER_SECOND) == 0;
 		skate_bots_load.stepped += skater->stepping;
 		if (!skater->stepping && halo_skate_state_in(index) == -1)
 		{
@@ -2980,7 +2983,19 @@ static void skate_local_update(void)
 	/* (a blast pushed them) */
 	skate_apply_blast(skater);
 	skate_send_obstacles(skater, skater->unit_index);
-	stepped =halo_skate_step(&pad, 1.f / TICKS_PER_SECOND, &skater->frame);
+	{
+		static real told_scale = 1.f;
+		real scale = infection_skate_time_scale(skater->unit_index);
+
+		if (scale != told_scale)
+		{
+			told_scale = scale;
+			platform_log("skate: this machine's skater rides at %.2f times the speed (Infection)", scale);
+		}
+		stepped = halo_skate_step(&pad, scale / TICKS_PER_SECOND, &skater->frame);
+	}
+
+
 	if (stepped == 2)
 	{
 		/* a step failed (a bail the engine could not follow): the engine put

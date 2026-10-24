@@ -362,6 +362,7 @@ static char const *const port_function_names[] =
 	"port lobby preview join",
 	"port setup edit",
 	"port setup options init", "port setup options save",
+	"mp profile init infection rules", "mp profile set infection rules",
 	"port map list back",
 	"port pause end game",
 	"port coop begin", "port coop player 2 list initialize", "port coop player 2",

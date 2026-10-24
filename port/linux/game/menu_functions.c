@@ -83,6 +83,7 @@ their handlers open opens.
 #include "custom_edition_maps.h"
 #include "network_voice.h"
 #include "spectate.h"
+#include "infection.h"
 #include "text/draw_string.h"
 /* (internet play's server browser: the platform layer's) */
 #include "../src/p2p.h"
@@ -2278,6 +2279,33 @@ int config_boolean(char const *name);
 void ui_widget_port_post_button(short controller_index, short button_index);
 
 static wchar_t const *const engine_names[] = { L"", L"CTF", L"SLAYER", L"ODDBALL", L"KING OF THE HILL", L"RACE" };
+
+/* a variant's type as the menus name it: its engine's, or the port's
+Infection (port/linux/game/infection.c), Slayer by its engine */
+static wchar_t const *variant_type_name(struct game_variant const *variant)
+{
+	if (variant->game_engine_index == game_engine_slayer && variant->game_engine_variant.slayer.infection)
+		return L"INFECTION";
+	return engine_names[PIN(variant->game_engine_index, 0, 5)];
+}
+
+/* the gametype list's detail panel: the type, then teams or free for all
+and the score to win (Infection: what it is, and its round) */
+static void gametype_data_text(struct game_variant const *variant, wchar_t *text, long count)
+{
+	if (variant->game_engine_index == game_engine_slayer && variant->game_engine_variant.slayer.infection)
+	{
+		usnprintf(text, count - 1, L"INFECTION\r\nRide the survivors down on a board\r\nRound: %d minutes",
+			variant->game_engine_variant.slayer.infection_minutes > 0 ?
+				(int)variant->game_engine_variant.slayer.infection_minutes : 5);
+	}
+	else
+	{
+		usnprintf(text, count - 1, L"%s\r\n%s\r\nScore to win: %ld", variant_type_name(variant),
+			variant->universal_variant.teams ? L"Teams" : L"Free for all", variant->universal_variant.score_to_win);
+	}
+	text[count - 1] = 0;
+}
 static short const maximum_players[] = { 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128 };
 
 static struct
@@ -2783,9 +2811,7 @@ static void gametype_list_update(struct widget_instance *list)
 
 			if ((widget = named(description, "gametype_right_pic", 0)) != NULL)
 				widget->animation.current_frame_index = (short)engine;
-			usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%s\r\nScore to win: %ld", engine_names[engine],
-				variant.universal_variant.teams ? L"Teams" : L"Free for all", variant.universal_variant.score_to_win);
-			text[NUMBEROF(text) - 1] = 0;
+			gametype_data_text(&variant, text, NUMBEROF(text));
 			text_set(named(description, "gametype_right_data", 0), text);
 		}
 	}
@@ -4429,7 +4455,7 @@ static void lobby_update(struct widget_instance *list)
 		if (watching > 0)
 			usnprintf(spectators, NUMBEROF(spectators) - 1, L", %d watching", watching);
 		usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%s\r\n%d of %d players%s\r\n\r\n%s", gametype,
-			engine_names[PIN(game->variant.game_engine_index, 0, 5)], lobby_player_count, game->maximum_players,
+			variant_type_name(&game->variant), lobby_player_count, game->maximum_players,
 			spectators,
 			waiting ? waits : seconds > 0 ? L"Starting in:" : game->machine_count < 2 ? L"Waiting for players" : L"");
 		text[NUMBEROF(text) - 1] = 0;
@@ -4646,7 +4672,9 @@ enum
 	_option_short,		/* a short of the options */
 	_option_option_byte,	/* a byte of the options */
 	_option_radar,		/* the options' radar players, and the variant's flag */
-	_option_setting		/* the host's own (config.toml): Server Setup's copy only */
+	_option_setting,	/* the host's own (config.toml): Server Setup's copy only */
+	_option_number_byte,	/* a byte of the variant, a number (Infection's) */
+	_option_number_short	/* a short of the variant, a number (Infection's) */
 };
 
 /* the most choices a spinner of Edit Gametypes' or Server Setup's has (its
@@ -4790,7 +4818,23 @@ static struct gametype_option const gametype_options[] =
 	{ "bot_difficulty_spinner", _option_setting, 0, 0, 5, { 0 }, "server.bot_difficulty",
 		{ "peaceful", "easy", "normal", "hard", "legendary" } },
 	{ "bots_fill_spinner", _option_setting, 0, 0, 2, { 0 }, "server.bots_fill", { "false", "true" } },
+	/* Infection's (port/linux/game/infection.c; tools/port_settings.py's
+	INFECTION_ROWS: their words): on Slayer's screen, and its own screen */
+	{ "infection_spinner", _option_byte, VARIANT_FIELD(game_engine_variant.slayer.infection), 0, 2, { 0, 1 } },
+	{ "infection_speed_spinner", _option_number_byte, VARIANT_FIELD(game_engine_variant.slayer.infection_speed), 0, 9,
+		{ 100, 105, 110, 115, 120, 125, 130, 140, 150 } },
+	{ "infection_damage_taken_spinner", _option_number_byte,
+		VARIANT_FIELD(game_engine_variant.slayer.infection_damage_taken), 0, 7, { 25, 35, 50, 65, 75, 90, 100 } },
+	{ "infection_run_over_spinner", _option_number_short, VARIANT_FIELD(game_engine_variant.slayer.infection_run_over),
+		0, 7, { 100, 150, 200, 300, 400, 500, 1000 } },
+	{ "infection_reach_spinner", _option_number_byte, VARIANT_FIELD(game_engine_variant.slayer.infection_reach), 0, 6,
+		{ 20, 40, 60, 80, 100, 120 } },
+	{ "infection_ratio_spinner", _option_number_byte, VARIANT_FIELD(game_engine_variant.slayer.infection_ratio), 0, 6,
+		{ 4, 6, 8, 10, 12, 16 } },
+	{ "infection_minutes_spinner", _option_number_byte, VARIANT_FIELD(game_engine_variant.slayer.infection_minutes), 0,
+		8, { 1, 2, 3, 4, 5, 6, 8, 10 } },
 	/* vehicle options (the side's set and counts: vehicles_update) */
+
 	{ "vehicles_respawn_spinner", _option_short, OPTIONS_FIELD(vehicle_respawn_time), 0, 7,
 		{ 0, 30, 60, 90, 120, 180, 300 } },
 };
@@ -4844,6 +4888,8 @@ static long gametype_option_value(struct gametype_option const *option, struct g
 	case _option_short: return *(short *)(o + option->offset);
 	case _option_option_byte: return o[option->offset];
 	case _option_radar: return options->radar_players;
+	case _option_number_byte: return v[option->offset];
+	case _option_number_short: return *(short *)(v + option->offset);
 	}
 	return 0;
 }
@@ -4867,6 +4913,8 @@ static void gametype_option_value_set(struct gametype_option const *option, long
 	case _option_health: variant->universal_variant.health = (real)value / 10.0f; break;
 	case _option_short: *(short *)(o + option->offset) = (short)value; break;
 	case _option_option_byte: o[option->offset] = (byte)value; break;
+	case _option_number_byte: v[option->offset] = (byte)value; break;
+	case _option_number_short: *(short *)(v + option->offset) = (short)value; break;
 	case _option_radar:
 		/* (and the Xbox's flag: other players on the tracker or not) */
 		options->radar_players = (byte)value;
@@ -5106,7 +5154,11 @@ static boolean gametype_options_init(struct widget_instance *list)
 {
 	if (!edit_variant())
 		return campaign_fail();
+	/* (Infection's screen: its settings the game type's own where unset) */
+	if (named(list, "op_infection", 0))
+		infection_variant_defaults(edit_variant());
 	gametype_options_each(list, FALSE);
+
 	if (named(list, "op_team", 0))
 		vehicles_show(list);
 	return TRUE;
@@ -5164,7 +5216,8 @@ static void gametype_setup_type(wchar_t *text)
 	ustrncpy(name, gametype_edit.setup_variant.human_readable_game_description, NUMBEROF(name) - 1);
 	name[NUMBEROF(name) - 1] = 0;
 	usnprintf(text, ROW_TEXT_LENGTH - 1, L"%s (%s%s)", name,
-		engine_names[PIN(gametype_edit.setup_variant.game_engine_index, 0, 5)],
+		variant_type_name(&gametype_edit.setup_variant),
+
 		gametype_edit.setup_variant.universal_variant.teams ? L", TEAMS" : L"");
 	text[ROW_TEXT_LENGTH - 1] = 0;
 }
@@ -5237,9 +5290,7 @@ static void gametype_edit_list_update(struct widget_instance *list)
 
 			if ((widget = named(description, "gametype_right_pic", 0)) != NULL)
 				widget->animation.current_frame_index = (short)engine;
-			usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%s\r\nScore to win: %ld", engine_names[engine],
-				variant.universal_variant.teams ? L"Teams" : L"Free for all", variant.universal_variant.score_to_win);
-			text[NUMBEROF(text) - 1] = 0;
+			gametype_data_text(&variant, text, NUMBEROF(text));
 			text_set(named(description, "gametype_right_data", 0), text);
 		}
 	}
@@ -5402,7 +5453,22 @@ static void gametype_engine_name(struct widget_instance *text_box)
 
 /* ---------- public code */
 
+/* (network_test.c's debug.gametype_edit) a gametype's option set as its
+spinner in the editor sets it: the choice nearest value; FALSE for no such
+spinner (or a host's own setting) */
+boolean pc_menu_gametype_option_apply(struct game_variant *variant, struct game_variant_options *options,
+	char const *spinner, long value)
+{
+	struct gametype_option const *option = gametype_option_named(spinner);
+
+	if (!option || option->kind == _option_setting)
+		return FALSE;
+	gametype_option_value_set(option, option->values[gametype_option_index(option, value)], variant, options);
+	return TRUE;
+}
+
 boolean pc_menu_event_function_invoke(
+
 	struct widget_instance *widget,
 	struct event_record *event,
 	long function_index,

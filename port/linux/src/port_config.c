@@ -646,7 +646,16 @@ static const struct config_setting config_settings[] =
 		"Infection's test: the infected press fire, melee, grenade, action,\n"
 		"swap and reload every tick, and bots ask off their boards (none of it\n"
 		"may happen); the host logs what it refused and any rule broken." },
-	{ "debug.infection_first", _config_string, "\"\"", "HALO_INFECTION_FIRST", _environment_value, _platform_all,
+	{ "debug.gametype_edit", _config_string, "\"\"", "HALO_GAMETYPE_EDIT", _environment_value, _platform_all,
+		"A test's gametype, edited as the gametype editor's spinners do it\n"
+		"(debug.network_test's host): \"<spinner>=<value>\" pairs with commas between,\n"
+		"each set to the spinner's choice nearest the value." },
+	{ "server.infection_speed", _config_integer, "0", "HALO_SERVER_INFECTION_SPEED", _environment_value,
+		_platform_all,
+		"Infection: the infected's boards' speed, in percent of any skater's; 0\n"
+		"for the game type's own (115)." },
+	{ "debug.infection_first", _config_string,
+ "\"\"", "HALO_INFECTION_FIRST", _environment_value, _platform_all,
 		"Infection's test: the players (absolute indices, with commas between)\n"
 		"who start infected, instead of a random choice; \"client\": the people on\n"
 		"other machines than the host." },

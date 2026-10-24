@@ -6568,11 +6568,8 @@ struct game_variant *build_game_variant_infection(
 	result.game_engine_variant.slayer.no_death_bonus = TRUE;
 	result.game_engine_variant.slayer.no_kill_penalty = TRUE;
 	result.game_engine_variant.slayer.infection = TRUE;
-	result.game_engine_variant.slayer.infection_run_over = INFECTION_DEFAULT_RUN_OVER;
-	result.game_engine_variant.slayer.infection_minutes = 5;
-	result.game_engine_variant.slayer.infection_ratio = 8;
-	result.game_engine_variant.slayer.infection_damage_taken = INFECTION_DEFAULT_DAMAGE_TAKEN;
-	result.game_engine_variant.slayer.infection_reach = INFECTION_DEFAULT_REACH;
+	infection_variant_defaults(&result);
+
 
 	*variant = result;
 
@@ -7227,7 +7224,11 @@ struct game_variant *game_engine_get_variant_by_name(
 		/* (debug.infection_reach: the tuning's) */
 		if (config_integer("debug.infection_reach") > 0)
 			result.game_engine_variant.slayer.infection_reach = (byte)MIN(config_integer("debug.infection_reach"), 255);
+		/* (server.infection_speed: likewise) */
+		if (config_integer("server.infection_speed") > 0)
+			result.game_engine_variant.slayer.infection_speed = (byte)MIN(config_integer("server.infection_speed"), 250);
 		/* (server.infection_damage_taken: likewise) */
+
 
 		if (config_integer("server.infection_damage_taken") > 0)
 		{
