@@ -111,6 +111,15 @@ struct slayer_variant
 	byte infection_minutes;
 	/* one infected at the start for each this many players; 0: 8 */
 	byte infection_ratio;
+	/* the damage the infected take, in percent of anyone's (their
+	toughness: the survivors' guns would stop every skater short of them);
+	0: 100 */
+	byte infection_damage_taken;
+	/* how much wider a survivor is to an infected skater's board, hundredths
+	of a world unit (skate.c) */
+	byte infection_reach;
+
+
 };
 
 struct king_variant

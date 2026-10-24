@@ -1481,7 +1481,12 @@ static boolean bot_infection_flee(
 	struct object_datum *self = object_get(unit_index);
 	struct data_iterator iterator;
 	struct player_datum *player;
-	real best = BOT_FLEE_DISTANCE * BOT_FLEE_DISTANCE;
+	/* (how far it looks out for one, by its difficulty: an easy bot never
+	steps aside, a normal one only late) */
+	real reach = bot->difficulty == _bot_difficulty_easy ? 0.0f :
+		bot->difficulty == _bot_difficulty_normal ? BOT_FLEE_DISTANCE * 2.0f / 3.0f : BOT_FLEE_DISTANCE;
+	real best = reach * reach;
+
 	real away_x = 0.0f, away_y = 0.0f;
 	boolean found = FALSE;
 
@@ -1612,8 +1617,19 @@ void bot_brain_think(
 		else
 			bot_wander(brain, &position, action);
 		bot_skate_think(bot, player_index, unit_index, action);
+		/* (debug.infection_test_press: it presses everything it may not,
+		every tick, which players.c takes out before its unit has it) */
+		if (config_boolean("debug.infection_test_press"))
+		{
+			action->control_flags |= FLAG(_unit_control_weapon_primary_trigger_bit) |
+				FLAG(_unit_control_weapon_secondary_trigger_bit) | FLAG(_unit_control_throw_grenade_bit) |
+				FLAG(_unit_control_action_bit) | FLAG(_unit_control_swap_weapons_bit) |
+				FLAG(_unit_control_weapon_reload_bit) | FLAG(_unit_control_use_equipment_bit);
+			action->primary_trigger = 1.0f;
+		}
 		return;
 	}
+
 	/* (a vehicle: on its way to its door, in it, getting out, flipping it
 	over: bots_vehicle.c; standing at a door is getting somewhere) */
 	if (bot_vehicle_think(bot, player_index, unit_index, &position, action))

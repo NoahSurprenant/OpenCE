@@ -632,7 +632,16 @@ static const struct config_setting config_settings[] =
 		"Infection (port/linux/README.md's \"Infection\"): the damage an infected\n"
 		"skater's run-over deals, in percent of any skater's; 0 for the game\n"
 		"type's own (300)." },
-	{ "debug.infection_test_press", _config_boolean, "false", "HALO_INFECTION_TEST_PRESS", _environment_value,
+	{ "server.infection_damage_taken", _config_integer, "0", "HALO_SERVER_INFECTION_DAMAGE_TAKEN", _environment_value,
+		_platform_all,
+		"Infection: the damage the infected take, in percent of anyone's (their\n"
+		"toughness); 0 for the game type's own (50)." },
+	{ "debug.infection_reach", _config_integer, "0", "HALO_INFECTION_REACH", _environment_value, _platform_all,
+		"Infection's tuning: how much wider a survivor is to an infected skater's\n"
+		"board, in hundredths of a world unit; 0 for the game type's own (35)." },
+	{ "debug.infection_test_press", _config_boolean,
+
+ "false", "HALO_INFECTION_TEST_PRESS", _environment_value,
 		_platform_all,
 		"Infection's test: the infected press fire, melee, grenade, action,\n"
 		"swap and reload every tick, and bots ask off their boards (none of it\n"

@@ -449,8 +449,13 @@ jobs:
     # with the data (a bot running another over; peaceful bots harming
     # nobody; tricks: hard bots flipping, grinding and chaining combos far
     # more than easy ones, and tricks giving way to fights) and without it
-    # (the bots on foot).
+    # (the bots on foot). tools/test_infection.py (Infection:
+    # port/linux/README.md's "Infection") runs beside them too: an infected
+    # bot running survivors over to infect them, the infected keeping the
+    # rules (always on a board, unarmed, no vehicle), and a balance round of
+    # eight bots.
     #
+
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
     # --skate --lto=off --pgo=off), and the server of
     # test_dedicated_server_skaters the image's (docker/server/Dockerfile:
@@ -463,7 +468,7 @@ jobs:
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: opence-k8s
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       HALO_SKATE_TEST_ASSETS: /skate-assets/skate-data/assets
       HALO_SKATE_TEST_HALO_MAPS: /skate-assets/halo/maps
@@ -540,16 +545,26 @@ jobs:
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-bots" \
             tools/test_skating_bots.py > "$RUNNER_TEMP/skate-bots.log" 2>&1 &
           bots=$!
+          # (and Infection, tools/test_infection.py, beside them too)
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/infection" \
+            tools/test_infection.py > "$RUNNER_TEMP/infection.log" 2>&1 &
+          infection=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
             tools/test_linux_port.py -k "test_skate_multiplayer or test_skate_hitbox or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log" || true
           wait $bots || true
+          wait $infection || true
           cat "$RUNNER_TEMP/skate-bots.log"
+          cat "$RUNNER_TEMP/infection.log"
           if ! grep -q '7 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
             echo "::error::test_skate_multiplayer, test_skate_hitbox and the five test_dedicated_server tests did not all run and pass"
             exit 1
           fi
           if ! grep -q '8 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
             echo "::error::the eight tests of tools/test_skating_bots.py did not all run and pass"
+            exit 1
+          fi
+          if ! grep -q '4 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
+            echo "::error::the four tests of tools/test_infection.py did not all run and pass"
             exit 1
           fi
 
@@ -561,7 +576,9 @@ jobs:
       - name: Game logs
         if: failure()
         run: |
-          for f in "$RUNNER_TEMP"/skate-mp/*/*/run.log "$RUNNER_TEMP"/skate-bots/*/*/run.log; do
+          for f in "$RUNNER_TEMP"/skate-mp/*/*/run.log "$RUNNER_TEMP"/skate-bots/*/*/run.log \
+            "$RUNNER_TEMP"/infection/*/*/run.log; do
+
             [ -f "$f" ] && { echo "== $f"; tail -n 60 "$f"; }
           done
           true

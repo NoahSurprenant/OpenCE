@@ -6567,6 +6567,8 @@ struct game_variant *build_game_variant_infection(
 	result.game_engine_variant.slayer.infection_run_over = INFECTION_DEFAULT_RUN_OVER;
 	result.game_engine_variant.slayer.infection_minutes = 5;
 	result.game_engine_variant.slayer.infection_ratio = 8;
+	result.game_engine_variant.slayer.infection_damage_taken = INFECTION_DEFAULT_DAMAGE_TAKEN;
+	result.game_engine_variant.slayer.infection_reach = INFECTION_DEFAULT_REACH;
 
 	*variant = result;
 
@@ -7218,6 +7220,17 @@ struct game_variant *game_engine_get_variant_by_name(
 		/* (server.infection_run_over: the dedicated server's own) */
 		if (run_over > 0)
 			result.game_engine_variant.slayer.infection_run_over = (short)MIN(run_over, 5000);
+		/* (debug.infection_reach: the tuning's) */
+		if (config_integer("debug.infection_reach") > 0)
+			result.game_engine_variant.slayer.infection_reach = (byte)MIN(config_integer("debug.infection_reach"), 255);
+		/* (server.infection_damage_taken: likewise) */
+
+		if (config_integer("server.infection_damage_taken") > 0)
+		{
+			result.game_engine_variant.slayer.infection_damage_taken =
+				(byte)MIN(config_integer("server.infection_damage_taken"), 255);
+		}
+
 	}
 
 
@@ -7842,6 +7855,9 @@ real game_engine_get_damage_multiplier(
 
 	if (game_engine)
 		result /= PIN(global_variant.universal_variant.health, 0.25f, 4.0f);
+
+	/* port: Infection: the infected take less (infection_damage_taken) */
+	result *= infection_damage_taken_scale(damaged_player_index);
 
 	if (damaging_player_index != NONE &&
 		damaged_player_index != NONE)

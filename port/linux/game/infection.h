@@ -13,6 +13,12 @@ machine has from the host (a unit's owner_team_index: no wire change). */
 /* the variant's run-over damage of an infected skater (percent of any
 skater's; tuned with the bots: tools/test_infection.py) */
 #define INFECTION_DEFAULT_RUN_OVER 300
+/* ... and the damage the infected take (percent of anyone's) */
+#define INFECTION_DEFAULT_DAMAGE_TAKEN 50
+/* ... and how much wider a survivor is to an infected's board (hundredths of
+a world unit) */
+#define INFECTION_DEFAULT_REACH 35
+
 
 /* the teams */
 
@@ -55,6 +61,14 @@ long infection_survival_seconds(long player_index);
 /* skate_authority.c: the share of a vehicle's run-over damage a skater's hit
 deals, scaled for an infected skater (the variant's infection_run_over) */
 real infection_run_over_share(long skater_unit_index, real share);
+/* game_engine_get_damage_multiplier: the scale of the damage the player (a
+datum, NONE: none) takes - the variant's infection_damage_taken for the
+infected, else 1 */
+real infection_damage_taken_scale(long damaged_player_index);
+/* skate.c: how much wider (world units) a survivor's biped is to an infected
+skater's board, the variant's infection_reach (0 for any other) */
+real infection_board_reach(long skater_unit_index, long biped_index);
+
 
 /* game_engine.c: a team's change colour (the infected green) */
 real_rgb_color const *infection_change_color(long team_index);

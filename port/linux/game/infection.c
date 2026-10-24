@@ -60,9 +60,13 @@ static struct
 	/* the tick each player (by absolute index) was first seen infected,
 	NONE while a survivor */
 	long infected_tick[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
+	/* the infected unit each player was last disarmed in (the host) */
+	long disarmed_unit[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
 	/* the game's start was seen (the host picked its first infected) */
 	boolean started;
 	boolean over_logged;
+	/* this machine's first player's team, as last told (NONE: none) */
+	long local_team;
 	/* (debug.infection_test_press) the refused presses counted, and the
 	breaches of the rules seen (a test fails on any) */
 	long refused_ticks;
@@ -109,13 +113,10 @@ void infection_filter_action(long player_index, long unit_index, unsigned long *
 {
 	if (!infection_unit_restricted(unit_index))
 		return;
-	/* (debug.infection_test_press: the infected press all of it, every tick,
-	for the tests: none of it may reach their unit) */
-	if (config_boolean("debug.infection_test_press"))
-	{
-		*control_flags |= INFECTION_REFUSED_CONTROLS & ~FLAG(UNIT_CONTROL_PORT_ACTION_ONLY_BIT);
+	/* (counted for the tests: debug.infection_test_press has the bots press
+	all of it every tick, and none of it may reach their unit) */
+	if (*control_flags & INFECTION_REFUSED_CONTROLS)
 		infection.refused_ticks++;
-	}
 	*control_flags &= ~(unsigned long)INFECTION_REFUSED_CONTROLS;
 	(void)player_index;
 }
@@ -216,9 +217,13 @@ void infection_game_starting(void)
 	short index;
 
 	for (index = 0; index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
+	{
 		infection.infected_tick[index] = NONE;
+		infection.disarmed_unit[index] = NONE;
+	}
 	infection.started = TRUE;
 	infection.over_logged = FALSE;
+	infection.local_team = NONE;
 	infection.refused_ticks = 0;
 	infection.breaches = 0;
 	infection.next_report_tick = 0;
@@ -340,12 +345,15 @@ static void infection_check_rules(void)
 			weapons += unit->unit.weapon_object_indices[index] != NONE;
 		for (index = 0; index < NUMBER_OF_UNIT_GRENADE_TYPES; index++)
 			grenades += unit->unit.grenade_counts[index];
-		if (weapons || grenades || unit->object.parent_object_index != NONE)
+		/* (what reached the unit: its control flags of this tick) */
+		if (weapons || grenades || unit->object.parent_object_index != NONE ||
+			(unit->unit.control_flags & INFECTION_REFUSED_CONTROLS))
 		{
 			infection.breaches++;
-			platform_log("infection: RULE BROKEN: infected player %ld has %ld weapons, %ld grenades, %s at tick %ld",
-				infection_absolute(iterator.datum_index), weapons, grenades,
-				unit->object.parent_object_index != NONE ? "in a vehicle" : "on foot", now);
+			platform_log("infection: RULE BROKEN: infected player %ld has %ld weapons, %ld grenades, %s, controls %lx "
+				"at tick %ld", infection_absolute(iterator.datum_index), weapons, grenades,
+				unit->object.parent_object_index != NONE ? "in a vehicle" : "on foot",
+				(unsigned long)unit->unit.control_flags, now);
 		}
 		if (report)
 		{
@@ -365,7 +373,8 @@ static void infection_check_rules(void)
 }
 
 /* the infected's weapons and grenades taken (the host: its units are the
-game's); each tick, so a spawn's starting weapons never stay */
+game's), once for each unit, as it spawns: none comes back (they pick up
+nothing), which infection_check_rules sees */
 static void infection_disarm(void)
 {
 	struct data_iterator iterator;
@@ -377,9 +386,15 @@ static void infection_disarm(void)
 		struct unit_datum *unit;
 		short index;
 		boolean armed = FALSE;
+		long absolute = infection_absolute(iterator.datum_index);
 
-		if (player->unit_index == NONE || !infection_unit_restricted(player->unit_index))
+		if (absolute == NONE || player->unit_index == NONE || !infection_unit_restricted(player->unit_index) ||
+			infection.disarmed_unit[absolute] == player->unit_index)
+		{
 			continue;
+		}
+		infection.disarmed_unit[absolute] = player->unit_index;
+
 		unit = (struct unit_datum *)object_get(player->unit_index);
 		for (index = 0; index < MAXIMUM_WEAPONS_PER_UNIT; index++)
 			armed |= unit->unit.weapon_object_indices[index] != NONE;
@@ -411,8 +426,21 @@ void infection_update(void)
 		else if (player->team_index != INFECTION_TEAM_INFECTED)
 			infection.infected_tick[absolute] = NONE;
 	}
+	/* (every machine: its own player's side, told when it changes) */
+	{
+		long local = local_player_get_player_index(0);
+		struct player_datum *mine = local != NONE ? player_try_and_get(local) : NULL;
+
+		if (mine && mine->team_index != infection.local_team)
+		{
+			infection.local_team = mine->team_index;
+			platform_log("infection: this machine's player %ld is %s at tick %ld", infection_absolute(local),
+				mine->team_index == INFECTION_TEAM_INFECTED ? "infected" : "a survivor", now);
+		}
+	}
 	if (!infection_host() || !game_engine_port_game_active())
 		return;
+
 	infection_disarm();
 	/* the last infected gone (quit) with survivors still playing: one of them
 	is infected, dying where they stand to come back on a board */
@@ -468,7 +496,31 @@ real infection_run_over_share(long skater_unit_index, real share)
 	return MIN(1.0f, share * (real)percent / 100.0f);
 }
 
+real infection_damage_taken_scale(long damaged_player_index)
+{
+	long percent;
+
+	if (!infection_player_infected(damaged_player_index))
+		return 1.0f;
+	percent = infection_variant()->game_engine_variant.slayer.infection_damage_taken;
+	return percent > 0 ? (real)percent / 100.0f : 1.0f;
+}
+
+real infection_board_reach(long skater_unit_index, long biped_index)
+{
+	struct object_datum *biped;
+
+	if (!infection_unit_restricted(skater_unit_index) || !(biped = object_try_and_get(biped_index)) ||
+		biped->object.owner_player_index == NONE || biped->object.owner_team_index != INFECTION_TEAM_SURVIVORS)
+	{
+		return 0.0f;
+	}
+	return infection_variant()->game_engine_variant.slayer.infection_reach / 100.0f;
+}
+
 real_rgb_color const *infection_change_color(long team_index)
+
+
 {
 	return team_index == INFECTION_TEAM_INFECTED ? &infection_green : global_real_rgb_red;
 }

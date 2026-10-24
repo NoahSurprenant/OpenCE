@@ -1911,7 +1911,11 @@ static real skate_distance(real_point3d const *a, float const *b)
 
 /* a biped as its collision pill (bipeds.c's biped_get_physics_pill, but as
 tall as it stands for AI too, whose pill Halo keeps a sphere) */
+/* the unit whose skater the obstacles are for (skate_send_obstacles) */
+static long skate_obstacles_rider = NONE;
+
 static void skate_biped_obstacle(long object_index, real_point3d const *skater, struct skate_obstacles *kept)
+
 {
 	struct biped_datum *biped = biped_get(object_index);
 	struct biped_definition *definition = biped_definition_get(biped->definition_index);
@@ -1926,6 +1930,14 @@ static void skate_biped_obstacle(long object_index, real_point3d const *skater, 
 	if (!(radius > 0.f))
 		return;
 	segment = TEST_FLAG(definition->biped.flags, _biped_spherical_bit) ? 0.f : MAX(height - 2.f * radius, 0.f);
+	/* (Infection: a survivor is wider to an infected skater, the pill's
+	height kept) */
+	{
+		real reach = infection_board_reach(skate_obstacles_rider, object_index);
+
+		segment = MAX(segment - 2.f * reach, 0.f);
+		radius += reach;
+	}
 	object_get_origin(object_index, &base);
 	if (!TEST_FLAG(definition->biped.flags, _biped_pill_centered_at_origin_bit))
 		base.z += radius;
@@ -2338,6 +2350,8 @@ static void skate_send_obstacles(struct skate_skater *rider, long unit_index)
 	vehicles and other skaters: skate_authority.c) */
 	skate_obstacles_held = skate_authority_holds();
 	skate_obstacles_run_over = skate_skater_riding(rider);
+	/* (Infection: an infected skater's board reaches wider for survivors) */
+	skate_obstacles_rider = unit_index;
 	object_get_origin(unit_index, &skater);
 	/* (collideable objects only: class bit 0) */
 	count = objects_in_sphere(FLAG(0),
