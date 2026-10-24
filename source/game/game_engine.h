@@ -99,6 +99,27 @@ struct slayer_variant
 	boolean no_death_bonus;
 	boolean no_kill_penalty;
 	boolean kill_in_order;
+	/* port: Infection (port/linux/game/infection.c), in bytes the Xbox's
+	variant left unused (the union is the oddball variant's size): the
+	infected run people over to infect them. Builds before it play Team
+	Slayer. */
+	boolean infection;
+	/* the run-over damage of an infected skater, in percent of any
+	skater's (skate_authority.c); 0: 100 */
+	short infection_run_over;
+	/* the round's minutes (the survivors win when it runs out); 0: 5 */
+	byte infection_minutes;
+	/* one infected at the start for each this many players; 0: 8 */
+	byte infection_ratio;
+	/* the damage the infected take, in percent of anyone's (their
+	toughness: the survivors' guns would stop every skater short of them);
+	0: 100 */
+	byte infection_damage_taken;
+	/* how much wider a survivor is to an infected skater's board, hundredths
+	of a world unit (skate.c) */
+	byte infection_reach;
+
+
 };
 
 struct king_variant
@@ -615,6 +636,16 @@ long find_netgame_flag(
 
 boolean game_engine_should_end_game(
 	void);
+/* port: game_engine.c's helpers (Infection: port/linux/game/infection.c) */
+long game_engine_port_time_limit_ticks(
+	void);
+boolean game_engine_port_game_active(
+	void);
+long game_engine_port_player_score(
+	long player_index);
+void game_engine_port_set_player_team(
+	long player_index,
+	long team_index);
 
 void game_engine_clear_goal_position(
 	short goal_index);

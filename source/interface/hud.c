@@ -113,6 +113,7 @@ symbols in this file:
 #include "text/text_group.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "infection.h" /* port: port/linux/game/infection.c */
 
 /* ---------- constants */
 
@@ -1409,7 +1410,11 @@ void hud_draw_screen(
 		/* port: players' names above their heads, in multiplayer and network co-op */
 		if ((game_engine_running() || network_coop_active()) && !cinematic_in_progress())
 			hud_draw_player_names();
+		/* port: Infection: the player's side and the survivors left */
+		if (!cinematic_in_progress())
+			infection_draw(render.local_player_index);
 		/* port: who a dead network co-op player is watching */
+
 		if (player->unit_index == NONE && coop_spectating() && !cinematic_in_progress())
 			coop_spectate_draw(render.local_player_index);
 		/* port: the network co-op vote to skip a cinematic */

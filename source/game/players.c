@@ -279,6 +279,7 @@ symbols in this file:
 #include "units/units.h"
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
+#include "infection.h" /* port: port/linux/game/infection.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -4856,6 +4857,10 @@ void players_update_before_game(
 				if (!players_globals->input_disabled)
 				{
 					network_player_log_idle_action(iterator.datum_index, action->control_flags);
+					/* port: Infection: the infected neither fire, melee,
+					throw, act (pick up, board) nor swap */
+					infection_filter_action(iterator.datum_index, player->unit_index, &action->control_flags);
+
 					/* port: not for the keyboard's action key, which only acts
 					(units.h, UNIT_CONTROL_PORT_ACTION_ONLY_BIT) */
 					if (TEST_FLAG(action->control_flags, _unit_control_action_bit) &&

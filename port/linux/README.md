@@ -429,6 +429,12 @@ the setting for one start of the game. It has priority over the file.
 | `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 127. Refer to "Bots". |
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.game_seed` | `0` | `HALO_GAME_SEED` | The start of the game's random numbers instead of the time (0: the time), so that a test's games go the same way each run. |
+| `server.infection_run_over` | `0` | `HALO_SERVER_INFECTION_RUN_OVER` | Infection: the damage of an infected skater's run-over, in percent of any skater's; `0`: the game type's own. Refer to "Infection". |
+| `server.infection_damage_taken` | `0` | `HALO_SERVER_INFECTION_DAMAGE_TAKEN` | Infection: the damage the infected take, in percent of anyone's; `0`: the game type's own (50). |
+| `debug.infection_reach` | `0` | `HALO_INFECTION_REACH` | Infection's tuning: how much wider a survivor is to an infected skater's board, in hundredths of a world unit; `0`: the game type's own (80). |
+
+| `debug.infection_first` | `""` | `HALO_INFECTION_FIRST` | Infection's tests: the players (absolute indices, with commas between) who start infected, instead of a random choice; `client`: the people on other machines than the host. |
+| `debug.infection_test_press` | `false` | `HALO_INFECTION_TEST_PRESS` | Infection's tests: the infected press fire, melee, grenade, action, swap and reload every tick, and bots ask off their boards; none of it may happen, and the host logs what it refused. |
 | `debug.bot_nav_build_delay` | `0.0` | `HALO_BOT_NAV_BUILD_DELAY` | Seconds more that a bots' walking graph not in the cache takes to build (on its own thread: the game goes on), for the tests. Refer to "The walking graph". |
 | `debug.bot_nav_check` | `false` | `HALO_BOT_NAV_CHECK` | A host builds the bots' walking graph of each map it plays (and, on a map with vehicles, the graph that vehicles drive), logs how much of the map it reaches, and ends the game. Refer to "Bots". |
 | `debug.bot_trace` | `false` | `HALO_BOT_TRACE` | Each bot's way in the log every second. |
@@ -1128,9 +1134,49 @@ contains game data: the maps are mounted read-only at `/data`.
 `debug.network_test_score` still operate. If `debug.network_test` is not
 empty, the server hosts its list instead of `server.maps`.
 
+## Infection
+
+A game type of the port's: Team Slayer whose infected skate (Skate 3 mode,
+port/skate/README.md) and infect the survivors by running them over.
+Choose **Infection** among the standard game types, or give a dedicated
+server `infection` in `server.game_types` or `server.maps`
+(`bloodgulch:infection`).
+
+- **The start:** one player in eight (at least one) starts infected, chosen
+  at random (the game's random numbers: fixed by `debug.game_seed`). The
+  survivors are red; the infected are blue, their armour green.
+- **The infected** are always on a skateboard: they cannot get off it,
+  fire, strike with melee, throw grenades, pick anything up or get into a
+  vehicle, and have no weapons. They come back three seconds after a death,
+  on a board again. Their run-over (a skater riding into a person on foot,
+  port/skate/README.md's "Multiplayer") deals 300% of any skater's
+  (`server.infection_run_over`, the game type's `infection_run_over`), and
+  a survivor is 0.8 world units wider to their board than to anyone's
+  (`infection_reach`). They are tougher: they take half the damage
+  (`server.infection_damage_taken`, the game type's `infection_damage_taken`).
+- **The survivors** play as in Team Slayer, with their weapons (no vehicles:
+  one in a vehicle could not be run over). A survivor who dies, however,
+  comes back infected; a player who joins during the game starts infected.
+- **The end:** the infected win once everyone is infected; the survivors
+  win if any of them is left when the round's five minutes are up (or the
+  game's time limit, if shorter: a dedicated server's `server.time_limit`).
+- **The score:** an infected's score is the survivors they infected; a
+  survivor's, the infected they killed, and the time they survived beside it
+  (`3 (2:15)`). The team scores show the players on each side.
+- **The HUD** says INFECTED or SURVIVOR at the top, and how many survivors
+  are left.
+
+Who is infected is the player's team, which the host sets and every machine
+takes from the host's units, as the gametype's auto team balance moves
+players; the game type's settings travel in bytes of Team Slayer's
+variant that the Xbox's game left unused. So the network format is
+unchanged. A build without Skate 3 mode (or without its data) leaves the
+infected on foot, unarmed.
+
 ## Bots
 
-A host can have bots: players that the host plays itself. Set `server.bots`
+A host can have bots
+: players that the host plays itself. Set `server.bots`
 (`HALO_SERVER_BOTS`) to the number of bots, from 0 to 127. The bots join the
 lobby of each game that the host makes (a dedicated server's, or a game
 that the menus host), and stay from game to game as the other players do.
@@ -1308,7 +1354,12 @@ netgame flags. It still fights what it meets on the way.
 - **Team Slayer:** a bot that sees nobody goes over to a team mate now and
   then, so that team mates fight together.
 
-`server.game_types` takes `juggernaut` too.
+`server.game_types` takes `juggernaut` and `infection` too. In Infection
+an infected bot is always on its board and hunts the survivors on it: it
+heads for the nearest survivor and rides at one it sees within 15 world
+units, at every difficulty but peaceful (a peaceful infected rides about and
+never rides at anyone on purpose). A survivor bot stays on foot and fights
+with its weapons.
 
 ### Bots in vehicles
 

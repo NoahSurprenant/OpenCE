@@ -102,7 +102,10 @@ enum
 	PLAYLIST_PROFILE_OPTIONS_MAGIC = 0x4F565047, /* 'GPVO' little-endian */
 	PLAYLIST_PROFILE_OPTIONS_VERSION = 1,
 	MAXIMUM_GAME_VARIANT_NAME_LENGTH = 12,
-	NUMBER_OF_DEFAULT_PLAYLIST_PROFILES = 26,
+	/* port: and Infection's (port/linux/game/infection.c), the 27th, which
+	the map's names (ui\default_multiplayer_game_setting_names) lack */
+	NUMBER_OF_DEFAULT_PLAYLIST_PROFILES = 27,
+	NUMBER_OF_XBOX_DEFAULT_PLAYLIST_PROFILES = 26,
 };
 
 enum
@@ -126,11 +129,11 @@ struct playlist_profile_data
 
 typedef char verify_playlist_profile_building_functions_size[
 	sizeof(((struct playlist_profile_data *)0)->
-		default_variant_building_functions) == 0x68 ? 1 : -1];
+		default_variant_building_functions) == 4 * NUMBER_OF_DEFAULT_PLAYLIST_PROFILES ? 1 : -1];
 typedef char verify_playlist_profile_first_time_offset[
-	offsetof(struct playlist_profile_data, first_time) == 0x68 ? 1 : -1];
+	offsetof(struct playlist_profile_data, first_time) == 4 * NUMBER_OF_DEFAULT_PLAYLIST_PROFILES ? 1 : -1];
 typedef char verify_playlist_profile_data_size[
-	sizeof(struct playlist_profile_data) == 0x69 ? 1 : -1];
+	sizeof(struct playlist_profile_data) == 4 * NUMBER_OF_DEFAULT_PLAYLIST_PROFILES + 1 ? 1 : -1];
 
 struct playlist_profile_write_request
 {
@@ -223,6 +226,7 @@ static struct playlist_profile_data playlist_profile_default_data =
 		build_game_variant_team_oddball,
 		build_game_variant_team_king,
 		build_game_variant_team_slayer,
+		build_game_variant_infection,
 	},
 	TRUE
 };
@@ -570,9 +574,16 @@ static void playlist_profile_create_default_profiles_on_disk(
 			csstrncat(path, "\\blam.lst", MAXIMUM_FILENAME_LENGTH);
 			path[MAXIMUM_FILENAME_LENGTH] = 0;
 
-			display_name = unicode_string_list_get_string(
-				string_list_index,
-				(short)profile_index);
+			/* port: past the map's names, the port's own */
+			if (profile_index >= NUMBER_OF_XBOX_DEFAULT_PLAYLIST_PROFILES)
+				display_name = L"Infection";
+			else
+			{
+				display_name = unicode_string_list_get_string(
+					string_list_index,
+					(short)profile_index);
+			}
+
 
 			csmemcpy(
 				block,

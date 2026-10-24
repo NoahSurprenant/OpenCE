@@ -85,6 +85,7 @@ symbols in this file:
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "units/units.h"
+#include "infection.h" /* port: port/linux/game/infection.c */
 
 /* ---------- constants */
 
@@ -223,6 +224,16 @@ static void slayer_engine_pregame_post_rasterize(
 static void slayer_engine_update(
 	void)
 {
+	/* port: Infection's team scores are the outcome, 1 for the side winning
+	now (the survivors while any is left), so the game over's winner is
+	right however it ends; the host's, which its clients have */
+	if (infection_active() && !network_game_distributed_client())
+	{
+		long survivors = infection_survivors();
+
+		slayer_globals.team_score[INFECTION_TEAM_SURVIVORS] = survivors > 0;
+		slayer_globals.team_score[INFECTION_TEAM_INFECTED] = survivors == 0;
+	}
 	return;
 }
 
@@ -293,6 +304,20 @@ static wchar_t *slayer_get_score_string(
 	long player_index,
 	wchar_t *buffer)
 {
+	/* port: Infection: and the time survived */
+	if (infection_active())
+	{
+		long seconds = infection_survival_seconds(player_index);
+
+		usprintf(
+			buffer,
+			L"%d (%d:%02d)",
+			slayer_globals.individual_score[
+				DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)],
+			seconds / 60,
+			seconds % 60);
+		return buffer;
+	}
 	usprintf(
 		buffer,
 		L"%d",
@@ -317,6 +342,15 @@ static wchar_t *slayer_get_team_score_string(
 	long team_index,
 	wchar_t *buffer)
 {
+	/* port: Infection: the side's players (the survivors still left) */
+	if (infection_active())
+	{
+		usprintf(
+			buffer,
+			L"%d",
+			team_index == INFECTION_TEAM_SURVIVORS ? infection_survivors() : infection_infected());
+		return buffer;
+	}
 	usprintf(
 		buffer,
 		L"%d",
@@ -481,6 +515,18 @@ static void slayer_engine_player_killed_player(
 	{
 		struct player_datum *killing_player = player_get(killing_player_index);
 
+		/* port: Infection: a survivor's own score is their kills, an
+		infected's the survivors they infected; the team scores are the
+		outcome (slayer_engine_update) */
+		if (infection_active())
+		{
+			if (killing_player_index != dead_player_index && killing_player->team_index != dead_player->team_index)
+			{
+				slayer_globals.individual_score[
+					DATUM_INDEX_TO_ABSOLUTE_INDEX(killing_player_index)] += 1;
+			}
+			return;
+		}
 		if (!friendly_fire)
 		{
 			update_speed_for_score(dead_player_index, killing_player_index);
@@ -663,8 +709,10 @@ static void slayer_player_update(
 		}
 	}
 
-	/* (a client ends the game when the host has) */
-	if (!network_game_distributed_client() &&
+	/* (a client ends the game when the host has; Infection's ends by its
+	teams and time: game_engine_should_end_game) */
+	if (!network_game_distributed_client() && !infection_active() &&
+
 		slayer_get_score(index, _get_score_team) >=
 		game_engine_get_variant()->universal_variant.score_to_win)
 	{
