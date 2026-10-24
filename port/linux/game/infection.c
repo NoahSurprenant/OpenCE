@@ -228,9 +228,22 @@ void infection_game_starting(void)
 	infection.refused_ticks = 0;
 	infection.breaches = 0;
 	infection.next_report_tick = 0;
-	if (!infection_active() || !infection_host())
+	if (!infection_active())
+		return;
+	/* (every machine: the variant's settings, as it has them - a client's
+	from the host's game) */
+	{
+		struct slayer_variant const *slayer = &infection_variant()->game_engine_variant.slayer;
+
+		platform_log("infection: the variant: round %ld seconds, run-overs %d%%, speed %d%%, damage taken %d%%, "
+			"reach %d, one infected in %d", infection_time_limit_ticks(game_variant_options_get()->time_limit) /
+			TICKS_PER_SECOND, slayer->infection_run_over, slayer->infection_speed, slayer->infection_damage_taken,
+			slayer->infection_reach, slayer->infection_ratio);
+	}
+	if (!infection_host())
 		return;
 	/* everyone a survivor, then the first infected */
+
 	data_iterator_new(&iterator, player_data);
 	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
 	{
@@ -251,6 +264,7 @@ void infection_game_starting(void)
 		players, first, infection_time_limit_ticks(game_variant_options_get()->time_limit) / TICKS_PER_SECOND,
 		infection_variant()->game_engine_variant.slayer.infection_run_over > 0 ?
 			infection_variant()->game_engine_variant.slayer.infection_run_over : 100);
+
 	/* (debug.infection_first: the tests' own, by absolute index) */
 	if (first > 0 && config_string("debug.infection_first") && config_string("debug.infection_first")[0])
 	{
@@ -531,6 +545,35 @@ real infection_damage_taken_scale(long damaged_player_index)
 		return 1.0f;
 	percent = infection_variant()->game_engine_variant.slayer.infection_damage_taken;
 	return percent > 0 ? (real)percent / 100.0f : 1.0f;
+}
+
+void infection_variant_defaults(struct game_variant *variant)
+{
+	struct slayer_variant *slayer = &variant->game_engine_variant.slayer;
+
+	if (!slayer->infection_run_over)
+		slayer->infection_run_over = INFECTION_DEFAULT_RUN_OVER;
+	if (!slayer->infection_minutes)
+		slayer->infection_minutes = 5;
+	if (!slayer->infection_ratio)
+		slayer->infection_ratio = 8;
+	if (!slayer->infection_damage_taken)
+		slayer->infection_damage_taken = INFECTION_DEFAULT_DAMAGE_TAKEN;
+	if (!slayer->infection_reach)
+		slayer->infection_reach = INFECTION_DEFAULT_REACH;
+	if (!slayer->infection_speed)
+		slayer->infection_speed = INFECTION_DEFAULT_SPEED;
+}
+
+real infection_skate_time_scale(long unit_index)
+
+{
+	long percent;
+
+	if (!infection_unit_restricted(unit_index))
+		return 1.0f;
+	percent = infection_variant()->game_engine_variant.slayer.infection_speed;
+	return percent > 0 ? (real)PIN(percent, 50, 250) / 100.0f : 1.0f;
 }
 
 real infection_board_reach(long skater_unit_index, long biped_index)

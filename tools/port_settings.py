@@ -703,7 +703,12 @@ WIDGET_PATCHES = {
         f"{TEAMPLAY_EDIT}/teamplay_button_bar": [
             f'<child widget="{TEAMPLAY_EDIT}/op_{key}" x="54" y="{163 + 30 * index}"/>'
             for index, (key, *_) in enumerate(TEAMPLAY_ROWS)]}},
+    # (Slayer's row opening Infection's options: _infection_options)
+    f"{SLAYER_EDIT}/slayer_options_menu": {"insert_before": {
+        f"{SLAYER_EDIT}/slayer_button_bar": [
+            f'<child widget="{SLAYER_EDIT}/op_infection_options" x="54" y="253"/>']}},
     # (the PC's Vehicles row's Start opened Item Options)
+
     "main_menu/settings_select/multiplayer_setup/playlist_edit/playlist_edit_vehicles_list_item": {"handlers": [
         '<on event="a" open="main_menu/settings_select/multiplayer_setup/vehicle_options_edit/vehicle_options_screen"/>',
         '<on event="start" open="main_menu/settings_select/multiplayer_setup/vehicle_options_edit/vehicle_options_screen"/>',
@@ -1473,6 +1478,97 @@ def _teamplay_options_extras() -> list:
     return lines
 
 
+# Infection's options (port/linux/game/infection.c), a screen of their own
+# opened from Slayer's (_infection_options; menu_functions.c's
+# gametype_options give each spinner's values): each row's key, its label,
+# its choices' words and their helps
+INFECTION_EDIT = "main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit"
+INFECTION_SPEEDS = (100, 105, 110, 115, 120, 125, 130, 140, 150)
+INFECTION_TAKEN = (25, 35, 50, 65, 75, 90, 100)
+INFECTION_RUN_OVERS = (100, 150, 200, 300, 400, 500, 1000)
+INFECTION_REACHES = (20, 40, 60, 80, 100, 120)
+INFECTION_RATIOS = (4, 6, 8, 10, 12, 16)
+INFECTION_MINUTES = (1, 2, 3, 4, 5, 6, 8, 10)
+INFECTION_ROWS = [
+    ("infection", "INFECTION:", ["OFF", "ON"], [
+        "Slayer as it is.",
+        "The infected skate and run the survivors over to\\ninfect them; a survivor who dies is infected.",
+    ]),
+    ("infection_speed", "INFECTED SPEED:", [f"{n}%" for n in INFECTION_SPEEDS],
+     [f"The infected's boards go {n}% as fast as anyone's,\\npushing and at speed." for n in INFECTION_SPEEDS]),
+    ("infection_damage_taken", "INFECTED DAMAGE TAKEN:", [f"{n}%" for n in INFECTION_TAKEN],
+     [f"The infected take {n}% of the damage anyone takes." for n in INFECTION_TAKEN]),
+    ("infection_run_over", "RUN-OVER DAMAGE:", [f"{n}%" for n in INFECTION_RUN_OVERS],
+     [f"An infected's run-over deals {n}% of any\\nskater's." for n in INFECTION_RUN_OVERS]),
+    ("infection_reach", "BOARD REACH:", [f"{n / 100:.1f} WU" for n in INFECTION_REACHES],
+     [f"A survivor is {n / 100:.1f} world units wider to an\\ninfected's board." for n in INFECTION_REACHES]),
+    ("infection_ratio", "FIRST INFECTED:", [f"1 IN {n}" for n in INFECTION_RATIOS],
+     [f"One player in {n} starts infected (at least one)." for n in INFECTION_RATIOS]),
+    ("infection_minutes", "ROUND TIME:", [f"{n} MIN" for n in INFECTION_MINUTES],
+     [f"The survivors win if any is left after {n}\\nminute{'s' if n > 1 else ''}." for n in INFECTION_MINUTES]),
+]
+
+
+def _infection_options() -> list:
+    """Infection's screen of options, as the gametype editor's are (its
+    spinners the gametype's: "mp profile init/set infection rules"), and the
+    row on Slayer's screen that opens it"""
+    base = INFECTION_EDIT
+    lines = _widget(f"{base}/infection_options_screen", [("width", 640), ("height", 480),
+                                                         ("flags", "pass_unhandled_to_focused_child"),
+                                                         ("bitmap", "bitmaps/gradient")],
+                    ['<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/game_type_select/'
+                     'header_rules"/>', f'<child widget="{base}/infection_options_menu"/>'])
+    lines += _widget(f"{base}/infection_options_help", [("type", "text"), ("controller", 1), ("left", 68),
+                                                        ("top", 321), ("width", 482), ("height", 79),
+                                                        ("string_list", f"{base}/cap_infection_options"),
+                                                        ("font", "ui\\large_ui"), ("color", "#FFFFFFFF")], [])
+    children = ['<data input="game settings lists text update"/>',
+                '<on event="created" run="mp profile init infection rules"/>']
+    children += [f'<child widget="{base}/op_{key}" x="54" y="{73 + 30 * index}"/>'
+                 for index, (key, *_) in enumerate(INFECTION_ROWS)]
+    children.append(f'<child widget="{base}/infection_button_bar" y="414"/>')
+    lines += _widget(f"{base}/infection_options_menu", [("type", "column_list"), ("width", 640), ("height", 480),
+                                                        ("flags", "pass_unhandled_to_focused_child up_down_tabs_children"),
+                                                        ("description", f"{base}/infection_options_help")], children)
+    lines += _widget(f"{base}/infection_button_bar", [("type", "column_list"), ("width", 640), ("height", 28),
+                                                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
+                     ['<data input="common button bar update"/>', f'<child widget="{base}/infection_button_ok" x="380" y="1"/>',
+                      '<child widget="common_button_cancel" x="510" y="1"/>'])
+    lines += _button(f"{base}/infection_button_ok", 1, ['<on event="a" run="mp profile set infection rules" back="true"/>',
+                                                         '<on event="start" run="mp profile set infection rules" back="true"/>'])
+    for index, (key, label, strings, _) in enumerate(INFECTION_ROWS):
+        lines += _widget(f"{base}/op_{key}", [("width", 512), ("height", 28), ("flags", "pass_unhandled_to_focused_child"),
+                                              ("bitmap", "bitmaps/option_bkds"), ("color", "#FF2896FF")],
+                         [f'<child widget="{base}/{key}_label"/>', f'<child widget="{base}/{key}_spinner" x="286" y="1"/>'])
+        lines += _widget(f"{base}/{key}_label", [("type", "text"), ("controller", 1), ("width", 300), ("height", 22),
+                                                 ("string_list", f"{base}/infection_labels"), ("string_index", index or None),
+                                                 ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("text_x", 13),
+                                                 ("text_y", 4)], [])
+        lines += _widget(f"{base}/{key}_spinner",
+                         [("type", "spinner"), ("top", 2), ("width", 206), ("height", 20),
+                          ("flags", "pass_unhandled_to_focused_child left_right_tabs_items"),
+                          ("string_list", f"{base}/var_{key}"), ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
+                          ("align", "center"), ("text_y", 4), ("list_flags", "items_from_strings"),
+                          ("header_bitmap", "bitmaps/arrow_sm_left"), ("footer_bitmap", "bitmaps/arrow_sm_right"),
+                          ("header_bounds", "7 -13 19 -7"), ("footer_bounds", "7 208 19 214")],
+                         ['<on event="left_mouse" run="mouse spinner 1wide click"/>'])
+        lines += _strings(f"{base}/var_{key}", strings)
+    lines += _strings(f"{base}/infection_labels", [label for _, label, *_ in INFECTION_ROWS])
+    lines += _strings(f"{base}/cap_infection_options", [text for *_, helps in INFECTION_ROWS for text in helps])
+    # (Slayer's screen's row opening it: Slayer's own help shows nothing for it)
+    lines += _widget(f"{SLAYER_EDIT}/op_infection_options", [("type", "text"), ("width", 512), ("height", 28),
+                                                             ("bitmap", "bitmaps/option_bkds"),
+                                                             ("string_list", f"{base}/infection_row"),
+                                                             ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
+                                                             ("text_x", 13), ("text_y", 4)],
+                     [f'<on event="a" open="{base}/infection_options_screen"/>',
+                      f'<on event="start" open="{base}/infection_options_screen"/>',
+                      '<on event="left_mouse" run="mouse emit accept event"/>'])
+    lines += _strings(f"{base}/infection_row", ["INFECTION OPTIONS..."])
+    return lines
+
+
 def _map_kind() -> list:
     """the map lists' first row (New Game's and the Map screen's), as the
     gametype list's chooser: a spinner of SINGLEPLAYER or MULTIPLAYER maps,
@@ -1510,6 +1606,7 @@ def multiplayer_files() -> dict:
         "main_menu/new_select".replace("/", ".") + ".port.xml": head + _map_kind() + ["</menus>", ""],
         "main_menu/settings_select/multiplayer_setup/item_options_edit".replace("/", ".") + ".port.xml": head + _item_options_extras() + ["</menus>", ""],
         TEAMPLAY_EDIT.replace("/", ".") + ".port.xml": head + _teamplay_options_extras() + ["</menus>", ""],
+        INFECTION_EDIT.replace("/", ".") + ".port.xml": head + _infection_options() + ["</menus>", ""],
     }
 
 

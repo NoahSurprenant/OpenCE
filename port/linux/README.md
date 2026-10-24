@@ -431,6 +431,9 @@ the setting for one start of the game. It has priority over the file.
 | `debug.game_seed` | `0` | `HALO_GAME_SEED` | The start of the game's random numbers instead of the time (0: the time), so that a test's games go the same way each run. |
 | `server.infection_run_over` | `0` | `HALO_SERVER_INFECTION_RUN_OVER` | Infection: the damage of an infected skater's run-over, in percent of any skater's; `0`: the game type's own. Refer to "Infection". |
 | `server.infection_damage_taken` | `0` | `HALO_SERVER_INFECTION_DAMAGE_TAKEN` | Infection: the damage the infected take, in percent of anyone's; `0`: the game type's own (50). |
+| `server.infection_speed` | `0` | `HALO_SERVER_INFECTION_SPEED` | Infection: the infected's boards' speed, in percent of any skater's; `0`: the game type's own (115). |
+| `debug.gametype_edit` | `""` | `HALO_GAMETYPE_EDIT` | A test's gametype (`debug.network_test`'s host), edited as the gametype editor's spinners do it: `<spinner>=<value>` pairs with commas between, each set to the spinner's choice nearest the value. |
+
 | `debug.infection_reach` | `0` | `HALO_INFECTION_REACH` | Infection's tuning: how much wider a survivor is to an infected skater's board, in hundredths of a world unit; `0`: the game type's own (80). |
 
 | `debug.infection_first` | `""` | `HALO_INFECTION_FIRST` | Infection's tests: the players (absolute indices, with commas between) who start infected, instead of a random choice; `client`: the people on other machines than the host. |
@@ -1153,11 +1156,22 @@ server `infection` in `server.game_types` or `server.maps`
   (`server.infection_run_over`, the game type's `infection_run_over`), and
   a survivor is 0.8 world units wider to their board than to anyone's
   (`infection_reach`). They are tougher: they take half the damage
-  (`server.infection_damage_taken`, the game type's `infection_damage_taken`).
-  Tuned with bots: eight normal bots, five-minute rounds on Blood Gulch, the
-  infected won 3 rounds of 8 (tools/test_infection.py's balance test; with
-  run-over damage alone they infected 2 or 3 survivors a round and never
-  won: their hits were rare, and already lethal).
+  (`server.infection_damage_taken`, the game type's `infection_damage_taken`),
+  and their boards are 15% quicker, pushing and at speed (their skate
+  sessions step 1.15 times as fast: `server.infection_speed`, the game
+  type's `infection_speed`).
+- **Editing it:** Edit Gametypes (or Server Setup's game type) on a Slayer
+  gametype: INFECTION OPTIONS... opens Infection's screen - INFECTION
+  (on or off: any Slayer gametype can be Infection), INFECTED SPEED,
+  INFECTED DAMAGE TAKEN, RUN-OVER DAMAGE, BOARD REACH, FIRST INFECTED and
+  ROUND TIME, the built-in's values at first. They are kept in the gametype
+  and travel with the game; a dedicated server's `server.infection_*`
+  settings override its own.
+- **Tuned with bots:** eight normal bots, five-minute rounds on Blood Gulch
+  (tools/test_infection.py's balance test, seeds 3 to 10): the infected won 5
+  rounds of 8 with the boards at 115% (3 of 8 at 100%; with run-over damage
+  alone they infected 2 or 3 survivors a round and never won: their hits were
+  rare, and already lethal).
 - **The survivors** play as in Team Slayer, with their weapons (no vehicles:
   one in a vehicle could not be run over). A survivor who dies, however,
   comes back infected; a player who joins during the game starts infected.

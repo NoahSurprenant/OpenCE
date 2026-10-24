@@ -66,6 +66,7 @@ Called from the main loop every frame (main.c).
 
 #include <math.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -164,7 +165,45 @@ static struct
 	float browse_seconds;
 } network_test;
 
+boolean pc_menu_gametype_option_apply(struct game_variant *variant, struct game_variant_options *options,
+	char const *spinner, long value);
+
+/* debug.gametype_edit ("infection_speed_spinner=130,infection_minutes_spinner=1"):
+the gametype's options set through the gametype editor's own spinners
+(menu_functions.c), as a person edits a gametype - the variant's (variant),
+then the options' (options); the other NULL */
+static void network_test_gametype_edit(struct game_variant *variant, struct game_variant_options *options)
+{
+	char const *list = config_string("debug.gametype_edit");
+	struct game_variant spare_variant;
+	struct game_variant_options spare_options;
+
+	csmemset(&spare_variant, 0, sizeof(spare_variant));
+	csmemset(&spare_options, 0, sizeof(spare_options));
+	while (list && *list)
+	{
+		char spinner[48];
+		size_t length = strcspn(list, "=,");
+		long value = 0;
+
+		snprintf(spinner, sizeof(spinner), "%.*s", (int)MIN(length, sizeof(spinner) - 1), list);
+		list += length;
+		if (*list == '=')
+			value = strtol(list + 1, (char **)&list, 10);
+		while (*list == ',' || *list == ' ')
+			list++;
+		if (!pc_menu_gametype_option_apply(variant ? variant : &spare_variant, options ? options : &spare_options,
+			spinner, value))
+		{
+			platform_log("network test: debug.gametype_edit: no spinner %s", spinner);
+		}
+		else if (variant)
+			platform_log("network test: the gametype's %s set to %ld", spinner, value);
+	}
+}
+
 /* the variant at the index of the list (copied to name), FALSE past its end */
+
 static boolean network_test_variant(
 	short index,
 	char *name,
@@ -1495,6 +1534,9 @@ void network_test_update(
 					/* debug.network_test_score: a short game, to test the next */
 					if (network_test.score_to_win > 0)
 						variant.universal_variant.score_to_win = network_test.score_to_win;
+					/* debug.gametype_edit: the variant as the gametype editor's
+					spinners leave it */
+					network_test_gametype_edit(&variant, NULL);
 					player_ui_set_game_variant(&variant);
 					/* debug.network_test_time: the gametype's options carry the time
 					limit and a built-in variant's own is none (0), so a game whose
@@ -1511,6 +1553,8 @@ void network_test_update(
 						places, or none) */
 						if (network_test.vehicle_set != NONE)
 							options.vehicle_set[0] = options.vehicle_set[1] = (byte)network_test.vehicle_set;
+						network_test_gametype_edit(NULL, &options);
+
 						player_ui_set_game_variant_options(&options);
 					}
 					network_game_server_change_game_variant(global_network_game_server_get(), &variant);

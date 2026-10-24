@@ -187,3 +187,45 @@ def test_infection_bots_balance(tmp_path):
     assert winner in ("survivors", "infected"), "the round did not end"
     assert infections >= 2, f"the infected infected {infections} survivors: {infected}"
     assert kills >= 1, "nobody was shot dead"
+
+
+VARIANT = re.compile(r"infection: the variant: round (\d+) seconds, run-overs (\d+)%, speed (\d+)%, damage taken (\d+)%, "
+                     r"reach (\d+), one infected in (\d+)")
+
+
+def test_infection_an_edited_gametype(tmp_path):
+    """A listen host whose Infection gametype is edited through the gametype
+    editor's own spinners (debug.gametype_edit: menu_functions.c's options
+    table, as a person sets the Infection Options screen) - a one-minute
+    round, boards at 140%, run-overs at 500%, the infected taking 25%, a
+    reach of 0.4, one in 4 infected - with two peaceful bots and a client
+    whose player starts infected: both machines play by the edited values
+    (the client has them from the host's game), the client's board steps at
+    1.4 times, and the round ends after a minute, the survivors winning.
+    About two minutes."""
+    game, maps, assets = _needs_skate()
+    host_address, join_address = _test_address(179), _test_address(180)
+    edit = ("infection_minutes_spinner=1,infection_speed_spinner=140,infection_run_over_spinner=500,"
+            "infection_damage_taken_spinner=25,infection_reach_spinner=40,infection_ratio_spinner=4")
+    games = {"host": _start(tmp_path, "host", game, maps, {
+        "HALO_NETWORK_TEST": "host:bloodgulch:infection", "HALO_NETWORK_TEST_START": "8", "HALO_SERVER_BOTS": "2",
+        "HALO_BOT_DIFFICULTIES": "peaceful", "HALO_BOT_SEED": "4", "HALO_GAME_SEED": "4", "HALO_INFECTION_FIRST": "client",
+        "HALO_GAMETYPE_EDIT": edit, "HALO_SKATE_ASSETS": assets, "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+        "HALO_NET_ADDRESS": host_address, "HALO_NET_BROADCAST": join_address})}
+    games["join"] = _start(tmp_path, "join", game, maps, {
+        "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
+        "HALO_SKATE_ASSETS": assets, "HALO_NET_ADDRESS": join_address, "HALO_NET_BROADCAST": host_address})
+    try:
+        _wait(lambda: OVER.search(_log(tmp_path, "host")), 240, games, tmp_path, "the edited round did not end")
+    finally:
+        _stop(games, tmp_path, {"host": game, "join": game})
+        for cache in tmp_path.rglob("cache*.map"):
+            cache.unlink()
+    host, join = _log(tmp_path, "host"), _log(tmp_path, "join")
+    expected = ("60", "500", "140", "25", "40", "4")
+    over = OVER.search(host)
+    print(f"host {VARIANT.findall(host)[:1]}, client {VARIANT.findall(join)[:1]}, over {over.groups()}")
+    assert VARIANT.findall(host)[:1] == [expected], VARIANT.findall(host)
+    assert VARIANT.findall(join)[:1] == [expected], f"the client did not have the edited values: {VARIANT.findall(join)}"
+    assert "rides at 1.40 times the speed" in join, "the client's infected board did not go faster"
+    assert over.group(2) == "survivors" and 55 * 30 <= int(over.group(1)) <= 70 * 30, over.groups()
