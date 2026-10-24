@@ -28,6 +28,7 @@ machine takes it as it takes a person's. */
 
 #include "bots_internal.h"
 #include "infection.h"
+#include "skate.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1464,6 +1465,85 @@ static boolean bot_vehicle_keep_out(
 	return FALSE;
 }
 
+/* Infection: a survivor's way out of an infected skater's path - the
+nearest skater coming at it within BOT_FLEE_DISTANCE (world units), whose
+line passes within BOT_FLEE_MISS, or any within BOT_FLEE_CLOSE - sideways
+off that line, still aiming and firing; FALSE with none coming */
+#define BOT_FLEE_DISTANCE 9.0f
+#define BOT_FLEE_MISS 2.0f
+#define BOT_FLEE_CLOSE 2.5f
+
+static boolean bot_infection_flee(
+	struct bot *bot,
+	long unit_index,
+	struct player_action *action)
+{
+	struct object_datum *self = object_get(unit_index);
+	struct data_iterator iterator;
+	struct player_datum *player;
+	/* (how far it looks out for one, by its difficulty: an easy bot never
+	steps aside, a normal one only late) */
+	real reach = bot->difficulty == _bot_difficulty_easy ? 0.0f :
+		bot->difficulty == _bot_difficulty_normal ? BOT_FLEE_DISTANCE * 2.0f / 3.0f : BOT_FLEE_DISTANCE;
+	real best = reach * reach;
+
+	real away_x = 0.0f, away_y = 0.0f;
+	boolean found = FALSE;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct object_datum *skater;
+		real dx, dy, distance, vx, vy, speed, along, miss;
+
+		if (player->unit_index == NONE || !infection_unit_restricted(player->unit_index))
+			continue;
+		skater = object_get(player->unit_index);
+		dx = self->object.position.x - skater->object.position.x;
+		dy = self->object.position.y - skater->object.position.y;
+		distance = dx * dx + dy * dy;
+		if (distance >= best || (real)fabs(self->object.position.z - skater->object.position.z) > 2.0f)
+			continue;
+		vx = skater->object.translational_velocity.i;
+		vy = skater->object.translational_velocity.j;
+		speed = (real)sqrt(vx * vx + vy * vy);
+		along = speed > 0.01f ? (dx * vx + dy * vy) / speed : 0.0f;
+		miss = speed > 0.01f ? (real)fabs(dx * vy - dy * vx) / speed : 0.0f;
+		if (distance < BOT_FLEE_CLOSE * BOT_FLEE_CLOSE && !(speed > 0.01f && along > 0.0f))
+		{
+			/* (near and not coming on: straight away) */
+			away_x = dx;
+			away_y = dy;
+		}
+		else if (speed > 0.01f && along > 0.0f && miss < BOT_FLEE_MISS)
+		{
+			/* (coming: square off its line, to the side it passes less near) */
+			real side = dx * vy - dy * vx >= 0.0f ? 1.0f : -1.0f;
+
+			away_x = vy * side;
+			away_y = -vx * side;
+		}
+		else
+			continue;
+		best = distance;
+		found = TRUE;
+	}
+	if (!found)
+		return FALSE;
+	{
+		real angle = (real)atan2(away_y, away_x) - bot->brain.yaw;
+
+		action->throttle.i = (real)cos(angle);
+		action->throttle.j = (real)sin(angle);
+	}
+	if (!bot->brain.infection_fleeing)
+	{
+		bot->brain.statistics.infection_flees++;
+		bot->brain.infection_fleeing = TRUE;
+	}
+	return TRUE;
+}
+
 void bot_brain_think(
 	struct bot *bot,
 	long player_index,
@@ -1642,8 +1722,12 @@ void bot_brain_think(
 		SET_FLAG(action->control_flags, _unit_control_jump_bit, TRUE);
 		brain->jump = FALSE;
 	}
-	/* (and away from a grenade, whatever else it does) */
-	bot_dodge(bot, unit_index, action);	/* (a flag or a ball in hand: no button that puts it down - the trigger,
+	/* (and away from a grenade, whatever else it does; an Infection survivor
+	off an infected skater's line) */
+	bot_dodge(bot, unit_index, action);
+	if (infection_active() && !bot_infection_flee(bot, unit_index, action))
+		brain->infection_fleeing = FALSE;
+	/* (a flag or a ball in hand: no button that puts it down - the trigger,
 	the action and reload buttons drop a flag, and a change of weapon puts
 	it away; a blow with it is struck with the melee button) */
 	if (bot_holds_flag(unit_get(unit_index)))

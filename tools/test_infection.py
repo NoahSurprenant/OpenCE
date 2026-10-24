@@ -135,3 +135,55 @@ def test_infection_a_person_infected_on_a_client(tmp_path):
     assert "RULE BROKEN" not in host, re.findall(r"infection: RULE BROKEN.*", host)[:5]
     assert all(s[3] == "0" and s[4] == "0" and s[5] == "no vehicle" for s in seen), seen
 
+
+def _balance_game(
+tmp_path, seed, run_over, minutes, name="server", damage=0):
+    """an Infection game of eight normal bots on Blood Gulch (one starts
+    infected, chosen by the seed): (winner, infections, the final lines)"""
+    _, maps, assets = _needs_skate()
+    settings = {
+        "HALO_SERVER_BOTS": "8", "HALO_BOT_DIFFICULTIES": "normal", "HALO_BOT_SEED": str(seed),
+        "HALO_GAME_SEED": str(seed), "HALO_SERVER_MAPS": "bloodgulch:infection",
+        "HALO_SERVER_TIME_LIMIT": str(minutes)}
+    if run_over:
+        settings["HALO_SERVER_INFECTION_RUN_OVER"] = str(run_over)
+    if damage:
+        settings["HALO_SERVER_INFECTION_DAMAGE_TAKEN"] = str(damage)
+    # (INFECTION_TRIAL_ENV "K=V,K=V": more settings, for the tuning)
+    import os
+    for pair in filter(None, (os.environ.get("INFECTION_TRIAL_ENV") or "").split(",")):
+        key, value = pair.split("=", 1)
+        settings[key] = value
+
+    log = _bots_alone(tmp_path, name, _server(), maps, assets, settings, (_test_address(185), _test_address(186)),
+                      done=_over)
+    over = OVER.search(log)
+    return (over.group(2) if over else None), INFECTED.findall(log), FINAL.findall(log), log
+
+
+def test_infection_bots_balance(tmp_path):
+    """Eight normal bots play a five-minute round of Infection on Blood Gulch
+    (seed 3) with the game type's run-over damage: the infected (one at the
+    start) infect at least two survivors by running them over, and the
+    survivors kill infected with their weapons (the round's outcome varies
+    with the seed: tools/test_infection.py's INFECTION_TRIAL loop measured the
+    share each side wins). About six minutes."""
+    import os
+    seed = int(os.environ.get("INFECTION_TRIAL_SEED") or "3")
+    run_over = int(os.environ.get("INFECTION_TRIAL_RUN_OVER") or "0")
+    minutes = int(os.environ.get("INFECTION_TRIAL_MINUTES") or "5")
+    damage = int(os.environ.get("INFECTION_TRIAL_DAMAGE") or "0")
+    winner, infected, final, log = _balance_game(tmp_path, seed, run_over, minutes, damage=damage)
+    # (the infected shot dead: the survivors' weapons, as bots log a death)
+    kills = len(re.findall(r"bots: player \d+ died of weapons\\", log))
+    infections = len(infected)
+    print(f"INFECTION TRIAL seed {seed} run-over {run_over or 'default'} damage taken {damage or 'default'}: "
+          f"winner {winner}, {infections} infected by "
+
+          f"run-overs of {len(RUN_OVER_KILLED.findall(log))}, deaths as survivors "
+          f"{len(re.findall(r'dies a survivor', log))}, shot dead {kills}, final {final}")
+    if os.environ.get("INFECTION_TRIAL"):
+        return
+    assert winner in ("survivors", "infected"), "the round did not end"
+    assert infections >= 2, f"the infected infected {infections} survivors: {infected}"
+    assert kills >= 1, "nobody was shot dead"

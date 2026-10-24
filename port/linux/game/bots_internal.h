@@ -74,6 +74,8 @@ struct bot_statistics
 	/* ... the rails it lined up with, and its grinds */
 	long skate_grind_tries;
 	long skate_grinds;
+	/* Infection: the times a survivor stepped off an infected skater's line */
+	long infection_flees;
 	/* ... its tricks (bots_tricks.c): as the skate engine's scoring saw them,
 	the tricks landed, their points, the combos (sequences of two or more),
 	the most tricks and points in one sequence, and the sequences a bail
@@ -487,6 +489,9 @@ struct bot_brain
 	boolean run_up_done;
 	/* on a board (bots_skate.c) */
 	struct bot_skate skate;
+	/* Infection: stepping off an infected skater's line, last tick */
+	boolean infection_fleeing;
+
 	/* in a vehicle's seat it never meant to take, last tick */
 	boolean in_vehicle;
 	/* a vehicle it goes to, drives, gets out of or flips (bots_vehicle.c) */

@@ -36,6 +36,7 @@ and stay from game to game as the other players do. Co-op games have none. */
 #include "units/units.h"
 
 #include "bots_internal.h"
+#include "infection.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -385,6 +386,11 @@ static void bots_report(
 			statistics->run_overs, statistics->person_ticks / TICKS_PER_SECOND);
 		bot_tricks_report(bot, name, now);
 		bots_report_objective(bot, name, now);
+		/* (Infection: a line of its own) */
+		if (infection_active())
+			platform_log("bots: %s's infection at tick %ld: %ld flees, %ld people ridden at", name, now,
+				statistics->infection_flees, statistics->skate_rams);
+
 	}
 }
 
