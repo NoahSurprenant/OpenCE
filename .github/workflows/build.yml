@@ -452,8 +452,8 @@ jobs:
     # (the bots on foot). tools/test_infection.py (Infection:
     # port/linux/README.md's "Infection") runs beside them too: an infected
     # bot running survivors over to infect them, the infected keeping the
-    # rules (always on a board, unarmed, no vehicle), and a person infected
-    # on a client.
+    # rules (always on a board, unarmed, no vehicle), a person infected on a
+    # client, and a balance round of eight bots.
     #
 
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
@@ -563,8 +563,8 @@ jobs:
             echo "::error::the eight tests of tools/test_skating_bots.py did not all run and pass"
             exit 1
           fi
-          if ! grep -q '3 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
-            echo "::error::the three tests of tools/test_infection.py did not all run and pass"
+          if ! grep -q '4 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
+            echo "::error::the four tests of tools/test_infection.py did not all run and pass"
             exit 1
           fi
 

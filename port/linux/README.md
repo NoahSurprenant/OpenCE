@@ -1154,6 +1154,10 @@ server `infection` in `server.game_types` or `server.maps`
   a survivor is 0.8 world units wider to their board than to anyone's
   (`infection_reach`). They are tougher: they take half the damage
   (`server.infection_damage_taken`, the game type's `infection_damage_taken`).
+  Tuned with bots: eight normal bots, five-minute rounds on Blood Gulch, the
+  infected won 3 rounds of 8 (tools/test_infection.py's balance test; with
+  run-over damage alone they infected 2 or 3 survivors a round and never
+  won: their hits were rare, and already lethal).
 - **The survivors** play as in Team Slayer, with their weapons (no vehicles:
   one in a vehicle could not be run over). A survivor who dies, however,
   comes back infected; a player who joins during the game starts infected.
@@ -1359,7 +1363,8 @@ an infected bot is always on its board and hunts the survivors on it: it
 heads for the nearest survivor and rides at one it sees within 15 world
 units, at every difficulty but peaceful (a peaceful infected rides about and
 never rides at anyone on purpose). A survivor bot stays on foot and fights
-with its weapons.
+with its weapons, and steps sideways off the line of an infected skater
+coming at it within 9 world units (or away from one nearer than 2.5).
 
 ### Bots in vehicles
 

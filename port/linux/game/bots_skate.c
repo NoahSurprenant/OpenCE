@@ -734,10 +734,15 @@ void bot_skate_think(
 			/* at the person, a little ahead of where they go */
 			struct object_datum *target = object_get(ram_unit);
 			real dx = target->object.position.x - position.x, dy = target->object.position.y - position.y;
-			/* (near, straight at them) */
+			/* (near, straight at them; an infected bot, where they will be
+			when it gets there: Infection's hunt) */
 			real lead = dx * dx + dy * dy < 9.0f ? 0.0f : 6.0f;
-			real tx = target->object.position.x + target->object.translational_velocity.i * lead;
-			real ty = target->object.position.y + target->object.translational_velocity.j * lead;
+			real tx, ty;
+
+			if (infected && lead > 0.0f)
+				lead = MIN((real)sqrt(dx * dx + dy * dy) / MAX(moved, 2.0f), 1.5f) * TICKS_PER_SECOND;
+			tx = target->object.position.x + target->object.translational_velocity.i * lead;
+			ty = target->object.position.y + target->object.translational_velocity.j * lead;
 
 
 			heading = (real)atan2(ty - position.y, tx - position.x);
