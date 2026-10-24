@@ -27,6 +27,7 @@ machine takes it as it takes a person's. */
 #include "units/units.h"
 
 #include "bots_internal.h"
+#include "infection.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1523,6 +1524,32 @@ void bot_brain_think(
 	/* (the game type's objective, a few times a second) */
 	if ((game_time_get() + bot->slot) % 10 == 0)
 		bot_objective_update(bot, player_index, unit_index, &brain->objective);
+	/* (Infection: an infected bot - on a board, unarmed - takes no vehicle,
+	item or fight on foot: it looks about (whom its board rides at) and goes
+	where its board takes it, the survivors' way: bots_skate.c) */
+	if (infection_unit_restricted(unit_index))
+	{
+		bot_combat_engaged(bot, player_index, unit_index, bot->slot);
+		brain->pickup_object = NONE;
+		brain->holding = FALSE;
+		if (nav)
+			bot_roam(brain, nav, &position, action);
+		else
+			bot_wander(brain, &position, action);
+		bot_skate_think(bot, player_index, unit_index, action);
+		/* (debug.infection_test_press: it presses everything it may not,
+		every tick, which players.c takes out before its unit has it) */
+		if (config_boolean("debug.infection_test_press"))
+		{
+			action->control_flags |= FLAG(_unit_control_weapon_primary_trigger_bit) |
+				FLAG(_unit_control_weapon_secondary_trigger_bit) | FLAG(_unit_control_throw_grenade_bit) |
+				FLAG(_unit_control_action_bit) | FLAG(_unit_control_swap_weapons_bit) |
+				FLAG(_unit_control_weapon_reload_bit) | FLAG(_unit_control_use_equipment_bit);
+			action->primary_trigger = 1.0f;
+		}
+		return;
+	}
+
 	/* (a vehicle: on its way to its door, in it, getting out, flipping it
 	over: bots_vehicle.c; standing at a door is getting somewhere) */
 	if (bot_vehicle_think(bot, player_index, unit_index, &position, action))

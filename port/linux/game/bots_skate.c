@@ -33,6 +33,7 @@ skate_bot_drive runs the skate engine for it):
 #include "units/units.h"
 
 #include "bots_internal.h"
+#include "infection.h"
 #include "skate.h"
 #include "../../skate/include/halo_skate.h"
 
@@ -341,8 +342,10 @@ static void bot_skate_ram_seek(
 		struct object_datum *object;
 		real dx, dy, dz, distance;
 
+		/* (Infection: survivors only, the infected's team mates never) */
 		if (iterator.datum_index == player_index || player->unit_index == NONE ||
-			!bot_skate_unit_able(player->unit_index) || skate_unit_is_skating(player->unit_index))
+			!bot_skate_unit_able(player->unit_index) || skate_unit_is_skating(player->unit_index) ||
+			infection_unit_restricted(player->unit_index))
 		{
 			continue;
 		}
@@ -586,7 +589,15 @@ void bot_skate_think(
 	long now = game_time_get();
 
 	short mode = bot_skate_mode(bot);
+	/* Infection: an infected bot is always on its board and hunts the
+	survivors on it (rams: a peaceful one rides but never rides at anyone on
+	purpose); a survivor stays on foot with its weapons, unless a test says */
+	boolean infected = infection_unit_restricted(unit_index);
 
+	if (infected)
+		mode = _bot_skate_ram;
+	else if (infection_active() && mode == _bot_skate_normal)
+		mode = _bot_skate_never;
 	if (mode == _bot_skate_stand)
 	{
 		bot_action_idle(action, brain->yaw, brain->pitch);
@@ -608,8 +619,9 @@ void bot_skate_think(
 	{
 		fighting = FALSE;
 		board_distance = BOT_SKATE_RAM_BOARD_DISTANCE;
-		if (!brain->combat.target_visible)
+		if (!brain->combat.target_visible || infected)
 			bot_skate_ram_seek(bot, player_index, nav, &position);
+
 	}
 	/* (a life, a game: afresh) */
 	if (skate->unit_index != unit_index || now < skate->changed_tick)
@@ -619,7 +631,17 @@ void bot_skate_think(
 		skate->changed_tick = now;
 		skate->off_until_tick = now + BOT_SKATE_OFF_TICKS;
 	}
-	if (skate->on)
+	if (skate->on && infected)
+	{
+		/* (the infected never step off: stuck, a new way) */
+		if (skate->stuck_ticks > BOT_SKATE_STUCK_TICKS)
+		{
+			skate->stuck_ticks = 0;
+			brain->goal_node = NONE;
+			brain->path_next = NONE;
+		}
+	}
+	else if (skate->on)
 	{
 		/* off: a fight (but a person on foot to run over), a flag or ball in
 		hand, its goal near, a part ahead that does not roll, stuck */
@@ -660,8 +682,8 @@ void bot_skate_think(
 			}
 		}
 	}
-	else if (now >= skate->off_until_tick && !fighting && !bot_holds_flag(unit_get(unit_index)) && !bot_vehicle_busy(bot) &&
-		rolling >= board_distance)
+	else if (infected || (now >= skate->off_until_tick && !fighting && !bot_holds_flag(unit_get(unit_index)) &&
+		!bot_vehicle_busy(bot) && rolling >= board_distance))
 	{
 		skate->on = TRUE;
 		skate->changed_tick = now;
@@ -716,6 +738,7 @@ void bot_skate_think(
 			real lead = dx * dx + dy * dy < 9.0f ? 0.0f : 6.0f;
 			real tx = target->object.position.x + target->object.translational_velocity.i * lead;
 			real ty = target->object.position.y + target->object.translational_velocity.j * lead;
+
 
 			heading = (real)atan2(ty - position.y, tx - position.x);
 			if (!skate->ramming)
@@ -805,8 +828,13 @@ void bot_skate_think(
 		else
 			skate->stuck_ticks = 0;
 	}
+	/* (debug.infection_test_press: an infected bot asks off its board every
+	few seconds, which skate.c refuses) */
+	if (infected && config_boolean("debug.infection_test_press") && (now + bot->slot) % (5 * TICKS_PER_SECOND) == 0)
+		skate_bot_drive(player_index, unit_index, FALSE, NULL);
 	if (!skate_bot_drive(player_index, unit_index, TRUE, &pad))
 	{
+
 		/* (no skater to be had: on foot a while) */
 		skate->on = FALSE;
 		skate->off_until_tick = now + 10 * BOT_SKATE_OFF_TICKS;

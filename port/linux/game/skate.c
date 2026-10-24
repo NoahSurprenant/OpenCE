@@ -56,6 +56,7 @@ objects (render.c). */
 #include <xtl.h>
 
 #include "../../skate/include/halo_skate.h"
+#include "infection.h"
 
 /* the platform layer's (sdl_platform.c, xinput_sdl.c, d3d8_gl.c) */
 int halo_skate_platform_toggle_pressed(void);
@@ -1910,7 +1911,11 @@ static real skate_distance(real_point3d const *a, float const *b)
 
 /* a biped as its collision pill (bipeds.c's biped_get_physics_pill, but as
 tall as it stands for AI too, whose pill Halo keeps a sphere) */
+/* the unit whose skater the obstacles are for (skate_send_obstacles) */
+static long skate_obstacles_rider = NONE;
+
 static void skate_biped_obstacle(long object_index, real_point3d const *skater, struct skate_obstacles *kept)
+
 {
 	struct biped_datum *biped = biped_get(object_index);
 	struct biped_definition *definition = biped_definition_get(biped->definition_index);
@@ -1925,6 +1930,14 @@ static void skate_biped_obstacle(long object_index, real_point3d const *skater, 
 	if (!(radius > 0.f))
 		return;
 	segment = TEST_FLAG(definition->biped.flags, _biped_spherical_bit) ? 0.f : MAX(height - 2.f * radius, 0.f);
+	/* (Infection: a survivor is wider to an infected skater, the pill's
+	height kept) */
+	{
+		real reach = infection_board_reach(skate_obstacles_rider, object_index);
+
+		segment = MAX(segment - 2.f * reach, 0.f);
+		radius += reach;
+	}
 	object_get_origin(object_index, &base);
 	if (!TEST_FLAG(definition->biped.flags, _biped_pill_centered_at_origin_bit))
 		base.z += radius;
@@ -2337,6 +2350,8 @@ static void skate_send_obstacles(struct skate_skater *rider, long unit_index)
 	vehicles and other skaters: skate_authority.c) */
 	skate_obstacles_held = skate_authority_holds();
 	skate_obstacles_run_over = skate_skater_riding(rider);
+	/* (Infection: an infected skater's board reaches wider for survivors) */
+	skate_obstacles_rider = unit_index;
 	object_get_origin(unit_index, &skater);
 	/* (collideable objects only: class bit 0) */
 	count = objects_in_sphere(FLAG(0),
@@ -2598,7 +2613,24 @@ boolean skate_bots_available(void)
 
 boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad)
 {
-	struct skate_skater *skater = on_board ? skate_bot_skater_for(player_index) : skate_bot_skater(player_index);
+	struct skate_skater *skater;
+
+	/* Infection: the infected stay on the board (a bot asking off rides on,
+	holding nothing) */
+	if (!on_board && infection_unit_restricted(unit_index))
+	{
+		static long told_tick = -1000000;
+
+		if (game_time_get() - told_tick >= 5 * TICKS_PER_SECOND)
+		{
+			told_tick = game_time_get();
+			platform_log("skate: infected player %ld asked off the board, stays on at tick %ld",
+				DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), game_time_get());
+		}
+		on_board = TRUE;
+		pad = NULL;
+	}
+	skater = on_board ? skate_bot_skater_for(player_index) : skate_bot_skater(player_index);
 
 	if (!skater)
 		return FALSE;
@@ -2823,7 +2855,24 @@ static void skate_local_update(void)
 		(skater->previous_buttons & SKATE_THUMB_CLICKS) != SKATE_THUMB_CLICKS);
 	skater->previous_buttons = pad.buttons;
 	skate_test_pad(&pad, &toggle);
+	/* Infection: the infected are always on the board, J or not */
+	if (infection_unit_restricted(unit_index))
+	{
+		if (toggle && (skater->skating || skater->activate_when_ready))
+		{
+			toggle = FALSE;
+			console_printf(FALSE, "skate: the infected stay on the board");
+		}
+		/* (asked again each second: a failed engine is not asked every tick) */
+		else if (!skater->skating && !skater->activate_when_ready && skate_unit_can_skate(unit_index) &&
+			game_time_get() % TICKS_PER_SECOND == 0)
+		{
+			toggle = TRUE;
+		}
+
+	}
 	skate_test_scenery();
+
 	/* (other machines' skaters carried on: skate_network.c) */
 	skate_network_update_before_objects();
 	/* the structure bsp loaded since the last tick, with its scenery placed
