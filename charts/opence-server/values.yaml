@@ -296,6 +296,22 @@ stream:
   fps: 30
   videoBitrate: 1500k
   audioBitrate: 128k
+  # Multi-rendition HLS (viewer-selectable quality): each entry adds an encode of the one capture
+  # (width/height/fps above) at its own width/height/videoBitrate, muxed into its own HLS playlist
+  # (live_<suffix>.m3u8) under a master playlist (live.m3u8) that lists them all, so hls.js can offer
+  # Auto (its own ABR) plus each fixed quality. Empty, or a single entry: today's behaviour - one
+  # plain playlist at live.m3u8, width/height/videoBitrate above, no master. docker/stream/stream.sh
+  # picks this list when its VAAPI preflight succeeds (stream.gpu), renditionsCpu otherwise (empty:
+  # falls back to a single rendition - CPU is the expensive path, decode+scale+encode per rendition,
+  # so it defaults to the cheapest option rather than guessing how many it can afford). Example:
+  #   renditions:
+  #     - { suffix: 720p, width: 1280, height: 720, videoBitrate: 3000k }
+  #     - { suffix: 480p, width: 854,  height: 480, videoBitrate: 1200k }
+  #     - { suffix: 360p, width: 640,  height: 360, videoBitrate: 600k }
+  renditions: []
+  # The CPU (libx264) fallback's own rendition list, kept short on purpose - see renditions above.
+  # Empty: a single rendition (width/height/videoBitrate above), the cheapest and safest default.
+  renditionsCpu: []
   # x264's preset and threads (veryfast at 854 x 480: about half a core).
   preset: veryfast
   encoderThreads: 2

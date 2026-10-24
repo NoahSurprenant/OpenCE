@@ -82,7 +82,10 @@ tests:
     asserts:
       - matchRegex:
           path: 'spec.template.spec.containers[0].readinessProbe.exec.command[2]'
-          pattern: "/hls/live.m3u8\\)\" -ge 2$"
+          pattern: "-ge 2"
+      - matchRegex:
+          path: 'spec.template.spec.containers[0].readinessProbe.exec.command[2]'
+          pattern: "EXT-X-STREAM-INF"
 
   - it: mounts the skate data only when the server has it and stream.skateData is on
     template: templates/stream-deployment.yaml
@@ -207,3 +210,42 @@ tests:
     asserts:
       - equal: { path: spec.template.spec.securityContext.supplementalGroups, value: [44] }
       - equal: { path: 'spec.template.spec.containers[0].resources.requests["example.com/gpu"]', value: "2" }
+
+  - it: passes no STREAM_RENDITIONS or STREAM_RENDITIONS_CPU with the default (single-rendition)
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+    asserts:
+      - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: STREAM_RENDITIONS } }
+      - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: STREAM_RENDITIONS_CPU } }
+
+  - it: a single configured rendition is also left to stream.sh's own default (no master needed)
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+      stream.renditions: [{ suffix: "", width: 854, height: 480, videoBitrate: 1500k }]
+    asserts:
+      - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: STREAM_RENDITIONS } }
+
+  - it: encodes two or more renditions as space-separated suffix:width:height:bitrate tokens
+    template: templates/stream-deployment.yaml
+    set:
+      stream.enabled: true
+      stream.renditions:
+        [
+          { suffix: 720p, width: 1280, height: 720, videoBitrate: 3000k },
+          { suffix: 480p, width: 854, height: 480, videoBitrate: 1200k },
+          { suffix: 360p, width: 640, height: 360, videoBitrate: 600k }
+        ]
+      stream.renditionsCpu:
+        [
+          { suffix: 480p, width: 854, height: 480, videoBitrate: 1200k },
+          { suffix: 360p, width: 640, height: 360, videoBitrate: 600k }
+        ]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: STREAM_RENDITIONS, value: "720p:1280:720:3000k 480p:854:480:1200k 360p:640:360:600k" }
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: STREAM_RENDITIONS_CPU, value: "480p:854:480:1200k 360p:640:360:600k" }
