@@ -73,6 +73,11 @@ int config_boolean(const char *name);
 #define SKATE_MAXIMUM_NODES 64
 /* how far below the biped its spawn looks for the ground */
 #define SKATE_GROUND_PROBE 1.f
+/* ... from this far above the point (world units: less than any biped is
+tall, so that only a floor the biped is in, not one over its head, is above
+the start) */
+#define SKATE_GROUND_LIFT 0.5f
+
 #define SKATE_THUMB_CLICKS 0x00C0
 /* world units the board may move in one tick before it is drawn there at
 once: past any speed on a board (90 m/s) */
@@ -167,6 +172,8 @@ static boolean skate_bots_data;
 as the engine has sessions, and server.bot_skaters allows) */
 #define SKATE_MAXIMUM_SKATERS (1 + SKATE_NETWORK_PLAYERS)
 static struct skate_skater skate_skaters[SKATE_MAXIMUM_SKATERS];
+/* the times a skater went through the floor (skate_floor_check) */
+static long skate_floors_crossed;
 #define skate_local (&skate_skaters[0])
 
 /* the board grown about its middle: Master Chief (about 2.1 m) is larger
@@ -299,10 +306,12 @@ static float *skate_collision_triangles(struct collision_bsp *bsp, long *count)
 		}
 	}
 	return triangles;
+
 }
 
 struct skate_skater;
 static void skate_stop(struct skate_skater *skater, const char *reason);
+static void skate_bipeds_floor_check(void);
 static void skate_bsp_cache_clear(void);
 
 /* the skater's skate session (halo_skate.h's _in calls) */
@@ -902,6 +911,41 @@ static boolean skate_unit_can_skate(long unit_index)
 }
 
 /* starting: getting on the board, when the camera takes the board's heading */
+#define SKATE_FLOOR_STEP 0.15f
+/* straight down, as far as SKATE_GROUND_LIFT */
+static real_vector3d const global_down3d_port = { 0.f, 0.f, -SKATE_GROUND_LIFT };
+
+
+/* a point in the floor raised onto it: from a little above (less than any
+biped is tall, so not from over a floor above its head) down to it, the first
+floor the way meets, if that is over the point's feet (height under it) */
+void skate_floor_lift(long unit_index, real_point3d *position, real height)
+{
+	/* (from lower again where the first start is in the level's solid - an
+	overhang, a bridge over the floor - from which the way meets nothing) */
+	static real const lifts[] = { SKATE_GROUND_LIFT, 0.3f, 0.2f, 0.12f, 0.06f };
+	short index;
+
+	for (index = 0; index < NUMBEROF(lifts); index++)
+	{
+		struct collision_result collision;
+		real_point3d start = *position;
+		real_vector3d down;
+
+		start.z += lifts[index];
+		down.i = 0.f;
+		down.j = 0.f;
+		down.k = -lifts[index] - height - 0.01f;
+		if (collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_structure_bit),
+			&start, &down, unit_index, &collision))
+		{
+			if (collision.plane.n.k > 0.3f && collision.point.z > position->z - height)
+				position->z = collision.point.z + height;
+			return;
+		}
+	}
+}
+
 static void skate_apply_frame(struct skate_skater *skater, long unit_index, boolean starting)
 {
 
@@ -913,6 +957,12 @@ static void skate_apply_frame(struct skate_skater *skater, long unit_index, bool
 	position.x = skater->frame.position[0];
 	position.y = skater->frame.position[1];
 	position.z = skater->frame.position[2] + skater->height;
+	/* (never in the floor: in a wipeout the skate engine's root lies a few
+	centimetres under it, and a biped left there - the skater stepping off,
+	dying, getting on again - is under the floor Halo's physics and the
+	board's ground probe know, and falls through) */
+	skate_floor_lift(unit_index, &position, skater->height);
+
 	/* the biped stands upright, facing the board's heading */
 	forward.i = skater->frame.forward[0];
 	forward.j = skater->frame.forward[1];
@@ -1315,13 +1365,30 @@ static real_point3d skate_ground_under(long unit_index, real_point3d const *from
 	real_point3d ground = *from;
 	real_vector3d down;
 
-	down.i = 0.f;
-	down.j = 0.f;
-	down.k = -SKATE_GROUND_PROBE;
-	if (collision_test_vector(_collision_test_environment_flags, from, &down, unit_index,
-		&collision))
+	/* (from a little above: a biped whose origin is in the floor - a
+	skater's wipeout leaves it a few centimetres under, as Halo's own bipeds
+	may stand - is on that floor, not on whatever lies under it: from its
+	origin the probe missed the floor it was in, and the skater got on the
+	board under it and fell through) */
+	/* (from lower again where a start is in the level's solid: an overhang,
+	a bridge over the floor) */
+	static real const lifts[] = { SKATE_GROUND_LIFT, 0.3f, 0.15f, 0.f };
+	short index;
+
+	for (index = 0; index < NUMBEROF(lifts); index++)
 	{
-		ground = collision.point;
+		real_point3d start = *from;
+
+		start.z += lifts[index];
+		down.i = 0.f;
+		down.j = 0.f;
+		down.k = -SKATE_GROUND_PROBE - lifts[index];
+		if (collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) | _collision_test_environment_flags,
+			&start, &down, unit_index, &collision))
+		{
+			ground = collision.point;
+			break;
+		}
 	}
 	return ground;
 }
@@ -1369,13 +1436,61 @@ static void skate_rescue_fallen(struct skate_skater *skater, long unit_index)
 	skate_put(skater, unit_index, &skater->ground_position, skater->ground_yaw);
 }
 
+
+static void skate_start(struct skate_skater *skater, long unit_index);
+double config_real(const char *name);
+
+
+/* debug.skate_test_under_floor: that many seconds into the game, the first
+bot's skater riding on a floor gets off, its biped is left 0.15 world units in
+the floor (as a wipeout left one) and it gets on again: where the board is,
+against the floor, logged (the board on the floor, not under it) */
+static void skate_test_under_floor(struct skate_skater *skater)
+{
+	static long done_time = NONE;
+	real seconds = (real)config_real("debug.skate_test_under_floor");
+	struct collision_result collision;
+	real_point3d start, origin;
+	real_vector3d down;
+	long unit_index = skater->unit_index;
+
+	if (!(seconds > 0.f) || game_time_get() < (long)(seconds * TICKS_PER_SECOND) || done_time != NONE ||
+		strcmp(skater->frame.state, "PhysicsGround"))
+	{
+		return;
+	}
+	object_get_origin(unit_index, &origin);
+	start = origin;
+	start.z += 0.3f;
+	down.i = 0.f;
+	down.j = 0.f;
+	down.k = -0.6f;
+	if (!collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_structure_bit), &start,
+		&down, unit_index, &collision) || !(collision.plane.n.k > 0.9f))
+	{
+		return;
+	}
+	done_time = game_time_get();
+	skate_stop(skater, "the test's");
+	origin.z = collision.point.z - 0.15f;
+	object_set_position(unit_index, &origin, &object_get(unit_index)->object.forward, &object_get(unit_index)->object.up);
+	skate_start(skater, unit_index);
+	platform_log("skate test: a skater got on the board from 0.15 in the floor at (%.2f %.2f), the floor at %.2f: the "
+		"board at %.2f, %.2f from the floor", origin.x, origin.y, collision.point.z, skater->frame.position[2],
+		skater->frame.position[2] - collision.point.z);
+}
+
 static void skate_start(struct skate_skater *skater, long unit_index)
 {
+
 	struct object_datum *object = object_get(unit_index);
 	real_point3d ground = skate_ground_under(unit_index, &object->object.position);
 	int session = skate_session(skater);
 
-	skater->height = object->object.position.z - ground.z;
+	/* (a biped in the floor - its origin under the ground the probe found,
+	from above - stands on it: none is placed under its feet) */
+	skater->height = MAX(object->object.position.z - ground.z, 0.f);
+
 	skate_describe_skeleton(skater, unit_index);
 	if (halo_skate_activate_in(session, &ground.x, (real)atan2(object->object.forward.j, object->object.forward.i),
 		&skater->frame) != 0)
@@ -1478,7 +1593,6 @@ SKATE_TEST_OFF_SECONDS on, and on again five seconds later. */
 again this often */
 #define SKATE_TEST_RETRY_TICKS (2 * TICKS_PER_SECOND)
 
-double config_real(const char *name);
 int config_boolean(const char *name);
 long config_integer(const char *name);
 
@@ -2781,10 +2895,13 @@ static void skate_bots_begin_steps(void)
 		}
 		if (!skater->skating)
 			continue;
+		/* (debug.skate_test_under_floor) */
+		skate_test_under_floor(skater);
 		/* (moved by a teleporter or a script: the skater goes there) */
 		skate_follow_teleport(skater, skater->unit_index);
 		/* (a blast pushed them) */
 		skate_apply_blast(skater);
+
 		/* (the machine short of processors: every few ticks, slower) */
 		if (skate_bots_load.every > 1 && (game_time_get() + index) % skate_bots_load.every != 0)
 			continue;
@@ -3369,10 +3486,89 @@ static void skate_bots_after_objects(void)
 	}
 }
 
+/* whether the way from one point to another crosses the level's floor (a
+surface of the structure facing up) and ends more than a step below it; the
+surface into collision */
+static boolean skate_floor_crossed(real_point3d const *from, real_point3d const *to, struct collision_result *collision)
+{
+	real_point3d start;
+	real_vector3d way;
+
+	way.i = to->x - from->x;
+	way.j = to->y - from->y;
+	way.k = to->z - from->z;
+	/* (in the floor where it ends: its feet more than a step under a floor
+	right over them - no biped stands with a floor through its body) */
+	start = *to;
+	start.z += SKATE_GROUND_LIFT;
+	if (collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_structure_bit),
+		&start, &global_down3d_port, NONE, collision) && collision->plane.n.k > 0.3f &&
+		to->z < collision->point.z - SKATE_FLOOR_STEP)
+	{
+		return TRUE;
+	}
+	/* (through one since the last tick, deeper: from as high as it was,
+	straight down over where it ends - a floor over it, not one it slid off the
+	edge of - a skater's move, not a teleporter's, a respawn's or another
+	machine's correction: a skater goes no faster than 0.5 world units a tick) */
+	if (magnitude3d(&way) > 0.5f || way.k > -0.01f)
+		return FALSE;
+	start = *to;
+	start.z = from->z + 0.2f;
+	way.i = 0.f;
+	way.j = 0.f;
+	way.k = to->z - start.z;
+	return collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_structure_bit),
+		&start, &way, NONE, collision) && collision->plane.n.k > 0.3f && to->z < collision->point.z - SKATE_FLOOR_STEP;
+}
+
+/* every player's biped, skating or not, through the level's floor since the
+last tick (logged, for the tests: tools/test_skating_bots.py's floors test) */
+static void skate_bipeds_floor_check(void)
+{
+	static struct { long unit_index; real_point3d at; long told; } last[SKATE_NETWORK_PLAYERS];
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		long absolute = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+		struct object_datum *object = player->unit_index != NONE ? object_try_and_get(player->unit_index) : NULL;
+		struct collision_result collision;
+
+		if (absolute < 0 || absolute >= SKATE_NETWORK_PLAYERS)
+			continue;
+		if (!object || object->object.type != _object_type_biped || object->object.parent_object_index != NONE)
+		{
+			last[absolute].unit_index = NONE;
+			continue;
+		}
+		if (last[absolute].unit_index == player->unit_index &&
+			skate_floor_crossed(&last[absolute].at, &object->object.position, &collision))
+		{
+			skate_floors_crossed++;
+			if (game_time_get() - last[absolute].told >= TICKS_PER_SECOND || game_time_get() < last[absolute].told)
+			{
+				last[absolute].told = game_time_get();
+				platform_log("skate: THROUGH THE FLOOR: player %ld's biped (%s%s) at tick %ld from (%.2f %.2f %.2f) to "
+					"(%.2f %.2f %.2f), the floor at %.2f (surface %ld)", absolute,
+					skate_unit_is_skating(player->unit_index) ? "skating" : "on foot",
+					TEST_FLAG(object->object.damage_flags, _object_dead_bit) ? ", dead" : "", game_time_get(),
+					last[absolute].at.x, last[absolute].at.y, last[absolute].at.z, object->object.position.x,
+					object->object.position.y, object->object.position.z, collision.point.z, collision.surface_index);
+			}
+		}
+		last[absolute].unit_index = player->unit_index;
+		last[absolute].at = object->object.position;
+	}
+}
+
 void skate_update_after_objects(void)
 {
 	struct skate_skater *skater = skate_local;
 	real_matrix4x3 matrices[SKATE_MAXIMUM_NODES];
+
 	struct object_datum *object;
 	real_matrix4x3 *node_matrices;
 	int node_count;
@@ -3384,6 +3580,9 @@ void skate_update_after_objects(void)
 		skater->frame.position);
 	/* other machines' skaters posed, and their boards lit (skate_network.c) */
 	skate_network_update_after_objects();
+	/* (each biped where this tick leaves it to be drawn, every machine's own
+	and another's lifted onto the floor: checked against it) */
+	skate_bipeds_floor_check();
 	if (skate_board_ready())
 	{
 		for (player_index = 0; player_index < SKATE_NETWORK_PLAYERS; player_index++)
@@ -3719,6 +3918,10 @@ boolean skate_bots_available(void)
 boolean skate_bots_busy(void)
 {
 	return FALSE;
+}
+
+void skate_floor_lift(long unit_index, real_point3d *position, real height)
+{
 }
 
 boolean skate_bot_drive(long player_index, long unit_index, boolean on_board, struct halo_skate_pad const *pad)

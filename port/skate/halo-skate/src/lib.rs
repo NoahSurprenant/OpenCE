@@ -1088,10 +1088,15 @@ fn prepare_afresh(triangles: Vec<[Vec3; 3]>) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f3
                 && (t[1] - t[0]).cross(t[2] - t[0]).length_squared() > 0.001
         })
         .filter(|t| {
-            let mut key = t.map(|p| p.to_array().map(|x| (x * 8.0).round() as i32));
-            key.sort();
-            seen.insert(key)
+            // The same three corners the same way round (a cyclic rotation,
+            // not a sort): a two-sided surface's other side, wound the other
+            // way, is another triangle, kept, or the surface is solid from one
+            // side alone and a skater on the other goes through it.
+            let key = t.map(|p| p.to_array().map(|x| (x * 8.0).round() as i32));
+            let first = (0..3).min_by_key(|&i| key[i]).unwrap_or(0);
+            seen.insert([key[first], key[(first + 1) % 3], key[(first + 2) % 3]])
         })
+
         .collect();
     inches.sort_by_cached_key(|t| morton((t[0] + t[1] + t[2]) / (3.0 * INCHES)));
     eprintln!(
@@ -2314,6 +2319,18 @@ pub unsafe extern "C" fn halo_skate_board_placement_in(session: i32, out: *mut f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The level's triangles deduplicated by their corners the same way
+    /// round: a two-sided surface's two sides (the same corners, wound both
+    /// ways) both stay, the same triangle given twice (from another corner)
+    /// once.
+    #[test]
+    fn a_two_sided_surface_keeps_both_sides() {
+        let (a, b, c) = (Vec3::new(0.0, 0.0, 0.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 4.0, 0.0));
+        let (kept, _, _) = prepare_afresh(vec![[a, b, c], [a, c, b], [b, c, a]]);
+        assert_eq!(kept.len(), 2, "{kept:?}");
+    }
+
 
     /// A blast's push in world units a second goes to the skate engine in
     /// metres a second, its axes as positions' are (Halo's up is the engine's

@@ -659,7 +659,13 @@ static const struct config_setting config_settings[] =
 		"Infection's test: the players (absolute indices, with commas between)\n"
 		"who start infected, instead of a random choice; \"client\": the people on\n"
 		"other machines than the host." },
+	{ "debug.skate_test_under_floor", _config_real, "0.0", "HALO_SKATE_TEST_UNDER_FLOOR", _environment_value,
+		_platform_all,
+		"Skate 3 mode's test: that many seconds into a game, the host's first bot\n"
+		"skater riding on a floor gets off, is left a little in the floor (as a\n"
+		"wipeout leaves one) and gets on again; where its board is, logged." },
 	{ "debug.game_seed", _config_integer, "0", "HALO_GAME_SEED", _environment_value, _platform_all,
+
 
 
 		"The game's random numbers start from this instead of the time (0: the\n"

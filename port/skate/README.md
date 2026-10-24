@@ -610,6 +610,39 @@ or stood on the ground in the level (`skate_rescue_fallen` in
 machine's skater under the level that many seconds into a game, for
 `test_dedicated_server_skaters`.
 
+Skaters went through floors - bots in Blood Gulch's bases, seen on a
+stream - because a biped was left in the floor and then went by it:
+
+- In a wipeout the skate engine's root lies a few centimetres under the
+  ground, and the biped was put there each tick (with a skater's height
+  under its origin, worked out from its first ground). A biped left so - the
+  skater stepping off for a fight, dying, getting on again - was under the
+  surface Halo's physics and the board's ground probe know.
+- The ground probe (`skate_ground_under`, where a skater gets on its board
+  and where the rescue puts it) looked down from the biped's origin, so from
+  in the floor it missed that floor and found whatever lay under it, or
+  nothing: the board went under the floor, and through the level's
+  one-sided surfaces it fell (the rescue above caught it far below).
+- Another machine's skater, carried on at its last speed between its states
+  and placed where the host's states put it between ticks, dipped under the
+  ground on a landing, at the foot of a ramp and over bumps.
+
+Now the probe starts 0.5 world units above the point (less than any biped
+is tall, so only a floor the biped is in is above the start), a skater's
+height under its origin is never below 0, and every machine raises a
+skater's biped onto the floor it is in (`skate_floor_lift`: the host's and
+its own each tick it places them, another machine's carried on and posed).
+The level's triangles are also deduplicated by their corners the same way
+round, not sorted, so both sides of a two-sided surface stay solid
+(`halo-skate`'s `prepare`). Each machine logs `skate: THROUGH THE FLOOR`
+for a player's biped whose feet end more than 0.15 world units under a
+floor (`skate_bipeds_floor_check`); `test_skating_bots_floors` rides eight
+bots on Blood Gulch, Sidewinder and Hang 'Em High with a client over a
+lossy link and expects none, and `test_skating_bots_get_on_in_the_floor`
+(`debug.skate_test_under_floor`) a biped left in the floor to get on its
+board on it.
+
+
 ### Feet on the deck
 
 The skater's ankles are not as high above its soles as Master Chief's, so

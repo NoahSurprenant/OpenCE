@@ -453,7 +453,10 @@ jobs:
     # port/linux/README.md's "Infection") runs beside them too: an infected
     # bot running survivors over to infect them, the infected keeping the
     # rules (always on a board, unarmed, no vehicle), a person infected on a
-    # client, and a balance round of eight bots.
+    # client, and a balance round of eight bots. The skating bots' floor
+    # tests run in that group too: no skater goes through a floor on the
+    # server or a lossy client (Blood Gulch, Sidewinder, Hang 'Em High), and
+    # a biped left in the floor gets on its board on that floor.
     #
 
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
@@ -543,11 +546,12 @@ jobs:
           # (the bots on boards, tools/test_skating_bots.py, beside the rest:
           # their loopback addresses differ)
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-bots" \
-            tools/test_skating_bots.py > "$RUNNER_TEMP/skate-bots.log" 2>&1 &
+            tools/test_skating_bots.py -k "not floor" > "$RUNNER_TEMP/skate-bots.log" 2>&1 &
           bots=$!
           # (and Infection, tools/test_infection.py, beside them too)
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/infection" \
-            tools/test_infection.py > "$RUNNER_TEMP/infection.log" 2>&1 &
+            tools/test_infection.py tools/test_skating_bots.py::test_skating_bots_floors \
+            tools/test_skating_bots.py::test_skating_bots_get_on_in_the_floor > "$RUNNER_TEMP/infection.log" 2>&1 &
           infection=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
             tools/test_linux_port.py -k "test_skate_multiplayer or test_skate_hitbox or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log" || true
@@ -563,8 +567,9 @@ jobs:
             echo "::error::the eight tests of tools/test_skating_bots.py did not all run and pass"
             exit 1
           fi
-          if ! grep -q '5 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
-            echo "::error::the five tests of tools/test_infection.py did not all run and pass"
+          if ! grep -q '7 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
+            echo "::error::the five tests of tools/test_infection.py and the two floor tests did not all run and pass"
+
             exit 1
           fi
 
