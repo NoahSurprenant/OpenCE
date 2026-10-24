@@ -77,13 +77,22 @@ def skate_name(name: str) -> bool:
 
 
 def sha256(path: Path) -> str:
+    """the file's SHA-256, dropping each chunk from the page cache once hashed:
+    the data is read once, and under a tight memory limit (the Helm chart's
+    init container) a full page cache would otherwise be reclaimed inside the
+    cgroup all the time, a path with a kernel bug in Debian's 6.12"""
     digest = hashlib.sha256()
-    with path.open("rb") as source:
+    drop = getattr(os, "posix_fadvise", None)
+    with path.open("rb", buffering=0) as source:
+        offset = 0
         while True:
             chunk = source.read(HASH_CHUNK)
             if not chunk:
                 break
             digest.update(chunk)
+            if drop:
+                drop(source.fileno(), offset, len(chunk), os.POSIX_FADV_DONTNEED)
+            offset += len(chunk)
     return digest.hexdigest()
 
 
