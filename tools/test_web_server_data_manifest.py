@@ -63,6 +63,18 @@ def test_sizes_and_hashes(data):
     assert "skate" not in manifest
 
 
+def test_hashed_chunks_leave_the_page_cache(tmp_path, monkeypatch):
+    if not hasattr(os, "posix_fadvise"):
+        pytest.skip("no posix_fadvise here")
+    calls = []
+    monkeypatch.setattr(tool, "HASH_CHUNK", 1000)
+    monkeypatch.setattr(os, "posix_fadvise", lambda fd, offset, length, advice: calls.append((offset, length, advice)))
+    path = write(tmp_path / "ui.map", b"u" * 2500)
+    assert tool.sha256(path) == hashlib.sha256(b"u" * 2500).hexdigest()
+    assert calls == [(0, 1000, os.POSIX_FADV_DONTNEED), (1000, 1000, os.POSIX_FADV_DONTNEED),
+                     (2000, 500, os.POSIX_FADV_DONTNEED)]
+
+
 def test_symbolic_links_are_skipped(data):
     outside = write(data / "outside" / "secret.map", b"secret")
     os.symlink(outside, data / "maps" / "linked.map")
