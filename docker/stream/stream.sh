@@ -22,6 +22,18 @@
 #                    before. Either way this logs which one it picked. The game itself needs no
 #                    flag: it draws through the same EGL path regardless (Dockerfile's "stream"
 #                    stage comment) and logs "OpenGL ... on ..." with whichever renderer it got.
+#   STREAM_RENDITIONS, STREAM_RENDITIONS_CPU    viewer-selectable quality (charts/opence-server's
+#                    stream.renditions / stream.renditionsCpu): space-separated
+#                    "suffix:width:height:videoBitrate" tokens (suffix may be empty), one capture
+#                    (STREAM_WIDTH x STREAM_HEIGHT) scaled to each. STREAM_RENDITIONS is used when
+#                    the VAAPI preflight above succeeds, STREAM_RENDITIONS_CPU otherwise; either
+#                    unset, or one token, keeps the old behaviour (a single playlist at
+#                    live.m3u8/live<N>.ts, no master). Two or more tokens: each becomes its own
+#                    live_<suffix>.m3u8/live_<suffix><N>.ts, decoded/uploaded once (the VAAPI path)
+#                    or scaled once per rendition (the CPU path) and encoded with h264_vaapi or
+#                    libx264 respectively, under a master playlist at live.m3u8 (ffmpeg's own
+#                    var_stream_map/master_pl_name) that hls.js reads for its Auto (ABR) and
+#                    fixed-quality levels.
 #
 # The game and ffmpeg run side by side; when either exits, the other is stopped and this exits
 # non-zero. SIGTERM stops both (the game leaves its game and exits 0 in under a second).
@@ -77,8 +89,22 @@ until address=$(resolve "$server") && [ -n "$address" ]; do
 done
 log "watching $server ($address): ${width}x${height} at $fps fps to $hls/live.m3u8"
 
+# The rendition list for whichever encoder vaapi_works() picked above: one token (the default - no
+# STREAM_RENDITIONS[_CPU] set) means today's single plain playlist; two or more means a master
+# playlist of that many h264_vaapi or libx264 encodes of the one capture.
+if [ "$use_vaapi" = 1 ]; then
+  renditions=${STREAM_RENDITIONS:-":${width}:${height}:${video_bitrate}"}
+else
+  renditions=${STREAM_RENDITIONS_CPU:-":${width}:${height}:${video_bitrate}"}
+fi
+rendition_count=0
+for _r in $renditions; do rendition_count=$((rendition_count + 1)); done
+if [ "$rendition_count" -gt 1 ]; then
+  log "renditions ($rendition_count, $([ "$use_vaapi" = 1 ] && echo h264_vaapi || echo libx264)): $renditions"
+fi
+
 mkdir -p "$pipes" "$hls"
-rm -f "$pipes/video" "$pipes/audio" "$hls"/live*.ts "$hls"/live.m3u8*
+rm -f "$pipes/video" "$pipes/audio" "$hls"/live*
 mkfifo "$pipes/video" "$pipes/audio"
 
 game=
@@ -99,35 +125,104 @@ game=$!
 # The pipes read as they come (wall-clock timestamps), so the picture and the sound stay together;
 # a keyframe every segment, so each segment starts with one.
 gop=$((fps * segment))
-if [ "$use_vaapi" = 1 ]; then
-  # rgb24 -> nv12 (software, cheap at this resolution) -> uploaded to the render node's memory, then
-  # encoded there (VCN): most of the CPU this used to take is now the game's draw and the nv12
-  # conversion, not the encode.
-  ffmpeg -hide_banner -loglevel warning -nostdin -vaapi_device "$render_device" \
-    -f rawvideo -pix_fmt rgb24 -s "${width}x${height}" -r "$fps" -use_wallclock_as_timestamps 1 \
-      -thread_queue_size 64 -i "$pipes/video" \
-    -f s16le -ar 48000 -ac 2 -use_wallclock_as_timestamps 1 -thread_queue_size 1024 -i "$pipes/audio" \
-    -map 0:v -map 1:a \
-    -vf format=nv12,hwupload \
-    -c:v h264_vaapi -bf 0 -r "$fps" -g "$gop" \
-      -b:v "$video_bitrate" -maxrate "$video_bitrate" -bufsize "$video_bitrate" \
-    -c:a aac -b:a "$audio_bitrate" -ar 48000 \
-    -f hls -hls_time "$segment" -hls_list_size "$playlist_size" -hls_delete_threshold 2 \
-      -hls_flags delete_segments+temp_file+independent_segments+omit_endlist \
-      -hls_segment_filename "$hls/live%06d.ts" "$hls/live.m3u8" &
+
+if [ "$rendition_count" -le 1 ]; then
+  # Today's behaviour, unchanged: one encode of the capture straight to live.m3u8.
+  if [ "$use_vaapi" = 1 ]; then
+    # rgb24 -> nv12 (software, cheap at this resolution) -> uploaded to the render node's memory, then
+    # encoded there (VCN): most of the CPU this used to take is now the game's draw and the nv12
+    # conversion, not the encode.
+    ffmpeg -hide_banner -loglevel warning -nostdin -vaapi_device "$render_device" \
+      -f rawvideo -pix_fmt rgb24 -s "${width}x${height}" -r "$fps" -use_wallclock_as_timestamps 1 \
+        -thread_queue_size 64 -i "$pipes/video" \
+      -f s16le -ar 48000 -ac 2 -use_wallclock_as_timestamps 1 -thread_queue_size 1024 -i "$pipes/audio" \
+      -map 0:v -map 1:a \
+      -vf format=nv12,hwupload \
+      -c:v h264_vaapi -bf 0 -r "$fps" -g "$gop" \
+        -b:v "$video_bitrate" -maxrate "$video_bitrate" -bufsize "$video_bitrate" \
+      -c:a aac -b:a "$audio_bitrate" -ar 48000 \
+      -f hls -hls_time "$segment" -hls_list_size "$playlist_size" -hls_delete_threshold 2 \
+        -hls_flags delete_segments+temp_file+independent_segments+omit_endlist \
+        -hls_segment_filename "$hls/live%06d.ts" "$hls/live.m3u8" &
+  else
+    ffmpeg -hide_banner -loglevel warning -nostdin \
+      -f rawvideo -pix_fmt rgb24 -s "${width}x${height}" -r "$fps" -use_wallclock_as_timestamps 1 \
+        -thread_queue_size 64 -i "$pipes/video" \
+      -f s16le -ar 48000 -ac 2 -use_wallclock_as_timestamps 1 -thread_queue_size 1024 -i "$pipes/audio" \
+      -map 0:v -map 1:a \
+      -c:v libx264 -preset "$preset" -tune zerolatency -pix_fmt yuv420p -threads "$encoder_threads" \
+        -r "$fps" -g "$gop" -keyint_min "$gop" -sc_threshold 0 \
+        -b:v "$video_bitrate" -maxrate "$video_bitrate" -bufsize "$video_bitrate" \
+      -c:a aac -b:a "$audio_bitrate" -ar 48000 \
+      -f hls -hls_time "$segment" -hls_list_size "$playlist_size" -hls_delete_threshold 2 \
+        -hls_flags delete_segments+temp_file+independent_segments+omit_endlist \
+        -hls_segment_filename "$hls/live%06d.ts" "$hls/live.m3u8" &
+  fi
 else
-  ffmpeg -hide_banner -loglevel warning -nostdin \
-    -f rawvideo -pix_fmt rgb24 -s "${width}x${height}" -r "$fps" -use_wallclock_as_timestamps 1 \
-      -thread_queue_size 64 -i "$pipes/video" \
-    -f s16le -ar 48000 -ac 2 -use_wallclock_as_timestamps 1 -thread_queue_size 1024 -i "$pipes/audio" \
-    -map 0:v -map 1:a \
-    -c:v libx264 -preset "$preset" -tune zerolatency -pix_fmt yuv420p -threads "$encoder_threads" \
-      -r "$fps" -g "$gop" -keyint_min "$gop" -sc_threshold 0 \
-      -b:v "$video_bitrate" -maxrate "$video_bitrate" -bufsize "$video_bitrate" \
-    -c:a aac -b:a "$audio_bitrate" -ar 48000 \
-    -f hls -hls_time "$segment" -hls_list_size "$playlist_size" -hls_delete_threshold 2 \
-      -hls_flags delete_segments+temp_file+independent_segments+omit_endlist \
-      -hls_segment_filename "$hls/live%06d.ts" "$hls/live.m3u8" &
+  # Multiple renditions of the one capture: decode is a no-op here (the game hands over raw rgb24
+  # frames already, never compressed video), so "decode once" means upload once - with VAAPI, one
+  # format+hwupload turns the frame into a hardware surface before split() fans it out, and each
+  # branch is only a scale_vaapi (the 680M scaling, not the CPU) ahead of its own h264_vaapi encode.
+  # On the CPU, split()+scale() ahead of each libx264 is the closest equivalent (there is no shared
+  # upload step to save).
+  filter="[0:v]"
+  if [ "$use_vaapi" = 1 ]; then filter="${filter}format=nv12,hwupload,"; fi
+  filter="${filter}split=${rendition_count}"
+  i=0
+  for _r in $renditions; do i=$((i + 1)); filter="${filter}[s$i]"; done
+  filter="${filter}; "
+  i=0
+  tail=
+  stream_map=
+  for r in $renditions; do
+    i=$((i + 1))
+    old_ifs=$IFS; IFS=:; set -- $r; IFS=$old_ifs
+    r_suffix=${1:-r$i}; r_w=$2; r_h=$3; r_br=$4
+    idx=$((i - 1))
+    if [ "$use_vaapi" = 1 ]; then
+      filter="${filter}[s$i]scale_vaapi=w=${r_w}:h=${r_h}[o$i]; "
+    else
+      filter="${filter}[s$i]scale=w=${r_w}:h=${r_h}[o$i]; "
+    fi
+    tail="$tail -map [o$i] -map 1:a -b:v:$idx $r_br -maxrate:v:$idx $r_br -bufsize:v:$idx $r_br"
+    stream_map="$stream_map v:$idx,a:$idx,name:$r_suffix"
+  done
+  filter=${filter%; }
+
+  # $tail and $stream_map below are split unquoted on purpose (they are several ffmpeg options, not
+  # one); set -f first so a stray "[o1]"-shaped word is never read as a glob against files in /state.
+  set -f
+  if [ "$use_vaapi" = 1 ]; then
+    # shellcheck disable=SC2086 # $tail and $stream_map are built above from trusted chart values
+    ffmpeg -hide_banner -loglevel warning -nostdin -vaapi_device "$render_device" \
+      -f rawvideo -pix_fmt rgb24 -s "${width}x${height}" -r "$fps" -use_wallclock_as_timestamps 1 \
+        -thread_queue_size 64 -i "$pipes/video" \
+      -f s16le -ar 48000 -ac 2 -use_wallclock_as_timestamps 1 -thread_queue_size 1024 -i "$pipes/audio" \
+      -filter_complex "$filter" \
+      $tail \
+      -c:v h264_vaapi -bf 0 -r "$fps" -g "$gop" \
+      -c:a aac -b:a "$audio_bitrate" -ar 48000 \
+      -f hls -hls_time "$segment" -hls_list_size "$playlist_size" -hls_delete_threshold 2 \
+        -hls_flags delete_segments+temp_file+independent_segments+omit_endlist \
+        -var_stream_map "${stream_map# }" -master_pl_name live.m3u8 \
+        -hls_segment_filename "$hls/live_%v%06d.ts" "$hls/live_%v.m3u8" &
+  else
+    # shellcheck disable=SC2086
+    ffmpeg -hide_banner -loglevel warning -nostdin \
+      -f rawvideo -pix_fmt rgb24 -s "${width}x${height}" -r "$fps" -use_wallclock_as_timestamps 1 \
+        -thread_queue_size 64 -i "$pipes/video" \
+      -f s16le -ar 48000 -ac 2 -use_wallclock_as_timestamps 1 -thread_queue_size 1024 -i "$pipes/audio" \
+      -filter_complex "$filter" \
+      $tail \
+      -c:v libx264 -preset "$preset" -tune zerolatency -pix_fmt yuv420p -threads "$encoder_threads" \
+        -r "$fps" -g "$gop" -keyint_min "$gop" -sc_threshold 0 \
+      -c:a aac -b:a "$audio_bitrate" -ar 48000 \
+      -f hls -hls_time "$segment" -hls_list_size "$playlist_size" -hls_delete_threshold 2 \
+        -hls_flags delete_segments+temp_file+independent_segments+omit_endlist \
+        -var_stream_map "${stream_map# }" -master_pl_name live.m3u8 \
+        -hls_segment_filename "$hls/live_%v%06d.ts" "$hls/live_%v.m3u8" &
+  fi
+  set +f
 fi
 encoder=$!
 

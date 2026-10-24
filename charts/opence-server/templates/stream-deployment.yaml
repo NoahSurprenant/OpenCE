@@ -13,6 +13,24 @@
 {{- $env = append $env (dict "name" "STREAM_ENCODER_THREADS" "value" (toString (int $s.encoderThreads))) }}
 {{- $env = append $env (dict "name" "STREAM_SEGMENT_SECONDS" "value" (toString (int $s.segmentSeconds))) }}
 {{- $env = append $env (dict "name" "STREAM_PLAYLIST_SIZE" "value" (toString (int $s.playlistSize))) }}
+{{- /* Viewer-selectable quality: each list becomes "suffix:width:height:videoBitrate" tokens,
+space-joined (docker/stream/stream.sh). Left out entirely (the default - renditions/renditionsCpu
+empty) unless there is more than one rendition: stream.sh's own default (one token, the
+width/height/videoBitrate above) is already today's single-playlist behaviour. */}}
+{{- if gt (len $s.renditions) 1 }}
+{{- $tokens := list }}
+{{- range $r := $s.renditions }}
+{{- $tokens = append $tokens (printf "%s:%d:%d:%s" ($r.suffix | default "") (int $r.width) (int $r.height) $r.videoBitrate) }}
+{{- end }}
+{{- $env = append $env (dict "name" "STREAM_RENDITIONS" "value" (join " " $tokens)) }}
+{{- end }}
+{{- if gt (len $s.renditionsCpu) 1 }}
+{{- $tokensCpu := list }}
+{{- range $r := $s.renditionsCpu }}
+{{- $tokensCpu = append $tokensCpu (printf "%s:%d:%d:%s" ($r.suffix | default "") (int $r.width) (int $r.height) $r.videoBitrate) }}
+{{- end }}
+{{- $env = append $env (dict "name" "STREAM_RENDITIONS_CPU" "value" (join " " $tokensCpu)) }}
+{{- end }}
 {{- $env = append $env (dict "name" "HALO_STREAM_CAMERA" "value" $s.camera) }}
 {{- $env = append $env (dict "name" "LP_NUM_THREADS" "value" (toString (int $s.renderThreads))) }}
 {{- $env = append $env (dict "name" "HALO_DATA_ROOT" "value" "/data") }}
@@ -114,24 +132,35 @@ spec:
             - name: system-link
               containerPort: 5151
               protocol: UDP
-          # Ready once the playlist lists readySegments segments, so a player has enough to start.
+          # Ready once a playlist lists readySegments segments, so a player has enough to start.
+          # /hls/live.m3u8 is either the single rendition's own playlist (today's behaviour - its
+          # segments listed directly) or, with two or more renditions, ffmpeg's own master playlist
+          # (#EXT-X-STREAM-INF lines, no segments of its own): follow it to its first variant
+          # playlist and count that instead, so this works either way without the probe needing to
+          # know which encoder (and so which file names) stream.sh picked at runtime.
           readinessProbe:
             exec:
               command:
                 - /bin/sh
                 - -c
-                - test "$(grep -cs '^live[0-9]*\.ts$' /hls/live.m3u8)" -ge {{ int $s.readySegments }}
+                - |
+                  p=/hls/live.m3u8
+                  if grep -qs '^#EXT-X-STREAM-INF' "$p"; then
+                    v=$(grep -vs '^#' "$p" | head -n1)
+                    p="/hls/$v"
+                  fi
+                  test "$(grep -cs '^live[^/]*\.ts$' "$p")" -ge {{ int $s.readySegments }}
             periodSeconds: 2
             failureThreshold: 2
             timeoutSeconds: 2
-          # Alive while ffmpeg keeps writing the playlist (a segment every segmentSeconds; the script
-          # exits by itself if the game or ffmpeg does).
+          # Alive while ffmpeg keeps writing segments (one every segmentSeconds, to whichever
+          # playlist(s) are active; the script exits by itself if the game or ffmpeg does).
           livenessProbe:
             exec:
               command:
                 - /bin/sh
                 - -c
-                - test -n "$(find /hls/live.m3u8 -newermt '-30 seconds' 2>/dev/null)"
+                - test -n "$(find /hls -name 'live*.ts' -newermt '-30 seconds' 2>/dev/null | head -n1)"
             initialDelaySeconds: 60
             periodSeconds: 15
             failureThreshold: 3

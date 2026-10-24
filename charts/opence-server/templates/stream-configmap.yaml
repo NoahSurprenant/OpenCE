@@ -6,8 +6,11 @@ metadata:
   labels:
     {{- include "opence-server.streamLabels" . | nindent 4 }}
 data:
-  # The playlist and its segments from /hls, the watch page at any path that ends in /, so the
+  # The playlist(s) and their segments from /hls, the watch page at any path that ends in /, so the
   # stream works under any path prefix an ingress gives it (/watch/, say) with nothing stripped.
+  # live.m3u8 is either the one rendition's playlist or (two or more renditions) ffmpeg's own master
+  # playlist; live_<suffix>.m3u8 and live_<suffix><N>.ts are the per-rendition ones
+  # (docker/stream/stream.sh) - both patterns below match either naming.
   nginx.conf: |
     worker_processes 1;
     pid /tmp/nginx.pid;
@@ -32,15 +35,15 @@ data:
           default_type text/plain;
           return 200 "ok\n";
         }
-        # the playlist changes every segment: never kept
-        location ~ ^(?:.*/)?(live\.m3u8)$ {
+        # a playlist (master or a rendition's own) changes every segment: never kept
+        location ~ ^(?:.*/)?(live[^/]*\.m3u8)$ {
           types { }
           default_type application/vnd.apple.mpegurl;
           add_header Cache-Control "no-cache" always;
           alias /hls/$1;
         }
         # a segment never changes, and is deleted a few segments later
-        location ~ ^(?:.*/)?(live[0-9]+\.ts)$ {
+        location ~ ^(?:.*/)?(live[^/]*\.ts)$ {
           types { }
           default_type video/mp2t;
           add_header Cache-Control "max-age=30" always;
@@ -72,8 +75,9 @@ data:
       html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 15px system-ui, sans-serif; }
       main { display: flex; flex-direction: column; height: 100%; }
       video { flex: 1; width: 100%; min-height: 0; background: #000; }
-      .bar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; background: #111; }
-      .bar button { font: inherit; padding: 6px 14px; border: 1px solid #555; border-radius: 4px; background: #222; color: #eee; cursor: pointer; }
+      .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 8px 12px; background: #111; }
+      .bar button, .bar select { font: inherit; padding: 6px 14px; border: 1px solid #555; border-radius: 4px; background: #222; color: #eee; cursor: pointer; }
+      .bar select { padding-right: 8px; }
       #status { opacity: 0.8; }
       .live { color: #e33; font-weight: 600; }
     </style>
@@ -84,6 +88,7 @@ data:
       <div class="bar">
         <span class="live">&#9679; LIVE</span>
         <button id="sound" type="button">Unmute</button>
+        <select id="quality" hidden></select>
         <span id="status">Connecting&hellip;</span>
       </div>
     </main>
@@ -95,7 +100,9 @@ data:
       var video = document.getElementById('video');
       var status = document.getElementById('status');
       var sound = document.getElementById('sound');
+      var quality = document.getElementById('quality');
       var source = 'live.m3u8';
+      var QUALITY_KEY = 'opence-stream-quality';
       function say(text) { status.textContent = text; }
       sound.onclick = function () {
         video.muted = !video.muted;
@@ -104,6 +111,14 @@ data:
       };
       video.addEventListener('playing', function () { say(''); });
       video.addEventListener('waiting', function () { say('Buffering…'); });
+      // Private windows, blocked/cleared site data and the like can make localStorage throw (or
+      // just come back empty) - a remembered quality is a convenience, never required to watch.
+      function loadQuality() {
+        try { return window.localStorage.getItem(QUALITY_KEY); } catch (e) { return null; }
+      }
+      function saveQuality(value) {
+        try { window.localStorage.setItem(QUALITY_KEY, value); } catch (e) { /* ignored */ }
+      }
       // The stream went away (it stopped, or is starting again): load the page again, which shows
       // whatever is in front of the stream (a starting page) until it is back.
       function again(why) {
@@ -120,9 +135,54 @@ data:
           hls.destroy();
           again('The stream stopped.');
         });
+        // One level (today's single-rendition behaviour, or an old browser's cache of the master
+        // from before a config change): nothing to pick, so the menu stays hidden. Two or more:
+        // Auto (hls.js's own ABR, the default) plus each fixed quality, labelled by height; the
+        // viewer's last pick (by height, "auto" otherwise) is restored if the new manifest still
+        // has a level that height, else it falls back to Auto.
+        hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
+          var levels = data.levels || [];
+          if (levels.length < 2) return;
+          var order = levels.map(function (level, index) { return index; })
+            .sort(function (a, b) { return (levels[b].height || 0) - (levels[a].height || 0); });
+          quality.innerHTML = '';
+          var auto = document.createElement('option');
+          auto.value = 'auto';
+          auto.textContent = 'Auto';
+          quality.appendChild(auto);
+          order.forEach(function (index) {
+            var option = document.createElement('option');
+            var height = levels[index].height;
+            option.value = String(index);
+            option.textContent = height ? height + 'p' : 'Level ' + index;
+            quality.appendChild(option);
+          });
+          var remembered = loadQuality();
+          var match = order.filter(function (index) { return String(levels[index].height) === remembered; })[0];
+          if (remembered && remembered !== 'auto' && match !== undefined) {
+            hls.currentLevel = match;
+            quality.value = String(match);
+          } else {
+            hls.currentLevel = -1;
+            quality.value = 'auto';
+          }
+          quality.hidden = false;
+        });
+        quality.addEventListener('change', function () {
+          if (quality.value === 'auto') {
+            hls.currentLevel = -1;
+            saveQuality('auto');
+            return;
+          }
+          var index = Number(quality.value);
+          hls.currentLevel = index;
+          saveQuality(String(hls.levels[index].height));
+        });
         hls.loadSource(source);
         hls.attachMedia(video);
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari: native HLS, its own ABR - no manual level API, so the menu stays hidden and it
+        // adapts to bandwidth by itself.
         video.src = source;
         video.addEventListener('error', function () { again('The stream stopped.'); });
       } else {

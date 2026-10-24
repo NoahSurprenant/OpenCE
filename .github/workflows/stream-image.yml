@@ -109,6 +109,36 @@ jobs:
           grep -qF 'stream.sh: stopping' stream.log
           [ "$status" = 0 ] || { echo "::error::the stream exited with $status after SIGTERM, not 0"; exit 1; }
 
+      # Two renditions (STREAM_RENDITIONS_CPU: no GPU in CI, so stream.sh's VAAPI preflight fails and
+      # this is the list it actually encodes with): a master playlist (ffmpeg's own, #EXT-X-STREAM-INF)
+      # at live.m3u8, and each of the two variants getting its own segments.
+      - name: Smoke test - multi-rendition (CPU)
+        run: |
+          set -euo pipefail
+          docker run -d --name stream-multi --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /state:uid=10001,gid=10001 --tmpfs /tmp:uid=10001,gid=10001 --tmpfs /hls:uid=10001,gid=10001 \
+            -e STREAM_SERVER=127.0.0.1 \
+            -e STREAM_RENDITIONS_CPU="480p:320:180:400k 360p:160:90:200k" \
+            opence-stream:ci > /dev/null
+          ready=0
+          master=0
+          for _ in $(seq 1 30); do
+            a=$(docker exec stream-multi sh -c 'grep -cs "^live[^/]*\.ts$" /hls/live_480p.m3u8' || true)
+            b=$(docker exec stream-multi sh -c 'grep -cs "^live[^/]*\.ts$" /hls/live_360p.m3u8' || true)
+            docker exec stream-multi sh -c "grep -qs '^#EXT-X-STREAM-INF' /hls/live.m3u8" && master=1 || master=0
+            if [ "${a:-0}" -ge 3 ] && [ "${b:-0}" -ge 3 ] && [ "$master" = 1 ]; then ready=1; break; fi
+            sleep 2
+          done
+          docker stop -t 10 stream-multi > /dev/null
+          status=$(docker inspect -f '{{.State.ExitCode}}' stream-multi)
+          docker logs stream-multi > stream-multi.log 2>&1
+          docker rm stream-multi > /dev/null
+          cat stream-multi.log
+          grep -qF 'stream.sh: renditions (2, libx264)' stream-multi.log
+          [ "$master" = 1 ] || { echo "::error::live.m3u8 is not a master playlist (#EXT-X-STREAM-INF)"; exit 1; }
+          [ "$ready" = 1 ] || { echo "::error::ffmpeg did not write 3 segments to each rendition's playlist"; exit 1; }
+          [ "$status" = 0 ] || { echo "::error::the stream exited with $status after SIGTERM, not 0"; exit 1; }
+
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
