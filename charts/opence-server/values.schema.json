@@ -27,7 +27,18 @@
       },
       "additionalProperties": false
     },
-    "gameEntry": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?$" }
+    "gameEntry": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?$" },
+    "streamRendition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "videoBitrate"],
+      "properties": {
+        "suffix": { "type": "string", "pattern": "^[A-Za-z0-9]*$" },
+        "width": { "type": "integer", "minimum": 160, "maximum": 3840 },
+        "height": { "type": "integer", "minimum": 120, "maximum": 2160 },
+        "videoBitrate": { "type": "string", "pattern": "^[0-9]+[kM]?$" }
+      }
+    }
   },
   "properties": {
     "nameOverride": { "type": "string" },
@@ -261,6 +272,8 @@
         "fps": { "type": "integer", "minimum": 1, "maximum": 60 },
         "videoBitrate": { "type": "string", "pattern": "^[0-9]+[kM]?$" },
         "audioBitrate": { "type": "string", "pattern": "^[0-9]+[kM]?$" },
+        "renditions": { "type": "array", "items": { "$ref": "#/definitions/streamRendition" } },
+        "renditionsCpu": { "type": "array", "items": { "$ref": "#/definitions/streamRendition" } },
         "preset": { "enum": ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"] },
         "encoderThreads": { "type": "integer", "minimum": 0, "maximum": 16 },
         "segmentSeconds": { "type": "integer", "minimum": 1, "maximum": 10 },

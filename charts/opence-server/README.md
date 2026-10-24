@@ -204,6 +204,16 @@ Measured at 854 x 480 with llvmpipe: about 2.1 cores for the game and half a cor
 non-root, read-only root filesystem, the emptyDirs its only writable folders, no capabilities,
 seccomp `RuntimeDefault`, no service account token.
 
+**Viewer-selectable quality.** `stream.renditions` (used when `stream.gpu`'s VAAPI preflight
+succeeds, or always on the CPU path if `stream.renditionsCpu` is left empty) and
+`stream.renditionsCpu` each list `{suffix, width, height, videoBitrate}` encodes of the one capture:
+two or more turn on a master playlist (`live.m3u8`, ffmpeg's own) over each rendition's own
+(`live_<suffix>.m3u8`), and the watch page offers Auto (hls.js's ABR) plus each fixed quality,
+remembering the viewer's pick (`localStorage`, best-effort). Left empty, or a single entry: today's
+plain single-rendition playlist, unchanged. Keep `renditionsCpu` short (at most two, or none) - every
+extra rendition on the CPU path is another `scale` and `libx264` on top of the one already drawing
+the game.
+
 ## Settings
 
 The chart maps its values to the server's environment variables (port/linux/README.md, "Settings"):
