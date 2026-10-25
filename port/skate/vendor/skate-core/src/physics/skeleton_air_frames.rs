@@ -1,5 +1,6 @@
 //! Original TU3 animated-board and COM-controlled air frame calculations.
 //! 82BDDA10, 82BDE600 and 82BDE7B8. Persistent frames remain in their owners.
+use crate::fused::FusedMulAdd as _;
 use super::{
     skeleton_animation_record::{AnimationPartTransform as Transform, IDENTITY, compose_affine},
     skeleton_board_frames::SkeletonBoardFrames,
@@ -71,8 +72,8 @@ pub fn update_known_air_roots(
     //82BDEB98..BB8: rotate COM without adding the prior translation.
     world[3] = std::array::from_fn(|lane| {
         let x = world[0][lane] * animation_com[0];
-        let y = world[1][lane].mul_add(animation_com[1], x);
-        target_com[lane] - world[2][lane].mul_add(animation_com[2], y)
+        let y = world[1][lane].fused_mul_add(animation_com[1], x);
+        target_com[lane] - world[2][lane].fused_mul_add(animation_com[2], y)
     });
     roots.animation_to_world = orthonormalize(world);
     roots.world_to_animation = inverse_rigid(&roots.animation_to_world);
@@ -115,8 +116,8 @@ pub fn update_plant_roots(
     let mut world = compose_affine(reckoning, &roots.heading_alignment);
     world[3] = std::array::from_fn(|i| {
         let x = world[0][i] * animation_anchor[0];
-        let y = world[1][i].mul_add(animation_anchor[1], x);
-        world_anchor[i] - world[2][i].mul_add(animation_anchor[2], y)
+        let y = world[1][i].fused_mul_add(animation_anchor[1], x);
+        world_anchor[i] - world[2][i].fused_mul_add(animation_anchor[2], y)
     });
     roots.animation_to_world = orthonormalize(world);
     roots.world_to_animation = inverse_rigid(&roots.animation_to_world);

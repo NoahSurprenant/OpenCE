@@ -1,5 +1,6 @@
 //! Nine stock gameplay compass headings, TU382DF3770/82DF39B0. These are
 //! subject directions consumed by authored shots, not replay camera controls.
+use crate::fused::FusedMulAdd as _;
 use super::{ManagerSubject, direction_to_angles};
 use super::manager_state::clamp;
 use super::vector_tracker::length;
@@ -76,7 +77,7 @@ impl Compass {
         if (launch - landing).abs() > PI {
             if launch >= landing { landing += TAU; } else { launch += TAU; }
         }
-        self.headings[1] = wrap((landing - launch).mul_add(input.trajectory_fraction, launch));
+        self.headings[1] = wrap((landing - launch).fused_mul_add(input.trajectory_fraction, launch));
         self.headings[0] = self.movement_heading;
         let difference = horizontal(sub(input.landing_position, input.launch_position));
         if input.trajectory_fraction > 0.0 && length(difference) > 1.0 {
@@ -124,10 +125,10 @@ pub(super) const TAU: f32 = f32::from_bits(0x40c90fdb);
 pub(super) fn horizontal(v: [f32; 4]) -> [f32; 4] { [v[0], 0.0, v[2], v[3]] }
 pub(super) fn sub(a: [f32; 4], b: [f32; 4]) -> [f32; 4] { core::array::from_fn(|i| a[i] - b[i]) }
 pub(super) fn wrap(v: f32) -> f32 { super::rig_tracking::wrap_vmx(v) }
-pub(super) fn blend(from: f32, to: f32, weight: f32) -> f32 { wrap(wrap(to - from).mul_add(weight, from)) }
+pub(super) fn blend(from: f32, to: f32, weight: f32) -> f32 { wrap(wrap(to - from).fused_mul_add(weight, from)) }
 pub(super) fn wrap_floor(v: f32) -> f32 {
-    let turns = v.mul_add(f32::from_bits(0x3e22f983), 0.5).floor();
-    -turns.mul_add(TAU, -v)
+    let turns = v.fused_mul_add(f32::from_bits(0x3e22f983), 0.5).floor();
+    -turns.fused_mul_add(TAU, -v)
 }
 ///82DF3888 intentionally tests positive Y only and does not normalize XZ.
 pub(super) fn heading(v: [f32; 4]) -> f32 {

@@ -1,5 +1,6 @@
 //! Native MatchAirTime: factory82BCA308, Begin82BB9F48,
 //! Update82BBA070, instance82BBA390. End is the empty82B61BB8.
+use skate_core::fused::FusedMulAdd as _;
 use super::MotionAnimation;
 use skate_core::animation::{
     playback_parameters::{AttributeSink, SettableAttribute},
@@ -58,8 +59,8 @@ fn bounded_translation(vector: [f32; 4]) -> [f32; 4] {
     let squared = (vector[0] * vector[0] + vector[1] * vector[1]) + vector[2] * vector[2];
     let mut inverse = squared.sqrt().recip();
     for _ in 0..2 {
-        let correction = (-squared).mul_add(inverse * inverse, 1.0);
-        inverse = (inverse * 0.5).mul_add(correction, inverse);
+        let correction = (-squared).fused_mul_add(inverse * inverse, 1.0);
+        inverse = (inverse * 0.5).fused_mul_add(correction, inverse);
     }
     let length = if squared == 0.0 { 0.0 } else { squared * inverse };
     if length > 0.01 {

@@ -508,6 +508,7 @@ jobs:
         with:
           path: |
             port/skate/target
+            port/skate/target-x86-64-v3
             ~/.cargo/registry
           key: skate-mp-${{ hashFiles('port/skate/**/Cargo.lock', 'port/skate/**/*.rs', 'port/skate/**/Cargo.toml') }}
           restore-keys: skate-mp-
@@ -523,10 +524,11 @@ jobs:
           cp build/linux/halo "$RUNNER_TEMP/halo-skate"
 
       # the dedicated server as the server image builds it: a release build with
-      # Skate 3 mode, which uses Skate 3 data only when given it
+      # Skate 3 mode, which uses Skate 3 data only when given it, its skate
+      # engine for the processors the image runs on (x86-64-v3: AVX2 and FMA)
       - name: Build the server
         run: |
-          python3 configure.py --release --skate --lto=off --pgo=off --compiler-launcher ccache
+          python3 configure.py --release --skate --skate-cpu=x86-64-v3 --lto=off --pgo=off --compiler-launcher ccache
           ninja linux
           cp build/linux/halo "$RUNNER_TEMP/halo-server"
 
@@ -576,8 +578,8 @@ jobs:
             echo "::error::the eight tests of tools/test_skating_bots.py did not all run and pass"
             exit 1
           fi
-          if ! grep -q '7 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
-            echo "::error::five tests of tools/test_infection.py and the two floor tests did not all run and pass"
+          if ! grep -q '8 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
+            echo "::error::six tests of tools/test_infection.py and the two floor tests did not all run and pass"
 
             exit 1
           fi

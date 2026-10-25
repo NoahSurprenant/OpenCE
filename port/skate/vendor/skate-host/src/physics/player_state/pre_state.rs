@@ -1,6 +1,7 @@
 //! Update3_State82DB6050 prefix through grab-spline query synchronization.
 //! Ground/Air/KnownAir vtable24 ->82D34DA8 ->82D2D860 predicts from the actual deck part
 //! transform and its physical body's linear velocity, with a single VMADD.
+use skate_core::fused::FusedMulAdd as _;
 use super::*;
 use skate_core::physics::board::BodyId;
 pub(super) fn advance(physics: &mut GamePhysics, skater: &mut SkaterRuntime) -> Result<(), String> {
@@ -35,9 +36,9 @@ pub(super) fn advance(physics: &mut GamePhysics, skater: &mut SkaterRuntime) -> 
         .linear_velocity;
     let dt = skater.player_input.processed.timestep_2604;
     let prediction = [
-        velocity.x.mul_add(dt, deck.translation.x),
-        velocity.y.mul_add(dt, deck.translation.y),
-        velocity.z.mul_add(dt, deck.translation.z),
+        velocity.x.fused_mul_add(dt, deck.translation.x),
+        velocity.y.fused_mul_add(dt, deck.translation.y),
+        velocity.z.fused_mul_add(dt, deck.translation.z),
         0.0,
     ];
     let roots = &mut skater.animated_skeleton.roots;

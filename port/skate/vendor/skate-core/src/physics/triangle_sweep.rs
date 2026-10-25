@@ -1,4 +1,5 @@
 //! Rounded triangle query82ADEB70: bounds, face, overlap, then feature walk.
+use crate::fused::FusedMulAdd as _;
 use super::{
     native_arithmetic,
     triangle_closest::closest,
@@ -71,13 +72,13 @@ pub(super) fn sweep(
     let feature = closest(start, vertices);
     let separation = sub(start, feature.point);
     let squared = dot(separation, separation);
-    let penetration = radius.mul_add(radius, -squared);
+    let penetration = radius.fused_mul_add(radius, -squared);
     if penetration > 0.0 {
         result.position = start;
         if squared > 0.0 {
             let inverse = native_arithmetic::reciprocal_square_root_estimate(squared);
             let inverse =
-                (inverse * 0.5).mul_add((-squared).mul_add(inverse * inverse, 1.0), inverse);
+                (inverse * 0.5).fused_mul_add((-squared).fused_mul_add(inverse * inverse, 1.0), inverse);
             result.normal = scale(separation, inverse);
         }
         result.volume_parameter = [feature.u, feature.v, penetration];

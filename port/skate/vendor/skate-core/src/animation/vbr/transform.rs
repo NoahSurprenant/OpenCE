@@ -1,5 +1,6 @@
 //! TU3 Init82E891D8, IDCT table82E88C58, DecompressFrameBlock82E89770.
 //! All coefficient words below were read from the original TU3 mapped image.
+use crate::fused::FusedMulAdd as _;
 use std::sync::OnceLock;
 
 struct Tables {
@@ -66,14 +67,14 @@ fn logarithm_for_frequency(integer: u32) -> f32 {
         0xbc18_8b0b,
     ]
     .map(f32::from_bits);
-    let low = a.mul_add(c[1], c[0]);
-    let high = a.mul_add(c[5], c[4]);
-    let low = a2.mul_add(c[2], low);
-    let high = a2.mul_add(c[6], high);
-    let low = a3.mul_add(c[3], low);
-    let high = a3.mul_add(c[7], high);
-    let polynomial = a4.mul_add(high, low);
-    a.mul_add(polynomial, exponent as f32) * f32::from_bits(0x3f31_7218) //82139A70
+    let low = a.fused_mul_add(c[1], c[0]);
+    let high = a.fused_mul_add(c[5], c[4]);
+    let low = a2.fused_mul_add(c[2], low);
+    let high = a2.fused_mul_add(c[6], high);
+    let low = a3.fused_mul_add(c[3], low);
+    let high = a3.fused_mul_add(c[7], high);
+    let polynomial = a4.fused_mul_add(high, low);
+    a.fused_mul_add(polynomial, exponent as f32) * f32::from_bits(0x3f31_7218) //82139A70
 }
 
 pub(super) fn decode(
@@ -90,7 +91,7 @@ pub(super) fn decode(
     // from original vmulfp/vmaddcfp instructions82E89930..4C.
     let bias = scale * f32::from_bits(0x3800_0000);
     let weights: [f32; 8] = std::array::from_fn(|i| {
-        tables.quantization[quantization_index as usize][i].mul_add(squared, bias)
+        tables.quantization[quantization_index as usize][i].fused_mul_add(squared, bias)
             * tables.inverse_dct[frame][i]
     });
     let first = crate::physics::native_arithmetic::dot4(
@@ -102,5 +103,5 @@ pub(super) fn decode(
         weights[4..].try_into().unwrap(),
     );
     // BSS830CEAF0 initializer82F96D58 converts integer1 with scale1 -> .5.
-    ((first + last) + 0.5).mul_add(channel_range, channel_min)
+    ((first + last) + 0.5).fused_mul_add(channel_range, channel_min)
 }

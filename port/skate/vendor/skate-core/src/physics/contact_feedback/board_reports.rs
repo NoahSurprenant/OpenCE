@@ -4,6 +4,7 @@
 //! then constructs at most sixteen reports per board, in contact order.
 //! Rust owns the report storage and part identifiers. No guest pointers or
 //! copied native map/locking infrastructure are needed for this single board.
+use crate::fused::FusedMulAdd as _;
 use crate::math::Vector3;
 
 use super::super::{
@@ -170,8 +171,8 @@ fn subtract(a: Vector3, b: Vector3) -> Vector3 {
 }
 fn combine(a: Vector3, weight: f32, b: Vector3) -> Vector3 {
     Vector3::new(
-        a.x.mul_add(weight, b.x),
-        a.y.mul_add(weight, b.y),
-        a.z.mul_add(weight, b.z),
+        a.x.fused_mul_add(weight, b.x),
+        a.y.fused_mul_add(weight, b.y),
+        a.z.fused_mul_add(weight, b.z),
     )
 }

@@ -1,5 +1,6 @@
 //! TU3 OffboardBodyTweakBlend: ctor82BBAB98, Begin82BBACC0,
 //! Update82BBACE0, End82BBB418, instance82BBB4D0. Original IDA only.
+use skate_core::fused::FusedMulAdd as _;
 use super::MotionAnimation;
 use crate::graph_host::motion_wipeout::Controls;
 use skate_core::animation::{
@@ -115,13 +116,13 @@ impl State {
         }
         let x = x.unwrap_or(0.0);
         let y = y.unwrap_or(0.0);
-        let squared = y.mul_add(y, x * x);
+        let squared = y.fused_mul_add(y, x * x);
         //Same independent PC seed as native_arithmetic; both native refinements
         //remain below. This is not a claim of bit-exact Xenon rsqrt emulation.
         let mut inverse = squared.sqrt().recip();
         for _ in 0..2 {
-            let correction = (-squared).mul_add(inverse * inverse, 1.0);
-            inverse = (inverse * 0.5).mul_add(correction, inverse);
+            let correction = (-squared).fused_mul_add(inverse * inverse, 1.0);
+            inverse = (inverse * 0.5).fused_mul_add(correction, inverse);
         }
         let magnitude = if squared == 0.0 { 0.0 } else { squared * inverse };
         let directed = self.released && magnitude >= 0.1;
@@ -134,7 +135,7 @@ impl State {
         self.axes = if centered {
             self.axes.map(|value| value * 0.85)
         } else {
-            [x.mul_add(0.15, self.axes[0] * 0.85), self.axes[1].mul_add(0.85, y * 0.15)]
+            [x.fused_mul_add(0.15, self.axes[0] * 0.85), self.axes[1].fused_mul_add(0.85, y * 0.15)]
         };
     }
 

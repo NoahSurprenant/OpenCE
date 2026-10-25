@@ -1,12 +1,13 @@
 //! Geometric helpers82E0A060/82E0A258/82D85C48 and tangent8252D980.
+use crate::fused::FusedMulAdd as _;
 use super::{Vector, ZERO, cross, dot, length, scale, sub};
 pub(super) fn madd(a: Vector, s: f32, b: Vector) -> Vector {
-    std::array::from_fn(|i| a[i].mul_add(s, b[i]))
+    std::array::from_fn(|i| a[i].fused_mul_add(s, b[i]))
 }
 pub(super) fn reciprocal(x: f32) -> f32 {
     let mut r = crate::physics::native_arithmetic::reciprocal_estimate(x);
     for _ in 0..2 {
-        r = r.mul_add((-r).mul_add(x, 1.), r);
+        r = r.fused_mul_add((-r).fused_mul_add(x, 1.), r);
     }
     r
 }
@@ -60,19 +61,19 @@ pub(super) fn tangent(x: f32) -> f32 {
     }
     let c = |bits| f32::from_bits(bits);
     let turns = (x * c(0x3f22f983)).round_ties_even();
-    let r = (-turns).mul_add(c(0x2e85a309), (-turns).mul_add(c(0x3fc90fdb), x));
+    let r = (-turns).fused_mul_add(c(0x2e85a309), (-turns).fused_mul_add(c(0x3fc90fdb), x));
     let q = r * r;
     // IDA's VMX operand display is A,B,C: vmaddfp computes A*C+B.
     // 8252DA20..38: denominator degree four, numerator correction degree two.
-    let den = q.mul_add(
-        q.mul_add(
-            q.mul_add(q.mul_add(c(0x3505bba8), c(0xb9a37b25)), c(0x3cd23cf5)),
+    let den = q.fused_mul_add(
+        q.fused_mul_add(
+            q.fused_mul_add(q.fused_mul_add(c(0x3505bba8), c(0xb9a37b25)), c(0x3cd23cf5)),
             c(0xbeeef582),
         ),
         1.,
     );
-    let poly = q.mul_add(q.mul_add(c(0xb795d5b9), c(0x3b607415)), c(0xbe0895af));
-    let num = r.mul_add(q * poly, r);
+    let poly = q.fused_mul_add(q.fused_mul_add(c(0xb795d5b9), c(0x3b607415)), c(0xbe0895af));
+    let num = r.fused_mul_add(q * poly, r);
     let (num, den) = if r.abs() <= c(0x39800000) {
         (r, 1.)
     } else {

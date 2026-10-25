@@ -1,4 +1,5 @@
 //! Final CameraMan frame arithmetic82DFF88C..82DFFF28, Euler82DFCD00.
+use crate::fused::FusedMulAdd as _;
 use crate::math::Basis3;
 
 #[derive(Clone,Copy,Debug,PartialEq)]
@@ -39,7 +40,7 @@ pub(super) fn lens_field_of_view(lens:f32,aspect:f32)->f32 {
 
 fn angles(basis:Basis3)->[f32;3] {
     let [right,up,at]=basis.columns;
-    let horizontal=square_root(right[0].mul_add(right[0],right[1]*right[1]));
+    let horizontal=square_root(right[0].fused_mul_add(right[0],right[1]*right[1]));
     let yaw=super::manager_incline::atan_ratio(-right[2],horizontal);
     if horizontal>f32::from_bits(0x3a83126f) {
         [super::manager_incline::atan_ratio(up[2],at[2]),yaw,
@@ -49,6 +50,6 @@ fn angles(basis:Basis3)->[f32;3] {
 
 fn square_root(value:f32)->f32 {
     let mut inverse=crate::physics::reciprocal_sqrt::estimate(value);
-    for _ in 0..2 {inverse=(inverse*0.5).mul_add((-value).mul_add(inverse*inverse,1.0),inverse);}
+    for _ in 0..2 {inverse=(inverse*0.5).fused_mul_add((-value).fused_mul_add(inverse*inverse,1.0),inverse);}
     if value==0.0 {0.0} else {value*inverse}
 }

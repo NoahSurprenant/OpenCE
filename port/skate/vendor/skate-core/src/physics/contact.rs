@@ -5,6 +5,7 @@
 //! payload consumed in place by `ContactBatchBuild`; it does not solve the
 //! contact or move a body.
 
+use crate::fused::FusedMulAdd as _;
 use crate::math::Vector3;
 
 pub mod tu3 {
@@ -238,9 +239,9 @@ pub fn generate_contact(
     let t = unnormalized_tangent;
     let tangent_1 = scale(
         Vector3::new(
-            (-t.y).mul_add(n.z, t.z.mul_add(n.y, 0.0)),
-            (-t.z).mul_add(n.x, t.x.mul_add(n.z, 0.0)),
-            (-t.x).mul_add(n.y, t.y.mul_add(n.x, 0.0)),
+            (-t.y).fused_mul_add(n.z, t.z.fused_mul_add(n.y, 0.0)),
+            (-t.z).fused_mul_add(n.x, t.x.fused_mul_add(n.z, 0.0)),
+            (-t.x).fused_mul_add(n.y, t.y.fused_mul_add(n.x, 0.0)),
         ),
         inverse_length,
     );
@@ -266,16 +267,16 @@ pub fn generate_contact(
 /// Exact normal-only fallback selected by the TU3 VMX block.
 fn fallback_tangent(normal: Vector3) -> (Vector3, f32) {
     let candidate_x = Vector3::new(
-        (-normal.x).mul_add(normal.x, 1.0),
-        (-normal.y).mul_add(normal.x, 0.0),
-        (-normal.z).mul_add(normal.x, 0.0),
+        (-normal.x).fused_mul_add(normal.x, 1.0),
+        (-normal.y).fused_mul_add(normal.x, 0.0),
+        (-normal.z).fused_mul_add(normal.x, 0.0),
     );
     let candidate_z = Vector3::new(
-        (-normal.x).mul_add(normal.z, 0.0),
-        (-normal.y).mul_add(normal.z, 0.0),
-        (-normal.z).mul_add(normal.z, 1.0),
+        (-normal.x).fused_mul_add(normal.z, 0.0),
+        (-normal.y).fused_mul_add(normal.z, 0.0),
+        (-normal.z).fused_mul_add(normal.z, 1.0),
     );
-    if (-normal.x).mul_add(normal.x, CONTACT_FALLBACK_HALF) >= -0.0 {
+    if (-normal.x).fused_mul_add(normal.x, CONTACT_FALLBACK_HALF) >= -0.0 {
         (candidate_x, candidate_x.x)
     } else {
         (
@@ -288,9 +289,9 @@ fn fallback_tangent(normal: Vector3) -> (Vector3, f32) {
 fn point_velocity(linear: Vector3, omega: Vector3, arm: Vector3) -> Vector3 {
     // Native folds the linear velocity into two fused cross-product terms.
     Vector3::new(
-        arm.z.mul_add(omega.y, (-arm.y).mul_add(omega.z, linear.x)),
-        arm.x.mul_add(omega.z, (-arm.z).mul_add(omega.x, linear.y)),
-        arm.y.mul_add(omega.x, (-arm.x).mul_add(omega.y, linear.z)),
+        arm.z.fused_mul_add(omega.y, (-arm.y).fused_mul_add(omega.z, linear.x)),
+        arm.x.fused_mul_add(omega.z, (-arm.z).fused_mul_add(omega.x, linear.y)),
+        arm.y.fused_mul_add(omega.x, (-arm.x).fused_mul_add(omega.y, linear.z)),
     )
 }
 
@@ -300,24 +301,24 @@ fn sub(left: Vector3, right: Vector3) -> Vector3 {
 
 fn scale(vector: Vector3, scalar: f32) -> Vector3 {
     Vector3::new(
-        vector.x.mul_add(scalar, 0.0),
-        vector.y.mul_add(scalar, 0.0),
-        vector.z.mul_add(scalar, 0.0),
+        vector.x.fused_mul_add(scalar, 0.0),
+        vector.y.fused_mul_add(scalar, 0.0),
+        vector.z.fused_mul_add(scalar, 0.0),
     )
 }
 
 fn cross(left: Vector3, right: Vector3) -> Vector3 {
     Vector3::new(
-        left.y.mul_add(right.z, (-left.z).mul_add(right.y, 0.0)),
-        left.z.mul_add(right.x, (-left.x).mul_add(right.z, 0.0)),
-        left.x.mul_add(right.y, (-left.y).mul_add(right.x, 0.0)),
+        left.y.fused_mul_add(right.z, (-left.z).fused_mul_add(right.y, 0.0)),
+        left.z.fused_mul_add(right.x, (-left.x).fused_mul_add(right.z, 0.0)),
+        left.x.fused_mul_add(right.y, (-left.y).fused_mul_add(right.x, 0.0)),
     )
 }
 
 fn dot(left: Vector3, right: Vector3) -> f32 {
-    left.z.mul_add(
+    left.z.fused_mul_add(
         right.z,
-        left.y.mul_add(right.y, left.x.mul_add(right.x, 0.0)),
+        left.y.fused_mul_add(right.y, left.x.fused_mul_add(right.x, 0.0)),
     )
 }
 

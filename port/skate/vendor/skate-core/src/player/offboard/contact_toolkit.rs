@@ -1,6 +1,7 @@
 //! OffboardGroundAnalyzer query ownership (TU3 82D81068/82D811C8).
 //!
 //! Submitted queries become visible only through the ordered analyzer refresh.
+use crate::fused::FusedMulAdd as _;
 mod analyzer_math;
 mod candidate;
 mod classification;
@@ -34,7 +35,7 @@ pub fn triangle_normal([a, b, c]: [Vector; 3]) -> Vector {
     let square = dot(normal, normal);
     let mut inverse = crate::physics::reciprocal_sqrt::estimate(square);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-square).mul_add(inverse * inverse, 1.), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-square).fused_mul_add(inverse * inverse, 1.), inverse);
     }
     scale(normal, inverse)
 }
@@ -191,9 +192,9 @@ pub(super) fn scale(a: Vector, s: f32) -> Vector {
 }
 pub(super) fn cross(a: Vector, b: Vector) -> Vector {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.,
     ]
 }
@@ -204,7 +205,7 @@ pub(super) fn length(v: Vector) -> f32 {
     }
     let mut inverse = crate::physics::reciprocal_sqrt::estimate(square);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-square).mul_add(inverse * inverse, 1.), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-square).fused_mul_add(inverse * inverse, 1.), inverse);
     }
     square * inverse
 }

@@ -1,5 +1,6 @@
 //! Candidate construction82D6BF90 and query submission82D6CA58.
 //! PredictionResults are produced by the shared82E099A0 collision query.
+use crate::fused::FusedMulAdd as _;
 use super::air_launch::{Launch, V};
 use crate::air::trajectory::{QueryRequest, Trajectory};
 #[derive(Clone, Debug)]
@@ -142,13 +143,13 @@ fn scale(v: V, s: f32) -> V {
     v.map(|x| x * s)
 }
 fn madd(v: V, s: f32, b: V) -> V {
-    std::array::from_fn(|i| v[i].mul_add(s, b[i]))
+    std::array::from_fn(|i| v[i].fused_mul_add(s, b[i]))
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.,
     ]
 }
@@ -158,7 +159,7 @@ fn dot(a: V, b: V) -> f32 {
 fn sqrt(q: f32) -> f32 {
     let mut r = crate::physics::reciprocal_sqrt::estimate(q);
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-q).mul_add(r * r, 1.), r);
+        r = (r * 0.5).fused_mul_add((-q).fused_mul_add(r * r, 1.), r);
     }
     if q == 0. { 0. } else { q * r }
 }

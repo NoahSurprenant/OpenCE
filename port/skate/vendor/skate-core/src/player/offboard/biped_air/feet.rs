@@ -1,5 +1,6 @@
 //! Native foot placement82D773F8/82D77558/82D77AE8. The persistent storage is
 //! shared with the original state56 manager; all contacts come from Processed.
+use crate::fused::FusedMulAdd as _;
 use super::{Frame, Vector as V, math::{dot, length, limit_angle, madd, scale, sub}};
 use crate::player::offboard::board_possession::manager::State;
 use crate::player::wipeout_state::math::{normalize_or as unit, reciprocal};
@@ -155,7 +156,7 @@ fn foot_height(s: &State, i: &Input, ground: f32, desired: f32) -> f32 {
     let proposed = (desired - s.scalars_288_to_296[0]) + ground;
     let limited = proposed.min(base + 0.08).max(base);
     let output = desired.max(limited);
-    let ceiling = i.velocity[1].mul_add(f32::from_bits(0x3c888889), i.position[1]) - 0.46;
+    let ceiling = i.velocity[1].fused_mul_add(f32::from_bits(0x3c888889), i.position[1]) - 0.46;
     if output - desired > 0.4 || output > ceiling {
         desired
     } else {

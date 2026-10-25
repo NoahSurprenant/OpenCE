@@ -1,4 +1,5 @@
 //! Original82BD5A00: select the angular interval of active contact planes.
+use crate::fused::FusedMulAdd as _;
 use super::{SkeletonCollisionFeedback, collision_feedback::V, collision_vector::*};
 use crate::{
     math::Vector3,
@@ -52,15 +53,15 @@ impl SkeletonCollisionFeedback {
         let ty = t * y;
         let tz = t * z;
         let rotation = [
-            [x.mul_add(tx, c), tx.mul_add(y, sz), tx * z - sy],
-            [ty * x - sz, ty.mul_add(y, c), ty.mul_add(z, sx)],
-            [tz.mul_add(x, sy), tz * y - sx, z.mul_add(tz, c)],
+            [x.fused_mul_add(tx, c), tx.fused_mul_add(y, sz), tx * z - sy],
+            [ty * x - sz, ty.fused_mul_add(y, c), ty.fused_mul_add(z, sx)],
+            [tz.fused_mul_add(x, sy), tz * y - sx, z.fused_mul_add(tz, c)],
         ];
         let mut result = [0.0; 4];
         for i in 0..3 {
-            result[i] = rotation[2][i].mul_add(
+            result[i] = rotation[2][i].fused_mul_add(
                 projected[2],
-                rotation[1][i].mul_add(projected[1], rotation[0][i] * projected[0]),
+                rotation[1][i].fused_mul_add(projected[1], rotation[0][i] * projected[0]),
             ) * magnitude;
         }
         result

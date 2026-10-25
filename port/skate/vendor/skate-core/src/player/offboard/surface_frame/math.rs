@@ -1,4 +1,5 @@
 //! Original82BD3E78/8296EBB0 and inlined VMX arithmetic.
+use crate::fused::FusedMulAdd as _;
 use super::Vector;
 pub(super) fn select(test: f32, yes: f32, no: f32) -> f32 { if test >= 0.0 { yes } else { no } }
 pub(super) fn clamp(v: f32, low: f32, high: f32) -> f32 { let v = select(low-v, low, v); select(high-v, v, high) }
@@ -6,15 +7,15 @@ pub(super) fn dot(a: Vector, b: Vector) -> f32 { a[0]*b[0]+a[1]*b[1]+a[2]*b[2] }
 pub(super) fn scale(v: Vector, s: f32) -> Vector { v.map(|x| x*s) }
 pub(super) fn add(a: Vector, b: Vector) -> Vector { std::array::from_fn(|i| a[i]+b[i]) }
 pub(super) fn sub(a: Vector, b: Vector) -> Vector { std::array::from_fn(|i| a[i]-b[i]) }
-pub(super) fn madd(a: Vector, s: f32, b: Vector) -> Vector { std::array::from_fn(|i| a[i].mul_add(s,b[i])) }
+pub(super) fn madd(a: Vector, s: f32, b: Vector) -> Vector { std::array::from_fn(|i| a[i].fused_mul_add(s,b[i])) }
 pub(super) fn cross(a: Vector, b: Vector) -> Vector {
     //vpermwi0x63 preserves lane w; its fused subtraction is retained too.
-    [(-a[2]).mul_add(b[1],a[1]*b[2]),(-a[0]).mul_add(b[2],a[2]*b[0]),(-a[1]).mul_add(b[0],a[0]*b[1]),(-a[3]).mul_add(b[3],a[3]*b[3])]
+    [(-a[2]).fused_mul_add(b[1],a[1]*b[2]),(-a[0]).fused_mul_add(b[2],a[2]*b[0]),(-a[1]).fused_mul_add(b[0],a[0]*b[1]),(-a[3]).fused_mul_add(b[3],a[3]*b[3])]
 }
 fn inverse(value: f32, steps: usize) -> f32 {
     //Ordinary host seed, not a claim of bit-exact Xenon estimate emulation.
     let mut r = crate::physics::reciprocal_sqrt::estimate(value);
-    for _ in 0..steps { let e=(-value).mul_add(r*r,1.0); r=(r*0.5).mul_add(e,r); }
+    for _ in 0..steps { let e=(-value).fused_mul_add(r*r,1.0); r=(r*0.5).fused_mul_add(e,r); }
     r
 }
 pub(super) fn square_root(value: f32) -> f32 { let result=value*inverse(value,2); if value==0.0 {0.0} else {result} }
@@ -41,8 +42,8 @@ pub(super) fn clamp_angle(target: Vector, reference: Vector, limit: f32) -> Vect
     let a=normalize_or(target,[0.0;4]); let b=normalize_or(reference,[0.0;4]);
     let axis=cross(a,b);
     let angle=crate::trigonometry::acos(dot(a,b).max(-1.0).min(1.0));
-    let turns=angle.mul_add(f32::from_bits(0x3e22_f983),0.5).floor();
-    let wrapped=(-turns).mul_add(f32::from_bits(0x40c9_0fdb),angle);
+    let turns=angle.fused_mul_add(f32::from_bits(0x3e22_f983),0.5).floor();
+    let wrapped=(-turns).fused_mul_add(f32::from_bits(0x40c9_0fdb),angle);
     if wrapped.abs()<limit || f32::from_bits(0x3780_0000)>dot(axis,axis) {return target;}
     let unit=scale(axis,inverse(dot(axis,axis),2));
     let (sin,cos)=crate::trigonometry::sin_cos((-limit)*0.5);

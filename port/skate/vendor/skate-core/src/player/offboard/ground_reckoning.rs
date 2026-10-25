@@ -2,6 +2,7 @@
 //! 82D8E458 explicitly clears velocity; riding acceleration/damping is absent.
 //! This adapter follows the shared XYZ orientation representation; all input
 //! frame/filter math uses four lanes and returns complete computed vectors.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     air::{
         body_spin::{self, BodySpinState},
@@ -55,7 +56,7 @@ pub fn update(
     frames.heading = input.requested_forward;
     let retained = 1.0 - input.blend;
     let candidate: Vector = std::array::from_fn(|i| {
-        input.previous_up[i].mul_add(input.blend, input.requested_up[i] * retained)
+        input.previous_up[i].fused_mul_add(input.blend, input.requested_up[i] * retained)
     });
     let square = crate::physics::native_arithmetic::dot3(candidate, candidate);
     let inverse = super::contact_correction::inverse_length(square);

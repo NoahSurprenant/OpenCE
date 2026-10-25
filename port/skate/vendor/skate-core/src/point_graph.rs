@@ -1,4 +1,5 @@
 //! TU3 `PointGraph` scalar evaluator, `0x82481E10`.
+use crate::fused::FusedMulAdd as _;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointGraph<const N: usize> {
     pub x: [f32; N],
@@ -27,7 +28,7 @@ impl<const N: usize> PointGraph<N> {
                 return self.y[upper];
             }
             let slope = (self.y[upper] - self.y[lower]) / width;
-            return slope.mul_add(input - self.x[lower], self.y[lower]);
+            return slope.fused_mul_add(input - self.x[lower], self.y[lower]);
         }
         self.y[0]
     }

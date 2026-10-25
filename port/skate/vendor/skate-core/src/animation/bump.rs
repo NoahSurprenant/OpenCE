@@ -1,4 +1,5 @@
 //! SetBumpCoefficients Begin82BB0660, ctor82BC7318/vtable823200C8+48.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::native_arithmetic;
 
 #[derive(Clone, Copy, Debug)]
@@ -14,12 +15,12 @@ pub fn coefficients(mut acceleration: [f32; 4], mirrored: bool, settings: &Setti
     let squared = native_arithmetic::dot3(acceleration, acceleration);
     let mut inverse = native_arithmetic::reciprocal_square_root_estimate(squared);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-squared).mul_add(inverse * inverse, 1.), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-squared).fused_mul_add(inverse * inverse, 1.), inverse);
     }
     let magnitude = if squared == 0. { 0. } else { squared * inverse };
     let t = ((magnitude - settings.min_bump_mag) / (settings.max_bump_mag - settings.min_bump_mag))
         .clamp(0., 1.);
-    let weight = t.mul_add(
+    let weight = t.fused_mul_add(
         1. - settings.min_bump_blend_value,
         settings.min_bump_blend_value,
     );

@@ -1,5 +1,6 @@
 //! Authored normal-camera shots and TU3 interpolation82E06980/82E074A8.
 //! The state graph selects stock shot names; these values do not select a view.
+use crate::fused::FusedMulAdd as _;
 use super::shot_orientation::interpolate_orientation;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -75,7 +76,7 @@ impl Shot {
         let from = self.position_heading;
         let delta = super::rig_tracking::wrap_vmx(-self.position_heading - from);
         let heading =
-            super::rig_tracking::wrap_vmx(delta.mul_add((1.0 - heading_mirror) * 0.5, from));
+            super::rig_tracking::wrap_vmx(delta.fused_mul_add((1.0 - heading_mirror) * 0.5, from));
         let heading = super::rig_tracking::wrap_vmx(heading + north);
         self.arm_orientation =
             super::orientation_math::quaternion_from_angles(self.position_elevation, heading, 0.0);
@@ -95,7 +96,7 @@ impl Shot {
         let mut weight_sum = 0.0_f32;
         for (position, weight) in positions.iter().zip(self.reference_weights) {
             weight_sum = weight + weight_sum;
-            sum = core::array::from_fn(|i| (position[i] + offset[i]).mul_add(weight, sum[i]));
+            sum = core::array::from_fn(|i| (position[i] + offset[i]).fused_mul_add(weight, sum[i]));
         }
         if f32::from_bits(0x38d1b717) > weight_sum.abs() {
             fallback
@@ -143,15 +144,15 @@ impl Shot {
 /// other styles preserve the source. The caller owns fraction clamping.
 pub fn interpolate_float(from: f32, to: f32, style: u32, fraction: f32) -> f32 {
     match style {
-        0 => (to - from).mul_add(sine_blend(fraction), from),
+        0 => (to - from).fused_mul_add(sine_blend(fraction), from),
         1 => to,
         _ => from,
     }
 }
 
 pub(super) fn sine_blend(fraction: f32) -> f32 {
-    let angle = fraction.mul_add(f32::from_bits(0x40490fdb), -f32::from_bits(0x3fc90fdb));
-    crate::trigonometry::sin(angle).mul_add(0.5, 0.5)
+    let angle = fraction.fused_mul_add(f32::from_bits(0x40490fdb), -f32::from_bits(0x3fc90fdb));
+    crate::trigonometry::sin(angle).fused_mul_add(0.5, 0.5)
 }
 
 /// Complete blend-value filtering82E07378 after82E07708 produces the raw
@@ -164,7 +165,7 @@ pub fn filter_blend_value(
     maximum: f32,
 ) -> f32 {
     let response = 1.0 - smoothing;
-    let next = (response * response).mul_add(raw - previous, previous);
+    let next = (response * response).fused_mul_add(raw - previous, previous);
     let lower = if minimum - next >= 0.0 { minimum } else { next };
     if maximum - lower >= 0.0 {
         lower

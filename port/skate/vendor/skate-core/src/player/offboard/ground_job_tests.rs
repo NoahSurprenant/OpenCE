@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::*;
 use crate::player::offboard::{contact_toolkit::IDENTITY, ground_query};
 
@@ -112,7 +113,7 @@ fn teleport_signed_guard_and_fixed_step_prediction_match_preupdate() {
         let out = run(&mut retained, &mut 0., i);
         assert_eq!(out.job.suppress_minimum, suppressed);
         assert_eq!(retained.flags_176 & 8 == 0, suppressed);
-        let expected = 60_f32.mul_add(f32::from_bits(0x3c88_8889), 2.);
+        let expected = 60_f32.fused_mul_add(f32::from_bits(0x3c88_8889), 2.);
         assert_eq!(out.job.animation_position, [expected; 4]);
         assert_eq!(out.job.collision_displacements, i.collision_displacements);
         assert_eq!(out.job.requested_phase, 0.3);

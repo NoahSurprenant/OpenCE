@@ -1,4 +1,5 @@
 //! Six native substate1 dispatches. Manager query/family selection is upstream.
+use skate_core::fused::FusedMulAdd as _;
 use super::super::{GamePhysics, SkaterRuntime};
 use super::arithmetic::dot3;
 use super::{Family, ManagerObservation, board::apply_world_force, forces, lifecycle};
@@ -258,9 +259,9 @@ fn sub(a: V, b: V) -> V {
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.,
     ]
 }

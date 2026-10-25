@@ -1,5 +1,6 @@
 //! Biped movement producer82D7CF50, steering merge82D7D5A0 and slide82D7D608.
 //! Original TU3; state/input offsets are documented at the host boundary.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 mod math;
 use math::*;
@@ -65,7 +66,7 @@ impl State {
         let fast = settings.sprint_speed.evaluate(magnitude);
         let normal = settings.normal_speed.evaluate(magnitude);
         let blend = if sprint { settings.sprint_blend.evaluate(self.sprint_time) } else { 0.0 };
-        self.speed = (1.0 - blend).mul_add(normal, blend * fast);
+        self.speed = (1.0 - blend).fused_mul_add(normal, blend * fast);
         self.secondary_speed = 0.0;
         self.steering = input.steering;
         self.original_steering = input.steering;
@@ -80,7 +81,7 @@ impl State {
                 let correction = if self.obstacle_centered {
                     (facing * f32::from_bits(0xbf22_f983)) * 0.5
                 } else {
-                    (-facing).mul_add(f32::from_bits(0x3f22_f983), if desired <= 0.0 { -1.0 } else { 1.0 }) * 0.5
+                    (-facing).fused_mul_add(f32::from_bits(0x3f22_f983), if desired <= 0.0 { -1.0 } else { 1.0 }) * 0.5
                 };
                 self.merge_steering(clamp(correction, -1.0, 1.0));
                 if self.obstacle_centered { self.speed = 0.0; }
@@ -122,11 +123,11 @@ impl State {
         let sign = select(angle, 1.0, -1.0);
         if !(original * sign <= 0.0) {
             let limit = 45.0 * f32::from_bits(0x3c8e_fa35);
-            let weight = (-angle).mul_add(sign, limit) / limit;
+            let weight = (-angle).fused_mul_add(sign, limit) / limit;
             self.steering = clamp(weight, 0.0, 1.0) * original;
         }
         let correction = settings.slide_steering.evaluate(sign * (angle * f32::from_bits(0x3ea2_f983)));
-        self.steering = clamp((-correction).mul_add(sign, self.steering), -1.0, 1.0);
+        self.steering = clamp((-correction).fused_mul_add(sign, self.steering), -1.0, 1.0);
         if !(angle.abs() >= HALF_PI) { self.speed += length(input.slide_velocity); }
     }
 }

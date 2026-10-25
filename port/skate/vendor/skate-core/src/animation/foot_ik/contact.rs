@@ -1,4 +1,5 @@
 //! Foot contact history and correction82BEFC80, helpers82BF04C8/82BF0558.
+use crate::fused::FusedMulAdd as _;
 use super::{
     status::{LimbStatus, Mode},
     transforms::LimbFrames,
@@ -137,8 +138,8 @@ fn add_offset(frame: &mut LimbFrames, board: &Transform, offset: f32) {
 fn contact_offset(board: &Transform, offset: f32) -> [f32; 4] {
     core::array::from_fn(|i| {
         let x = board[0][i] * 0.0;
-        let y = board[1][i].mul_add(offset, x);
-        board[2][i].mul_add(0.0, y)
+        let y = board[1][i].fused_mul_add(offset, x);
+        board[2][i].fused_mul_add(0.0, y)
     })
 }
 fn select(test: f32, nonnegative: f32, negative: f32) -> f32 {

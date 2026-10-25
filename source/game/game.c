@@ -272,6 +272,8 @@ PROFILE_SECTION(game_tick_objects_section, "game_tick.objects")
 PROFILE_SECTION(game_tick_players_after_section, "game_tick.players_after")
 PROFILE_SECTION(game_tick_hud_section, "game_tick.hud")
 PROFILE_SECTION(game_tick_player_effect_section, "game_tick.player_effect")
+PROFILE_SECTION(game_tick_skate_before_section, "game_tick.skate_before")
+PROFILE_SECTION(game_tick_skate_after_section, "game_tick.skate_after")
 
 /* ---------- public code */
 
@@ -365,7 +367,7 @@ void game_tick(
 		profile_scope(game_tick_actors_drive_section, network_actors_drive();)
 	profile_scope(game_tick_players_before_section, players_update_before_game();)
 	/* port: Skate 3 mode puts a skating biped on its board (skate.c) */
-	skate_update_before_objects();
+	profile_scope(game_tick_skate_before_section, skate_update_before_objects();)
 
 	seconds_per_tick = game_globals->players_are_double_speed
 		? 1.0f / (2 * TICKS_PER_SECOND)
@@ -396,7 +398,7 @@ void game_tick(
 	profile_scope(game_tick_objects_section, objects_update();)
 	skate_hitbox_test(_skate_hitbox_after_objects);
 	/* port: and poses it as the skater, before the tick is kept for drawing */
-	skate_update_after_objects();
+	profile_scope(game_tick_skate_after_section, skate_update_after_objects();)
 	skate_hitbox_test(_skate_hitbox_drawn);
 	profile_scope(game_tick_players_after_section, players_update_after_game();)
 	profile_scope(game_tick_hud_section, hud_update();)

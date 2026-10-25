@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use crate::math::Vector3 as V;
 use crate::physics::reciprocal_sqrt::estimate;
 
@@ -6,9 +7,9 @@ pub(super) fn dot(a: V, b: V) -> f32 {
 }
 pub(super) fn cross(a: V, b: V) -> V {
     V::new(
-        (-a.z).mul_add(b.y, a.y * b.z),
-        (-a.x).mul_add(b.z, a.z * b.x),
-        (-a.y).mul_add(b.x, a.x * b.y),
+        (-a.z).fused_mul_add(b.y, a.y * b.z),
+        (-a.x).fused_mul_add(b.z, a.z * b.x),
+        (-a.y).fused_mul_add(b.x, a.x * b.y),
     )
 }
 pub(super) fn scale(a: V, b: f32) -> V {
@@ -22,15 +23,15 @@ pub(super) fn sub(a: V, b: V) -> V {
 }
 pub(super) fn madd(a: V, b: f32, c: V) -> V {
     V::new(
-        a.x.mul_add(b, c.x),
-        a.y.mul_add(b, c.y),
-        a.z.mul_add(b, c.z),
+        a.x.fused_mul_add(b, c.x),
+        a.y.fused_mul_add(b, c.y),
+        a.z.fused_mul_add(b, c.z),
     )
 }
 pub(super) fn inverse_length_squared(value: f32, refinements: u32) -> f32 {
     let mut r = estimate(value);
     for _ in 0..refinements {
-        r = (r * 0.5).mul_add((-value).mul_add(r * r, 1.0), r);
+        r = (r * 0.5).fused_mul_add((-value).fused_mul_add(r * r, 1.0), r);
     }
     r
 }

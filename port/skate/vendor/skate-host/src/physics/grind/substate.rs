@@ -1,5 +1,6 @@
 //! Original82D40AF8: collision -> pop -> engagement -> derived substate.
 //! All writes target current board, manager jumper and skeleton owners.
+use skate_core::fused::FusedMulAdd as _;
 mod nonspecific;
 mod settings;
 mod skeleton;
@@ -99,7 +100,7 @@ pub(super) fn execute(
             .ok_or("Grind prediction requires current BoardToolkit")?
             .deck[3];
         let dt = skater.player_input.processed.timestep_2604;
-        let prediction = core::array::from_fn(|i| velocity[i].mul_add(dt, position[i]));
+        let prediction = core::array::from_fn(|i| velocity[i].fused_mul_add(dt, position[i]));
         //82D40CFC stores16112 and82D40D0C sets16416. No guessed trajectory.
         skater.animated_skeleton.roots.predicted_board_position = prediction;
         skater.animated_skeleton.roots.supplied_prediction = Some(prediction);

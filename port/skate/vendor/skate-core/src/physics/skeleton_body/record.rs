@@ -1,4 +1,5 @@
 //! SkeletonState's physical record: TU3 82BEBD28 and 82BEC1E8.
+use crate::fused::FusedMulAdd as _;
 use super::{ANIMATION_PART_COUNT, PART_COUNT};
 use crate::physics::skeleton_animation_record::{AnimationPartTransform, IDENTITY};
 
@@ -58,8 +59,8 @@ impl SkeletonPhysicalRecord {
         let mut velocity = [0.0f32; 4];
         for (i, weight) in fractional.iter().enumerate() {
             for lane in 0..4 {
-                position[lane] = self.pose[i][3][lane].mul_add(*weight, position[lane]);
-                velocity[lane] = self.velocities[i][lane].mul_add(*weight, velocity[lane]);
+                position[lane] = self.pose[i][3][lane].fused_mul_add(*weight, position[lane]);
+                velocity[lane] = self.velocities[i][lane].fused_mul_add(*weight, velocity[lane]);
             }
         }
         self.centre_of_mass = position;

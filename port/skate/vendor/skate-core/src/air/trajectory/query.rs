@@ -1,5 +1,6 @@
 //! Complete trajectory-segment walk82770910 and result writer8276DBE0.
 //! The host supplies real nearest swept-line hits and intersecting triangles.
+use crate::fused::FusedMulAdd as _;
 use super::{QueryRequest, QueryResult, math::*};
 #[derive(Clone, Copy, Debug)]
 pub struct SurfaceHit {
@@ -61,7 +62,7 @@ pub fn query_trajectory<E>(
             start = end;
         }
         let fraction = reciprocal(trajectory.duration) * time;
-        let step = end_step.mul_add(fraction, (1.0 - fraction) * start_step);
+        let step = end_step.fused_mul_add(fraction, (1.0 - fraction) * start_step);
         time += step;
         //The native walk evaluates beyond the horizon; it does not clamp end.
         end = trajectory.position_at(time + step);
@@ -72,7 +73,7 @@ pub fn query_trajectory<E>(
 fn reciprocal(value: f32) -> f32 {
     let mut inverse = crate::physics::native_arithmetic::reciprocal_estimate(value);
     for _ in 0..2 {
-        inverse = inverse.mul_add((-inverse).mul_add(value, 1.0), inverse);
+        inverse = inverse.fused_mul_add((-inverse).fused_mul_add(value, 1.0), inverse);
     }
     inverse
 }

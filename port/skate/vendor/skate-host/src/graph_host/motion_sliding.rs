@@ -1,4 +1,5 @@
 //! PowerSliding Update82BB28E8, instance82BB2D70 and helper82595930.
+use skate_core::fused::FusedMulAdd as _;
 use super::motion_animation::MotionAnimation;
 use skate_core::input::set_turning::SlideLatch;
 use skate_core::{animation::playback_parameters::ParameterInputs, point_graph::PointGraph};
@@ -163,13 +164,13 @@ pub fn direction(velocity: [f32; 4], mut z: [f32; 4], flipped: bool) -> f32 {
     }
     let mut root = 1.0 / squared.sqrt();
     for _ in 0..2 {
-        let error = (-squared).mul_add(root * root, 1.0);
-        root = (root * 0.5).mul_add(error, root);
+        let error = (-squared).fused_mul_add(root * root, 1.0);
+        root = (root * 0.5).fused_mul_add(error, root);
     }
     let length = squared * root;
     let mut inverse = 1.0 / length;
     for _ in 0..2 {
-        inverse = inverse.mul_add((-inverse).mul_add(length, 1.0), inverse);
+        inverse = inverse.fused_mul_add((-inverse).fused_mul_add(length, 1.0), inverse);
     }
     dot_product(velocity.map(|v| v * inverse), z)
 }
@@ -225,8 +226,8 @@ pub fn deceleration(
 ) -> f32 {
     let mut local = std::array::from_fn::<_, 4, _>(|lane| {
         let x = ground[lane][0] * velocity[0];
-        let y = ground[lane][1].mul_add(velocity[1], x);
-        ground[lane][2].mul_add(velocity[2], y)
+        let y = ground[lane][1].fused_mul_add(velocity[1], x);
+        ground[lane][2].fused_mul_add(velocity[2], y)
     });
     local[1] = 0.0;
     let squared = skate_core::riding::ground_correction_math::dot_product(local, local);
@@ -235,14 +236,14 @@ pub fn deceleration(
     } else {
         let mut inverse = 1.0 / squared.sqrt();
         for _ in 0..2 {
-            let error = (-squared).mul_add(inverse * inverse, 1.0);
-            inverse = (inverse * 0.5).mul_add(error, inverse);
+            let error = (-squared).fused_mul_add(inverse * inverse, 1.0);
+            inverse = (inverse * 0.5).fused_mul_add(error, inverse);
         }
         squared * inverse
     };
     let target = settings.speed_to_lean.evaluate(length);
     let retained = (1.0 - settings.smooth) * *previous;
-    *previous = target.mul_add(settings.smooth, retained);
+    *previous = target.fused_mul_add(settings.smooth, retained);
     *previous
 }
 

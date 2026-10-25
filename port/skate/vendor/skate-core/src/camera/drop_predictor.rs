@@ -1,6 +1,7 @@
 //! Native terrain drop prediction82DF84F8/89B0/8BC0/8740.
 //! Retains one update of query history: a new batch is submitted only after the
 //! previous batch has been consumed. Host execution may be synchronous.
+use crate::fused::FusedMulAdd as _;
 use super::vector_tracker::length;
 use super::{FatLine, FatLineResult};
 
@@ -150,7 +151,7 @@ impl DropPredictor {
         let direction = super::orientation_math::normalize(self.horizontal_velocity);
         core::array::from_fn(|index| {
             let point = core::array::from_fn(|i| {
-                (direction[i] * self.spacing).mul_add((index / 2 + 1) as f32, position[i])
+                (direction[i] * self.spacing).fused_mul_add((index / 2 + 1) as f32, position[i])
             });
             if index % 2 == 0 {
                 FatLine {
@@ -209,8 +210,8 @@ impl DropPredictor {
             // Native angle wrapper applies one reciprocal refinement here; the
             // called82473B98 polynomial has its own independent reductions.
             let initial = crate::physics::native_arithmetic::reciprocal_estimate(distance);
-            let inverse = initial.mul_add((-initial).mul_add(distance, 1.0), initial);
-            angle = crate::input::angle::atan(probe.depth.mul_add(inverse, 0.0));
+            let inverse = initial.fused_mul_add((-initial).fused_mul_add(distance, 1.0), initial);
+            angle = crate::input::angle::atan(probe.depth.fused_mul_add(inverse, 0.0));
             let sign = probe.depth.to_bits() & 0x80000000;
             if 0.0 > distance {
                 angle = f32::from_bits(0x40490fdb | sign) + angle;
@@ -234,7 +235,7 @@ impl DropPredictor {
         };
         let delta = (self.target_elevation - self.elevation).abs();
         let degrees = delta * f32::from_bits(0x42652ee1);
-        let step = (degrees - 7.0).mul_add(f32::from_bits(0x3d3a2e8c), f32::from_bits(0x3dcccccd));
+        let step = (degrees - 7.0).fused_mul_add(f32::from_bits(0x3d3a2e8c), f32::from_bits(0x3dcccccd));
         let step = if f32::from_bits(0x3dcccccd) - step >= 0.0 {
             f32::from_bits(0x3dcccccd)
         } else {
@@ -247,9 +248,9 @@ impl DropPredictor {
         };
         if degrees > step {
             self.elevation = if self.elevation >= self.target_elevation {
-                -step.mul_add(f32::from_bits(0x3c8efa35), -self.elevation)
+                -step.fused_mul_add(f32::from_bits(0x3c8efa35), -self.elevation)
             } else {
-                step.mul_add(f32::from_bits(0x3c8efa35), self.elevation)
+                step.fused_mul_add(f32::from_bits(0x3c8efa35), self.elevation)
             };
         } else {
             self.elevation = self.target_elevation;

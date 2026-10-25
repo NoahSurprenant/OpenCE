@@ -1,4 +1,5 @@
 //! SkeletonIK::BlendTransforms82BEEEB8.
+use crate::fused::FusedMulAdd as _;
 use super::{
     math::{interpolate, interpolate_affine},
     status::{LimbStatus, Mode},
@@ -57,7 +58,7 @@ pub fn update(
 
 fn board_blend(original: &Transform, target: &Transform, weight: f32) -> Transform {
     let translation = core::array::from_fn(|lane| {
-        target[3][lane].mul_add(weight, original[3][lane] * (1.0 - weight))
+        target[3][lane].fused_mul_add(weight, original[3][lane] * (1.0 - weight))
     });
     // Each source frame is orthonormalized independently in Z/Y/X order before
     // the matrix interpolation call; translation is replaced afterwards.

@@ -1,6 +1,7 @@
 //! Observed deck motion from TU3 Skateboard::FillPhysOut82C02A80.
 //! These calculations consume the live solver body and the actual Reckoning
 //! normal. They do not infer contact state from height or vertical velocity.
+use crate::fused::FusedMulAdd as _;
 use crate::math::{Basis3, Vector3};
 use super::{board::BodyId, board_runtime::BoardRuntime, native_arithmetic};
 
@@ -66,8 +67,8 @@ pub(crate) fn subtract(a: Vector3, b: Vector3) -> Vector3 {
 pub(crate) fn inverse_length_squared(squared: f32, refinements: usize) -> f32 {
     let mut inverse = native_arithmetic::reciprocal_square_root_estimate(squared);
     for _ in 0..refinements {
-        let correction = (-squared).mul_add(inverse * inverse, 1.0);
-        inverse = (inverse * 0.5).mul_add(correction, inverse);
+        let correction = (-squared).fused_mul_add(inverse * inverse, 1.0);
+        inverse = (inverse * 0.5).fused_mul_add(correction, inverse);
     }
     inverse
 }

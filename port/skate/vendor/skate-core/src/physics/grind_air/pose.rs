@@ -17,21 +17,21 @@ pub(super) fn axis_rotation(axis: V, angle: f32) -> Frame {
     let k = 1. - cos;
     [
         [
-            (k * x).mul_add(x, cos),
-            (k * x).mul_add(y, sin * z),
-            (k * x).mul_add(z, -sin * y),
+            (k * x).fused_mul_add(x, cos),
+            (k * x).fused_mul_add(y, sin * z),
+            (k * x).fused_mul_add(z, -sin * y),
             0.,
         ],
         [
-            (k * y).mul_add(x, -sin * z),
-            (k * y).mul_add(y, cos),
-            (k * y).mul_add(z, sin * x),
+            (k * y).fused_mul_add(x, -sin * z),
+            (k * y).fused_mul_add(y, cos),
+            (k * y).fused_mul_add(z, sin * x),
             0.,
         ],
         [
-            (k * z).mul_add(x, sin * y),
-            (k * z).mul_add(y, -sin * x),
-            (k * z).mul_add(z, cos),
+            (k * z).fused_mul_add(x, sin * y),
+            (k * z).fused_mul_add(y, -sin * x),
+            (k * z).fused_mul_add(z, cos),
             0.,
         ],
         ZERO,

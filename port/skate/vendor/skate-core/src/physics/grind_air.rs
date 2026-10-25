@@ -1,5 +1,6 @@
 //! Original S3 82D71138/82D34FE8/82D712E0, with persistent native histories.
 //! Independent PC arithmetic; not a bit-exact Xenon emulation claim.
+use crate::fused::FusedMulAdd as _;
 mod angles;
 mod pose;
 mod prediction;
@@ -146,27 +147,27 @@ fn scale(v: V, s: f32) -> V {
     v.map(|x| x * s)
 }
 fn madd(v: V, s: f32, a: V) -> V {
-    core::array::from_fn(|i| v[i].mul_add(s, a[i]))
+    core::array::from_fn(|i| v[i].fused_mul_add(s, a[i]))
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.,
     ]
 }
 fn inverse_length(square: f32) -> f32 {
     let mut r = arithmetic::reciprocal_square_root_estimate(square);
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-square).mul_add(r * r, 1.), r);
+        r = (r * 0.5).fused_mul_add((-square).fused_mul_add(r * r, 1.), r);
     }
     r
 }
 fn reciprocal(value: f32) -> f32 {
     let mut r = arithmetic::reciprocal_estimate(value);
     for _ in 0..2 {
-        r = r.mul_add((-r).mul_add(value, 1.), r);
+        r = r.fused_mul_add((-r).fused_mul_add(value, 1.), r);
     }
     r
 }
@@ -206,7 +207,7 @@ fn signed_angle(a: V, b: V, axis: V) -> f32 {
     }
     let normalize = |v, square| {
         let r = arithmetic::reciprocal_square_root_estimate(square);
-        scale(v, (r * 0.5).mul_add((-square).mul_add(r * r, 1.), r))
+        scale(v, (r * 0.5).fused_mul_add((-square).fused_mul_add(r * r, 1.), r))
     };
     let a = normalize(a, aa);
     let b = normalize(b, bb);

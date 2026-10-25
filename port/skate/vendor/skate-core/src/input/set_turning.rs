@@ -1,5 +1,6 @@
 //! SetTurning enter 82BB3810 and update 82BB3830 at resolved component boundaries.
 //! This is a reusable node operation; the loaded graph owns its activation.
+use crate::fused::FusedMulAdd as _;
 use super::turn_remap::TurnRemap;
 use crate::point_graph::PointGraph;
 
@@ -144,8 +145,8 @@ pub fn update(
     let b = settings.remaps[1].apply([physical.field_32, physical.field_56]);
     let _ = settings.remaps[1].apply([physical.field_36, physical.field_56]);
     let complement = 1.0 - physical.field_52;
-    let mut target = -a[0].mul_add(physical.field_52, b[0] * complement);
-    let direction = -a[1].mul_add(physical.field_52, b[1] * complement);
+    let mut target = -a[0].fused_mul_add(physical.field_52, b[0] * complement);
+    let direction = -a[1].fused_mul_add(physical.field_52, b[1] * complement);
     let old_0 = latch[1];
     let old_1 = latch[3];
     latch[1] &= !0x2000_0000;
@@ -183,7 +184,7 @@ pub fn update(
     let blend = settings.blend.evaluate(state.elapsed);
     let lower = state.smoothed - settings.maximum_delta;
     let upper = state.smoothed + settings.maximum_delta;
-    let value = (1.0 - blend).mul_add(state.smoothed, blend * target);
+    let value = (1.0 - blend).fused_mul_add(state.smoothed, blend * target);
     let value = if lower - value >= 0.0 { lower } else { value };
     state.elapsed += dt;
     state.smoothed = if upper - value >= 0.0 { value } else { upper };

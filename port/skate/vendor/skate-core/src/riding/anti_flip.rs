@@ -1,4 +1,5 @@
 //! Complete TU3 Toolkit_AntiFlipTorque 82D94190, distinct from heading/manual.
+use crate::fused::FusedMulAdd as _;
 use super::vector::{cross, dot3, normalize};
 use crate::{point_graph::PointGraph, trigonometry::acos};
 #[derive(Clone)]
@@ -46,5 +47,5 @@ pub fn calculate(s: &AntiFlipSettings, i: &AntiFlipInput) -> [f32; 4] {
     let b_strength = s.axis_64_response.evaluate(angle(i.axis_64, b)) * sign_b;
     let a_strength = (s.axis_96_response.evaluate(angle(i.axis_96, a)) * sign_a)
         * if i.balance == 0.0 { 1.0 } else { 0.0 };
-    core::array::from_fn(|n| i.axis_64[n].mul_add(a_strength, i.axis_96[n] * b_strength))
+    core::array::from_fn(|n| i.axis_64[n].fused_mul_add(a_strength, i.axis_96[n] * b_strength))
 }

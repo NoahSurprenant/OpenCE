@@ -1,6 +1,7 @@
 //! TU3 Skateboard::UpdateSpeedModel 82C04F68, including its force-enable gate.
 //! The caller supplies GetEffectiveTransform and GetMass outputs, not a guessed
 //! direction or mass. Ground submits this result as force tag 6.
+use crate::fused::FusedMulAdd as _;
 use super::vector::{clamp, dot3, normalize};
 use crate::point_graph::PointGraph;
 
@@ -138,13 +139,13 @@ pub fn update(
         target = -settings
             .no_input_friction
             .evaluate(input.surface_speed)
-            .mul_add(dt, -target);
+            .fused_mul_add(dt, -target);
     }
     if input.balance != 0.0 {
         target = -settings
             .manual_friction
             .evaluate(input.surface_speed)
-            .mul_add(dt, -target);
+            .fused_mul_add(dt, -target);
     }
     state.target_speed = if target >= 0.0 { target } else { 0.0 };
     let mut error = clamp(state.target_speed - speed, -bound, bound);

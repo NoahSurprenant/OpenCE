@@ -1,6 +1,7 @@
 //! Camera-observable part of the TU3 trajectory batch. The variable-step walk
 //! is 82770910, step sizing 8276C940 and collision time 8276C558. World storage
 //! and scheduling are host-owned; the native segment sequence is retained.
+use crate::fused::FusedMulAdd as _;
 use super::vector_tracker::{dot, length, refined_reciprocal};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,7 +51,7 @@ impl TrajectoryQuery {
                 start = end;
             }
             let fraction = refined_reciprocal(self.duration) * time;
-            let step = end_step.mul_add(fraction, (1.0 - fraction) * start_step);
+            let step = end_step.fused_mul_add(fraction, (1.0 - fraction) * start_step);
             time += step;
             // The stock walk evaluates one step ahead and deliberately does
             // not clamp that point to duration. Do not replace with a uniform
@@ -64,7 +65,7 @@ impl TrajectoryQuery {
         let square = time * time;
         core::array::from_fn(|i| {
             (self.gravity[i] * 0.5)
-                .mul_add(square, self.velocity[i].mul_add(time, self.position[i]))
+                .fused_mul_add(square, self.velocity[i].fused_mul_add(time, self.position[i]))
         })
     }
 
@@ -73,7 +74,7 @@ impl TrajectoryQuery {
         let mut inverse = crate::physics::reciprocal_sqrt::estimate(square);
         for _ in 0..2 {
             inverse = (inverse * 0.5)
-                .mul_add((-square).mul_add(inverse * inverse, 1.0), inverse);
+                .fused_mul_add((-square).fused_mul_add(inverse * inverse, 1.0), inverse);
         }
         if square == 0.0 { 0.0 } else { square * inverse }
     }

@@ -1,4 +1,5 @@
 //! TU3 Reckoning::UpdateGroundNormal 82D8E0F8, including filter 82D7A018.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::reciprocal_sqrt::estimate;
 
 /// Native reckoning +1280..1376: control, position, previous input, filtered
@@ -48,8 +49,8 @@ impl GroundNormalFilter {
         let squared = dot3(filtered);
         let mut inverse = estimate(squared);
         for _ in 0..2 {
-            let correction = (-squared).mul_add(inverse * inverse, 1.0);
-            inverse = (inverse * 0.5).mul_add(correction, inverse);
+            let correction = (-squared).fused_mul_add(inverse * inverse, 1.0);
+            inverse = (inverse * 0.5).fused_mul_add(correction, inverse);
         }
         let normal = filtered.map(|v| v * inverse);
         self.words[4..8].copy_from_slice(&normal.map(f32::to_bits));
@@ -64,12 +65,12 @@ impl GroundNormalFilter {
         let mut output = [0.0; 4];
         for lane in 0..4 {
             let error = input[lane] - previous[4 + lane];
-            let error_blend = previous[12 + lane].mul_add(retained, error * blend);
+            let error_blend = previous[12 + lane].fused_mul_add(retained, error * blend);
             let input_delta = input[lane] - previous[8 + lane];
-            let input_blend = previous[20 + lane].mul_add(retained, input_delta * blend);
-            let predicted = error_blend.mul_add(previous[1], previous[4 + lane]);
-            let predicted = error.mul_add(previous[0], predicted);
-            output[lane] = (input_blend - previous[16 + lane]).mul_add(previous[2], predicted);
+            let input_blend = previous[20 + lane].fused_mul_add(retained, input_delta * blend);
+            let predicted = error_blend.fused_mul_add(previous[1], previous[4 + lane]);
+            let predicted = error.fused_mul_add(previous[0], predicted);
+            output[lane] = (input_blend - previous[16 + lane]).fused_mul_add(previous[2], predicted);
             self.words[12 + lane] = error_blend.to_bits();
             self.words[20 + lane] = input_blend.to_bits();
             self.words[16 + lane] = (output[lane] - previous[4 + lane]).to_bits();

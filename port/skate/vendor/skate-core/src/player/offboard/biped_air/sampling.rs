@@ -1,5 +1,6 @@
 //! Original offboard selector GetTrajectoryResultAtFrame82D6E3F8.
 //! This selector is distinct from the on-board TrajectorySelector82D67848.
+use crate::fused::FusedMulAdd as _;
 use super::{DT,TrajectoryResult,Vector};
 use crate::{air::trajectory::Trajectory,point_graph::PointGraph};
 
@@ -51,7 +52,7 @@ impl SelectorState {
             let first=s.trajectory_8144.position_at(time);
             let second=self.fallback_8208.position_at(time);
             let weight=self.blend_8384;
-            out.position_272=core::array::from_fn(|i|second[i].mul_add(1.-weight,first[i]*weight));
+            out.position_272=core::array::from_fn(|i|second[i].fused_mul_add(1.-weight,first[i]*weight));
             //The velocity is the selected trajectory velocity, NOT the
             //derivative of the position blend and NOT the launch velocity.
             out.velocity_288=s.trajectory_8144.velocity_at(time);

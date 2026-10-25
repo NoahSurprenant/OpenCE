@@ -1,5 +1,6 @@
 //! TU3 RawControllerInput 82598FE0 and DerivedControllerInput 825992D8.
 //! Native action-map evaluation is an explicit boundary, not a platform mapping.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::reciprocal_sqrt::estimate;
 
 /// Evaluated native cInputMap actions. IDs are TU3 map indices, not XInput
@@ -127,8 +128,8 @@ impl DerivedControllerInput {
         let ly = map.value(65);
         let rx = map.value(67);
         let ry = map.value(68);
-        let right = magnitude(ry.mul_add(ry, rx * rx));
-        let left = magnitude(ly.mul_add(ly, lx * lx));
+        let right = magnitude(ry.fused_mul_add(ry, rx * rx));
+        let left = magnitude(ly.fused_mul_add(ly, lx * lx));
         let threshold = settings
             .attribute
             .unwrap_or(settings.missing_attribute_value);
@@ -155,8 +156,8 @@ mod startup_tests;
 pub(super) fn magnitude(squared: f32) -> f32 {
     let mut inverse = estimate(squared);
     for _ in 0..2 {
-        let correction = (-squared).mul_add(inverse * inverse, 1.0);
-        inverse = (inverse * 0.5).mul_add(correction, inverse);
+        let correction = (-squared).fused_mul_add(inverse * inverse, 1.0);
+        inverse = (inverse * 0.5).fused_mul_add(correction, inverse);
     }
     if squared == 0.0 {
         0.0

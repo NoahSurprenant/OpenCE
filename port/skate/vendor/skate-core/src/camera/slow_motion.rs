@@ -1,5 +1,6 @@
 //! SlowMotionController TU382BB1DD8/82BB1EE0/82BB20A8. The host owns
 //! message delivery; this retains the curve, latching and timestep calculation.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 #[derive(Clone, Copy, Debug)]
@@ -64,7 +65,7 @@ impl SlowMotionSettings {
     fn request(self, progress: f32) -> SimulationRateRequest {
         let curve = self.timescale.evaluate(progress);
         SimulationRateRequest {
-            timestep: 1.0 / curve.mul_add(self.fps_at_scale_one - 60.0, 60.0),
+            timestep: 1.0 / curve.fused_mul_add(self.fps_at_scale_one - 60.0, 60.0),
             ticks: 1,
         }
     }

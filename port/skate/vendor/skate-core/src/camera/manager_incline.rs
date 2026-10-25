@@ -1,4 +1,5 @@
 //! Ground incline and frontside state, complete TU3 82E002A8.
+use crate::fused::FusedMulAdd as _;
 use super::{ManagerState,ManagerSubject,direction_to_angles};
 use super::manager_state::{HALF_PI,UP};
 use super::vector_tracker::{dot,length};
@@ -29,9 +30,9 @@ impl ManagerState {
         let projected=normal.map(|v|v*dot(UP,normal));
         let tangent=super::orientation_math::normalize(core::array::from_fn::<_,4,_>(|i|UP[i]-projected[i]));
         let cross=[
-            (-normal[2]).mul_add(tangent[1],normal[1]*tangent[2]),
-            (-normal[0]).mul_add(tangent[2],normal[2]*tangent[0]),
-            (-normal[1]).mul_add(tangent[0],normal[0]*tangent[1]),0.0,
+            (-normal[2]).fused_mul_add(tangent[1],normal[1]*tangent[2]),
+            (-normal[0]).fused_mul_add(tangent[2],normal[2]*tangent[0]),
+            (-normal[1]).fused_mul_add(tangent[0],normal[0]*tangent[1]),0.0,
         ];
         let denominator=dot(direction,tangent);
         let numerator=dot(direction,cross);
@@ -54,8 +55,8 @@ pub(super) fn angle_between(a:[f32;4],b:[f32;4])->f32 {
 /// multiply-add with positive zero, then signed quadrant selection.
 pub(super) fn atan_ratio(numerator:f32,denominator:f32)->f32 {
     let initial=crate::physics::native_arithmetic::reciprocal_estimate(denominator);
-    let inverse=initial.mul_add((-initial).mul_add(denominator,1.0),initial);
-    let mut angle=crate::input::angle::atan(numerator.mul_add(inverse,0.0));
+    let inverse=initial.fused_mul_add((-initial).fused_mul_add(denominator,1.0),initial);
+    let mut angle=crate::input::angle::atan(numerator.fused_mul_add(inverse,0.0));
     let sign=numerator.to_bits()&0x80000000;
     if 0.0>denominator {angle=f32::from_bits(0x40490fdb|sign)+angle;}
     if denominator==0.0 {angle=f32::from_bits(0x3fc90fdb|sign);}

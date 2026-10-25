@@ -1,5 +1,6 @@
 //! Inlined physical input calculations from TU3 82DB4048.
 //! Xenon estimates use the shared, explicitly approximation-derived model.
+use crate::fused::FusedMulAdd as _;
 use super::requests::{GroundHistoryRequest, GroundHistoryResult, PrepareJumpRequest};
 use super::types::RawVector;
 use crate::physics::{
@@ -16,8 +17,8 @@ pub fn ground_history(request: GroundHistoryRequest) -> GroundHistoryResult {
     let timestep = f32::from_bits(request.timestep_bits);
     let mut reciprocal = reciprocal_estimate(timestep);
     for _ in 0..2 {
-        let error = (-reciprocal).mul_add(timestep, 1.0);
-        reciprocal = reciprocal.mul_add(error, reciprocal);
+        let error = (-reciprocal).fused_mul_add(timestep, 1.0);
+        reciprocal = reciprocal.fused_mul_add(error, reciprocal);
     }
     //Literal82072818, then8231A844 minus that coefficient.
     let retention = f32::from_bits(0x3f73_3333);
@@ -26,7 +27,7 @@ pub fn ground_history(request: GroundHistoryRequest) -> GroundHistoryResult {
         delta: delta.map(f32::to_bits),
         filtered_delta: std::array::from_fn(|i| {
             let scaled = reciprocal * (delta[i] * change);
-            previous[i].mul_add(retention, scaled).to_bits()
+            previous[i].fused_mul_add(retention, scaled).to_bits()
         }),
     }
 }
@@ -53,7 +54,7 @@ pub fn prepared_jump_velocity(request: PrepareJumpRequest) -> RawVector {
     let acceleration = down_component * f32::from_bits(0x411c_cccd); //822F8BD4
     std::array::from_fn(|i| {
         (direction[i] * acceleration)
-            .mul_add(f32::from_bits(0x3c88_8889), previous[i]) //820849C8
+            .fused_mul_add(f32::from_bits(0x3c88_8889), previous[i]) //820849C8
             .to_bits()
     })
 }

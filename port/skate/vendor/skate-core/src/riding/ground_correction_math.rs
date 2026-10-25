@@ -1,6 +1,7 @@
 //! Remaining numerical ground corrections from TU3 82D38800 and its callees.
 //! These operate on actual physical vectors; phase/counter gates stay in the
 //! grounded state owner and all body writes target the shared board solver.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     math::Vector3,
     physics::{
@@ -76,7 +77,7 @@ pub fn hang_force(edge_start: [f32; 4], edge_end: [f32; 4], deck: [f32; 4]) -> [
         side
     };
     let lift = [0., 160., 0., 0.];
-    std::array::from_fn(|i| side[i].mul_add(50.0, lift[i]))
+    std::array::from_fn(|i| side[i].fused_mul_add(50.0, lift[i]))
 }
 
 /// 82D39950..82D399FC: signed deck-Z cross deck-Y, scaled by the native
@@ -112,15 +113,15 @@ pub fn scale_to_magnitude(vector: [f32; 4], squared: f32, magnitude: f32) -> [f3
 
 fn reciprocal_refined(value: f32) -> f32 {
     let estimate = reciprocal_estimate(value);
-    let first = estimate.mul_add((-estimate).mul_add(value, 1.0), estimate);
-    first.mul_add((-first).mul_add(value, 1.0), first)
+    let first = estimate.fused_mul_add((-estimate).fused_mul_add(value, 1.0), estimate);
+    first.fused_mul_add((-first).fused_mul_add(value, 1.0), first)
 }
 fn cross(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 fn subtract(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
@@ -172,9 +173,9 @@ pub fn apply_world_force(
     body.rates.force_acceleration.z += force.z * inverse;
     let columns = body.rates.world_inverse_inertia.columns;
     let angular = |i: usize| {
-        columns[2][i].mul_add(
+        columns[2][i].fused_mul_add(
             torque[2],
-            columns[1][i].mul_add(torque[1], columns[0][i] * torque[0]),
+            columns[1][i].fused_mul_add(torque[1], columns[0][i] * torque[0]),
         )
     };
     body.rates.torque_acceleration.x += angular(0);

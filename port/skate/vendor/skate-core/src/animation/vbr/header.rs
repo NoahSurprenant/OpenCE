@@ -1,4 +1,5 @@
 //! Original TU3 InitPerAnim82E88FA8 and UnPackHeaderBits82E8A780.
+use crate::fused::FusedMulAdd as _;
 use std::ops::Range;
 
 #[derive(Clone, Debug)]
@@ -89,7 +90,7 @@ impl Header {
                 }
                 let value = f32::from_bits(u32_at(bytes, dictionary + index * 4)?);
                 // Original scalar fmadds82E8A804..878, including constants.
-                constants.push(value.mul_add(channel.range, channel.min));
+                constants.push(value.fused_mul_add(channel.range, channel.min));
             }
         }
         let runs = u16_at(bytes, header)? as usize;

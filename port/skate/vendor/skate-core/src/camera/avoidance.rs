@@ -1,6 +1,7 @@
 //! Complete TU3 normal-camera avoidance82E04C20. Three native PathEvaluators
 //! retain separate asynchronous requests. World/subject adapters are external.
 
+use crate::fused::FusedMulAdd as _;
 use super::vector_tracker::{dot, length, refined_reciprocal};
 use super::{
     MovingObstacleProvider, PathEvaluator, Positioner, PredictionPath, TrajectoryCollisionRequest,
@@ -223,8 +224,8 @@ impl RigAvoidance {
                 target
             };
             self.heading_weight = (1.0 - settings.heading_smoothing)
-                .mul_add(heading_target - self.heading_weight, self.heading_weight);
-            self.elevation_weight = (1.0 - settings.elevation_smoothing).mul_add(
+                .fused_mul_add(heading_target - self.heading_weight, self.heading_weight);
+            self.elevation_weight = (1.0 - settings.elevation_smoothing).fused_mul_add(
                 elevation_target - self.elevation_weight,
                 self.elevation_weight,
             );

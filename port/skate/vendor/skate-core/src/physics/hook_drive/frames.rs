@@ -1,5 +1,6 @@
 //! Full 82C00940/82C00AF0 matrix33 conversion. Unlike Part::SetTransform,
 //! these functions do not normalize the selected quaternion afterward.
+use crate::fused::FusedMulAdd as _;
 type V = [f32; 4];
 fn add(a: V, b: V) -> V {
     core::array::from_fn(|i| a[i] + b[i])
@@ -15,7 +16,7 @@ pub(super) fn rsqrt(v: f32) -> f32 {
     for _ in 0..2 {
         let s = e * e;
         let h = e * 0.5;
-        e = h.mul_add((-v).mul_add(s, 1.0), e);
+        e = h.fused_mul_add((-v).fused_mul_add(s, 1.0), e);
     }
     e
 }

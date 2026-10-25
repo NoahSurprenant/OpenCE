@@ -1,5 +1,6 @@
 //! State503, original TU3 82D4D418..82D4E100 (SHA431b8eba...0395a).
 //! Manager owns the trajectory; this state owns alignment and landing decisions.
+use crate::fused::FusedMulAdd as _;
 use super::{hippy_jump, landing_deck::{Manager, Trajectory, UpdateOutput, GRAVITY, STEP}};
 use crate::player::wipeout_state::{math::wrap_angle, orientation::projected_angle};
 use crate::physics::board_motion_output::inverse_length_squared;
@@ -109,7 +110,7 @@ impl State {
             self.spin_rate = target.clamp(self.spin_rate-delta,self.spin_rate+delta);
             self.applied_spin = self.spin_rate;
             if state_time < 0.28 {
-                self.applied_spin = (-self.transition_angle).mul_add(0.059523813,self.spin_rate);
+                self.applied_spin = (-self.transition_angle).fused_mul_add(0.059523813,self.spin_rate);
             }
         }
     }

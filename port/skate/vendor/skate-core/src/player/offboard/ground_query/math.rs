@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use crate::{math::Vector3, physics::native_arithmetic};
 pub(super) fn add(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(a.x + b.x, a.y + b.y, a.z + b.z)
@@ -10,9 +11,9 @@ pub(super) fn scale(a: Vector3, k: f32) -> Vector3 {
 }
 pub(super) fn madd(a: Vector3, k: f32, b: Vector3) -> Vector3 {
     Vector3::new(
-        a.x.mul_add(k, b.x),
-        a.y.mul_add(k, b.y),
-        a.z.mul_add(k, b.z),
+        a.x.fused_mul_add(k, b.x),
+        a.y.fused_mul_add(k, b.y),
+        a.z.fused_mul_add(k, b.z),
     )
 }
 pub(super) fn dot(a: Vector3, b: Vector3) -> f32 {
@@ -20,9 +21,9 @@ pub(super) fn dot(a: Vector3, b: Vector3) -> f32 {
 }
 pub(super) fn cross(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(
-        (-a.z).mul_add(b.y, a.y * b.z),
-        (-a.x).mul_add(b.z, a.z * b.x),
-        (-a.y).mul_add(b.x, a.x * b.y),
+        (-a.z).fused_mul_add(b.y, a.y * b.z),
+        (-a.x).fused_mul_add(b.z, a.z * b.x),
+        (-a.y).fused_mul_add(b.x, a.x * b.y),
     )
 }
 pub(super) fn horizontal(a: Vector3) -> Vector3 {
@@ -35,7 +36,7 @@ pub(super) fn abs(a: Vector3) -> Vector3 {
 pub(super) fn inverse_root(q: f32) -> f32 {
     let mut r = native_arithmetic::reciprocal_square_root_estimate(q);
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-q).mul_add(r * r, 1.), r);
+        r = (r * 0.5).fused_mul_add((-q).fused_mul_add(r * r, 1.), r);
     }
     r
 }
@@ -47,7 +48,7 @@ pub(super) fn length(a: Vector3) -> f32 {
 pub(super) fn reciprocal(x: f32) -> f32 {
     let mut r = native_arithmetic::reciprocal_estimate(x);
     for _ in 0..2 {
-        r = r.mul_add((-x).mul_add(r, 1.), r);
+        r = r.fused_mul_add((-x).fused_mul_add(r, 1.), r);
     }
     r
 }

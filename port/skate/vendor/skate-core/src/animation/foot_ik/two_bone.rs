@@ -1,5 +1,6 @@
 //! Math::_TwoBoneIKSolve8296F8C0, TU3 complete reachable/recursive/invalid path.
 //! Plane construction uses the native general inverse, not a rigid transpose.
+use crate::fused::FusedMulAdd as _;
 use super::math::{Vector, cross, inverse_affine, length, normalize, reciprocal};
 use crate::{
     physics::{
@@ -67,7 +68,7 @@ pub fn solve(
     let local_target = transform_point(&target_inverse, *target);
     let target_delta = subtract(local_target, local_root);
     let planar_squared =
-        target_delta[0].mul_add(target_delta[0], target_delta[1] * target_delta[1]);
+        target_delta[0].fused_mul_add(target_delta[0], target_delta[1] * target_delta[1]);
     let distance = square_root(planar_squared);
     let upper_squared = upper_length * upper_length;
     let lower_squared = lower_length * lower_length;
@@ -137,7 +138,7 @@ pub fn solve(
     }
     // The target heading is an addend *inside* this acos in the TU3 body
     // (vmaddfp82970088). Preserve it rather than fitting a textbook IK formula.
-    let ratio = reciprocal(twice_upper * distance, 2).mul_add(
+    let ratio = reciprocal(twice_upper * distance, 2).fused_mul_add(
         (upper_squared + planar_squared) - lower_squared,
         target_angle,
     );
@@ -180,7 +181,7 @@ fn subtract(a: Vector, b: Vector) -> Vector {
     core::array::from_fn(|i| a[i] - b[i])
 }
 fn scaled_add(a: Vector, scale: f32, b: Vector) -> Vector {
-    core::array::from_fn(|i| a[i].mul_add(scale, b[i]))
+    core::array::from_fn(|i| a[i].fused_mul_add(scale, b[i]))
 }
 
 fn candidate(

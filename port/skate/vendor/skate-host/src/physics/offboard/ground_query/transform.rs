@@ -1,3 +1,4 @@
+use skate_core::fused::FusedMulAdd as _;
 use super::Bounds;
 use skate_core::{math::Vector3, player::offboard::ground_query::Frame};
 pub(super) fn add(a: Vector3, b: Vector3) -> Vector3 {
@@ -11,9 +12,9 @@ pub(super) fn scale(a: Vector3, s: f32) -> Vector3 {
 }
 fn madd(a: Vector3, s: f32, b: Vector3) -> Vector3 {
     Vector3::new(
-        a.x.mul_add(s, b.x),
-        a.y.mul_add(s, b.y),
-        a.z.mul_add(s, b.z),
+        a.x.fused_mul_add(s, b.x),
+        a.y.fused_mul_add(s, b.y),
+        a.z.fused_mul_add(s, b.z),
     )
 }
 pub(super) fn point(f: Frame, p: Vector3) -> Vector3 {
@@ -53,14 +54,14 @@ pub(super) fn face([a, b, c]: [Vector3; 3]) -> Vector3 {
     let u = sub(b, a);
     let v = sub(c, a);
     let n = Vector3::new(
-        (-u.z).mul_add(v.y, u.y * v.z),
-        (-u.x).mul_add(v.z, u.z * v.x),
-        (-u.y).mul_add(v.x, u.x * v.y),
+        (-u.z).fused_mul_add(v.y, u.y * v.z),
+        (-u.x).fused_mul_add(v.z, u.z * v.x),
+        (-u.y).fused_mul_add(v.x, u.x * v.y),
     );
-    let q = n.z.mul_add(n.z, n.y.mul_add(n.y, n.x * n.x));
+    let q = n.z.fused_mul_add(n.z, n.y.fused_mul_add(n.y, n.x * n.x));
     let mut r = 1.0 / q.sqrt();
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-q).mul_add(r * r, 1.0), r);
+        r = (r * 0.5).fused_mul_add((-q).fused_mul_add(r * r, 1.0), r);
     }
     scale(n, r)
 }

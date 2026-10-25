@@ -1,6 +1,7 @@
 //! Standard SQT blend in TU3 ACS828CB418..4A4 and worker828D6BA8..6C2C.
 //! The caller owns tree order and coefficients; interpolation does not flatten
 //! nested blends or use a renderer's quaternion blend implementation.
+use crate::fused::FusedMulAdd as _;
 use super::output::{PoseBufferError, Sqt};
 use crate::physics::native_arithmetic;
 
@@ -26,15 +27,15 @@ pub fn blend_sample(first: Sqt, second: Sqt, weight: f32) -> Sqt {
     let positive = native_arithmetic::dot4(first.rotation, second.rotation) > 0.0;
     let rotation = core::array::from_fn(|lane| {
         if positive {
-            (second.rotation[lane] - first.rotation[lane]).mul_add(weight, first.rotation[lane])
+            (second.rotation[lane] - first.rotation[lane]).fused_mul_add(weight, first.rotation[lane])
         } else {
-            (-(second.rotation[lane] + first.rotation[lane])).mul_add(weight, first.rotation[lane])
+            (-(second.rotation[lane] + first.rotation[lane])).fused_mul_add(weight, first.rotation[lane])
         }
     });
     let squared = native_arithmetic::dot4(rotation, rotation);
     let mut inverse = native_arithmetic::reciprocal_square_root_estimate(squared);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-squared).mul_add(inverse * inverse, 1.0), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-squared).fused_mul_add(inverse * inverse, 1.0), inverse);
     }
     Sqt {
         scale: interpolate(first.scale, second.scale, weight),
@@ -54,7 +55,7 @@ pub fn channel_blend_sample(first: Sqt, second: Sqt, weight: f32, use_first_weig
 }
 
 fn interpolate(first: [f32; 4], second: [f32; 4], weight: f32) -> [f32; 4] {
-    core::array::from_fn(|lane| (second[lane] - first[lane]).mul_add(weight, first[lane]))
+    core::array::from_fn(|lane| (second[lane] - first[lane]).fused_mul_add(weight, first[lane]))
 }
 
 ///ACS828CBF68..828CC0B4: weighted SQT accumulation in authored order,
@@ -76,9 +77,9 @@ pub fn weighted(poses: &[Vec<Sqt>], weights: &[f32]) -> Result<Vec<Sqt>, PoseBuf
     for (pose,&weight) in poses.iter().zip(weights).skip(1) {
         for (out,s) in output.iter_mut().zip(pose) {
             for lane in 0..4 {
-                out.scale[lane]=s.scale[lane].mul_add(weight,out.scale[lane]);
-                out.rotation[lane]=s.rotation[lane].mul_add(weight,out.rotation[lane]);
-                out.translation[lane]=s.translation[lane].mul_add(weight,out.translation[lane]);
+                out.scale[lane]=s.scale[lane].fused_mul_add(weight,out.scale[lane]);
+                out.rotation[lane]=s.rotation[lane].fused_mul_add(weight,out.rotation[lane]);
+                out.translation[lane]=s.translation[lane].fused_mul_add(weight,out.translation[lane]);
             }
         }
     }
@@ -89,7 +90,7 @@ pub fn weighted(poses: &[Vec<Sqt>], weights: &[f32]) -> Result<Vec<Sqt>, PoseBuf
         }
         let mut inverse=native_arithmetic::reciprocal_square_root_estimate(squared);
         for _ in 0..2 {
-            inverse=(inverse*0.5).mul_add((-squared).mul_add(inverse*inverse,1.),inverse);
+            inverse=(inverse*0.5).fused_mul_add((-squared).fused_mul_add(inverse*inverse,1.),inverse);
         }
         out.rotation=out.rotation.map(|v| v*inverse);
         if out.rotation.iter().any(|v| !v.is_finite()) {

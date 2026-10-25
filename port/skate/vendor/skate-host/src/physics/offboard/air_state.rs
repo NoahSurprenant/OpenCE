@@ -1,4 +1,5 @@
 //! Live BipedAir501 Enter/Update/Exit and FillPhysOut.
+use skate_core::fused::FusedMulAdd as _;
 use crate::physics::{GamePhysics, SkaterRuntime};
 use skate_core::{
     physics::skeleton_animation_record::{AnimationPartTransform as Frame, compose_affine},
@@ -218,7 +219,7 @@ fn sub(a: V, b: V) -> V {
     std::array::from_fn(|i| a[i] - b[i])
 }
 fn madd(a: V, s: f32, b: V) -> V {
-    std::array::from_fn(|i| a[i].mul_add(s, b[i]))
+    std::array::from_fn(|i| a[i].fused_mul_add(s, b[i]))
 }
 pub(crate) fn publish(skater: &mut SkaterRuntime) {
     let state = &skater.offboard.air_state;

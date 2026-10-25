@@ -1,4 +1,5 @@
 //! Original82D7B7A0, called with real GroundEnter frame/velocity/body position.
+use crate::fused::FusedMulAdd as _;
 use super::state::ZERO;
 use super::{Frame, State, Vector};
 #[derive(Clone, Copy, Debug)]
@@ -66,7 +67,7 @@ fn length(v: Vector) -> f32 {
     let q = dot(v, v);
     let mut r = 1.0 / q.sqrt();
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-q).mul_add(r * r, 1.0), r);
+        r = (r * 0.5).fused_mul_add((-q).fused_mul_add(r * r, 1.0), r);
     }
     let n = q * r;
     if q == 0.0 { 0.0 } else { n }

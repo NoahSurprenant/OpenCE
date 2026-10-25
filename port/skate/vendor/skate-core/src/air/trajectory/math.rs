@@ -1,4 +1,5 @@
 //! Independent PC arithmetic retaining the recovered refinement sequences.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::native_arithmetic;
 pub(super) type Vector = [f32; 4];
 pub(super) type Transform = [Vector; 4];
@@ -19,27 +20,27 @@ pub(super) fn scale(a: Vector, s: f32) -> Vector {
     a.map(|v| v * s)
 }
 pub(super) fn madd(a: Vector, s: f32, b: Vector) -> Vector {
-    core::array::from_fn(|i| a[i].mul_add(s, b[i]))
+    core::array::from_fn(|i| a[i].fused_mul_add(s, b[i]))
 }
 pub(super) fn cross(a: Vector, b: Vector) -> Vector {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.0,
     ]
 }
 pub(super) fn inverse_length(square: f32) -> f32 {
     let mut v = native_arithmetic::reciprocal_square_root_estimate(square);
     for _ in 0..2 {
-        v = (v * 0.5).mul_add((-square).mul_add(v * v, 1.0), v);
+        v = (v * 0.5).fused_mul_add((-square).fused_mul_add(v * v, 1.0), v);
     }
     v
 }
 pub(super) fn reciprocal(value: f32) -> f32 {
     let mut inverse = native_arithmetic::reciprocal_estimate(value);
     for _ in 0..2 {
-        inverse = inverse.mul_add((-inverse).mul_add(value, 1.0), inverse);
+        inverse = inverse.fused_mul_add((-inverse).fused_mul_add(value, 1.0), inverse);
     }
     inverse
 }
@@ -52,7 +53,7 @@ pub(super) fn angle_between(a: Vector, b: Vector) -> f32 {
     }
     let unit = |v: Vector, square: f32| {
         let r = native_arithmetic::reciprocal_square_root_estimate(square);
-        scale(v, (r * 0.5).mul_add((-square).mul_add(r * r, 1.0), r))
+        scale(v, (r * 0.5).fused_mul_add((-square).fused_mul_add(r * r, 1.0), r))
     };
     crate::trigonometry::acos(dot(unit(a, aa), unit(b, bb)).max(-1.0).min(1.0))
 }

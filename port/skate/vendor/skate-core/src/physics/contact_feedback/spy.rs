@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 /// Complete TU3 82AE1608. Compacts eligible256-byte compiled contact rows into
 ///112-byte spies at the same buffer start. `spy_count` increments from its input
 ///value; it does not choose the write offset and is not reset by this routine.
@@ -33,11 +34,11 @@ pub fn spy_contact_jacobians(
         let tangent0 = vector(storage, start + 40);
         let tangent1 = vector(storage, start + 52);
         let tangent: [f32; 4] =
-            std::array::from_fn(|i| tangent0[i].mul_add(impulse[1], tangent1[i] * impulse[2]));
+            std::array::from_fn(|i| tangent0[i].fused_mul_add(impulse[1], tangent1[i] * impulse[2]));
         let inverse = 1.0 / (b_weight + a_weight);
         let position: [f32; 4] = std::array::from_fn(|i| {
             (a_center[i] + a_position[i])
-                .mul_add(a_weight, (b_center[i] + b_position[i]) * b_weight)
+                .fused_mul_add(a_weight, (b_center[i] + b_position[i]) * b_weight)
                 * inverse
         });
         let tag = storage[start + 55];

@@ -1,4 +1,5 @@
 //! ControlAirLegExtension82BAF538 and its ascending/descending/preland helpers.
+use crate::fused::FusedMulAdd as _;
 use super::output::attributes::AnimationAttribute;
 use crate::{physics::native_arithmetic::dot3, point_graph::PointGraph};
 
@@ -86,7 +87,7 @@ impl State {
             1 if p.com_velocity[1] >= 0.0 => {
                 //82BAFB60 is FNMSUBS, followed by FSEL against minimum1756.
                 self.height = maximum(
-                    (-dt).mul_add(settings.going_up_speed, self.height),
+                    (-dt).fused_mul_add(settings.going_up_speed, self.height),
                     settings.minimum_height,
                 );
             }
@@ -100,10 +101,10 @@ impl State {
                     let closing = -dot3(p.com_velocity, p.system_up);
                     let vertical = dot3(p.system_up, [0.0, 1.0, 0.0, 0.0]).abs();
                     let speed = maximum(closing, 0.0)
-                        .mul_add(vertical, (1.0 - vertical) * settings.going_down_speed);
+                        .fused_mul_add(vertical, (1.0 - vertical) * settings.going_down_speed);
                     let speed = minimum(speed, settings.going_down_speed);
                     self.height =
-                        maximum((-speed).mul_add(dt, self.height), settings.minimum_height);
+                        maximum((-speed).fused_mul_add(dt, self.height), settings.minimum_height);
                 }
             }
             3 => self.preland(bone, settings, dt),
@@ -120,7 +121,7 @@ impl State {
         ]
     }
     fn preland(&mut self, bone: Bone, settings: &Settings, dt: f32) {
-        self.height = dt.mul_add(settings.preland_velocity, self.height);
+        self.height = dt.fused_mul_add(settings.preland_velocity, self.height);
         if bone != Bone::Board {
             self.height *= settings.offboard_multiplier;
         }

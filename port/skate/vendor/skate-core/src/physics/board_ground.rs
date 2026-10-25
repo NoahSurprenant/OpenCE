@@ -4,6 +4,7 @@
 //! publication82C079E0, and world-contact normal selection82C07D20. The
 //! postphysics stage consumes actual solver reports, never speculative query
 //! contacts. Dynamic-object classification is outside the host's static world.
+use crate::fused::FusedMulAdd as _;
 use crate::{math::Vector3, trigonometry};
 use super::{
     board::{BodyId, BODY_COUNT},
@@ -283,8 +284,8 @@ impl BoardGroundState {
             if magnitude > f32::from_bits(0x3C23_D70A) {
                 let mut inverse = native_arithmetic::reciprocal_estimate(magnitude);
                 for _ in 0..2 {
-                    let error = (-inverse).mul_add(magnitude, 1.0);
-                    inverse = inverse.mul_add(error, inverse);
+                    let error = (-inverse).fused_mul_add(magnitude, 1.0);
+                    inverse = inverse.fused_mul_add(error, inverse);
                 }
                 self.overall_normal = scale(support, inverse);
             }

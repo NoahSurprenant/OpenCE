@@ -2,6 +2,7 @@
 //! S2 counterparts82DD2168/82DD64D8/82DD26C0 corroborate field identities.
 //! Keep these three stages in that order, after geometry correction and before
 //! engagement. Independent PC arithmetic is not bit-exact Xenon emulation.
+use crate::fused::FusedMulAdd as _;
 use super::{V, admission::EntryKind, arithmetic, cross, dot3, scale, sub};
 use crate::air::trajectory::grind_surface::{GeometryType, GrindSurface};
 use crate::{point_graph::PointGraph, trigonometry};
@@ -256,7 +257,7 @@ fn magnitude(value: V) -> f32 {
 }
 
 fn blend(a: V, a_weight: f32, b: V, b_weight: f32) -> V {
-    core::array::from_fn(|i| a[i].mul_add(a_weight, b[i] * b_weight))
+    core::array::from_fn(|i| a[i].fused_mul_add(a_weight, b[i] * b_weight))
 }
 
 fn negate(value: V) -> V {
@@ -277,9 +278,9 @@ fn rotate(axis: V, value: V, angle: f32) -> V {
     let (sin, cos) = trigonometry::sin_cos(angle * 0.5);
     let q = scale(axis, sin);
     let first_cross = cross(q, value);
-    let intermediate = core::array::from_fn(|i| value[i].mul_add(cos, first_cross[i]));
+    let intermediate = core::array::from_fn(|i| value[i].fused_mul_add(cos, first_cross[i]));
     let second_cross = cross(q, intermediate);
-    core::array::from_fn(|i| second_cross[i].mul_add(2.0, value[i]))
+    core::array::from_fn(|i| second_cross[i].fused_mul_add(2.0, value[i]))
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 pub(super) type V = [f32; 3];
 
 pub(super) fn vector(record: &[u32], offset: usize) -> V {
@@ -14,9 +15,9 @@ pub(super) fn dot(a: V, b: V) -> f32 {
 
 pub(super) fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
     ]
 }
 

@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::{NativeMatrix, PoseBufferError};
 
 /// TU3 48-byte SQT record: scale, quaternion (x,y,z,w), translation.
@@ -76,21 +77,21 @@ pub fn sqt_to_matrix(input: Sqt) -> NativeMatrix {
         let wx = w * x;
         [
             [
-                (-(yy + zz)).mul_add(2.0, 1.0) * sx,
+                (-(yy + zz)).fused_mul_add(2.0, 1.0) * sx,
                 ((xy + wz) * 2.0) * sx,
                 ((xz - wy) * 2.0) * sx,
                 0.0,
             ],
             [
                 ((xy - wz) * 2.0) * sy,
-                (-(xx + zz)).mul_add(2.0, 1.0) * sy,
+                (-(xx + zz)).fused_mul_add(2.0, 1.0) * sy,
                 ((yz + wx) * 2.0) * sy,
                 0.0,
             ],
             [
                 ((xz + wy) * 2.0) * sz,
                 ((yz - wx) * 2.0) * sz,
-                (-(xx + yy)).mul_add(2.0, 1.0) * sz,
+                (-(xx + yy)).fused_mul_add(2.0, 1.0) * sz,
                 0.0,
             ],
             [

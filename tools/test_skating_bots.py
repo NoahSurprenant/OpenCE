@@ -263,7 +263,7 @@ def test_skating_bots_crowd(tmp_path):
     log = _log(tmp_path, "server")
     sessions = {int(n) for n in re.findall(r"skate: bot skater (\d+) made for player", log)}
     copied = re.findall(r"preload: session in (\d+)ms \(a copy of the first\)", log)
-    slower = re.findall(r"skate: the bots' skaters take .*", log)
+    slower = re.findall(r"skate: the bots' skaters: \d+ near people step every .*", log)
     seen = set(posed.findall(_log(tmp_path, "client")))
     print(f"{bots} bots: {len(rode())} rode, {len(sessions)} skate sessions made ({len(copied)} copies, "
           f"{max(map(int, copied)) if copied else 0} ms at most), the client saw {len(seen)} posed with boards; "

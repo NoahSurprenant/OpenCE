@@ -1,5 +1,6 @@
 //! Right-stick anticipation publication, Fill825999F0:
 //! angle/magnitude 82599AD0..9C4C, emissions 8259AD0C..AD40.
+use crate::fused::FusedMulAdd as _;
 use super::{
     angle::left_stick_angle,
     controller::{DerivedControllerInput, magnitude},
@@ -17,7 +18,7 @@ pub fn produce(controller: &DerivedControllerInput) -> Vec<RidingIntent> {
     vec![
         RidingIntent {
             name: "AnticMag",
-            value: magnitude(x.mul_add(x, y * y)),
+            value: magnitude(x.fused_mul_add(x, y * y)),
         },
         RidingIntent {
             name: "AnticAngle",

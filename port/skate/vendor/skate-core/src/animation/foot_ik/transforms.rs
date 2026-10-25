@@ -1,4 +1,5 @@
 //! Animated portion of CalculateInitialPartTransforms82BEDF08.
+use crate::fused::FusedMulAdd as _;
 use super::status::{LimbStatus, Mode};
 use crate::physics::skeleton_animation_record::{
     AnimationPartTransform as Transform, IDENTITY, compose_affine,
@@ -90,8 +91,8 @@ pub fn inverse_rigid(source: &Transform) -> Transform {
     let translation = source[3].map(|v| 0.0 - v);
     result[3] = core::array::from_fn(|i| {
         let z = translation[2] * result[2][i];
-        let y = translation[1].mul_add(result[1][i], z);
-        translation[0].mul_add(result[0][i], y)
+        let y = translation[1].fused_mul_add(result[1][i], z);
+        translation[0].fused_mul_add(result[0][i], y)
     });
     result
 }

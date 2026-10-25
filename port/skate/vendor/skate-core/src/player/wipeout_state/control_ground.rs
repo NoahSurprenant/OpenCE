@@ -1,4 +1,5 @@
 //! Original Wipeout contact control82D3D660, using the world-space animation hands.
+use crate::fused::FusedMulAdd as _;
 use super::{State,math::{self,V},profiles::Profile,torque};
 use crate::{physics::{skeleton_animation_record::AnimationPartTransform,
     skeleton_body::SkeletonBody},trigonometry};
@@ -10,8 +11,8 @@ pub fn update(state:&mut State,body:&mut SkeletonBody,physical_com:V,
     let speed=math::length(state.velocity);
     let mut rolling_axis=math::normalize_or(std::array::from_fn(|i| {
         let x=effective[0][i]*profile.roll_axis[0];
-        let y=effective[1][i].mul_add(profile.roll_axis[1],x);
-        effective[2][i].mul_add(profile.roll_axis[2],y)
+        let y=effective[1][i].fused_mul_add(profile.roll_axis[1],x);
+        effective[2][i].fused_mul_add(profile.roll_axis[2],y)
     }),[0.0;4]);
     let hands=[3,7].map(|i| crate::physics::skeleton_animation_record::compose_affine(
         animation_to_world,&animation_pose[i]));

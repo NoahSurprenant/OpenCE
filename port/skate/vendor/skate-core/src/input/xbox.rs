@@ -1,4 +1,5 @@
 //! Complete TU3 Xbox pad conversion 8296D5F8, after successful platform polling.
+use crate::fused::FusedMulAdd as _;
 use super::controller::magnitude;
 
 /// Fields of the native Xbox state passed by value to 8296D5F8.
@@ -44,7 +45,7 @@ pub fn convert(state: &XboxState, device_byte_13: u8) -> [f32; 24] {
 fn condition(stick: [i16; 2]) -> [f32; 4] {
     let x = f32::from(stick[0]) * f32::from_bits(0x38000000);
     let y = f32::from(stick[1]) * f32::from_bits(0x38000000);
-    let squared = y.mul_add(y, x * x);
+    let squared = y.fused_mul_add(y, x * x);
     let length = magnitude(squared);
     let factor = if length < f32::from_bits(0x3a83126f) {
         0.0

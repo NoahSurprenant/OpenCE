@@ -1,5 +1,6 @@
 //! Complete single/transition framing82E01260/82E01740. Camera positioning,
 //! reference producers and stock shot selection remain the caller's inputs.
+use crate::fused::FusedMulAdd as _;
 use super::{
     Shot,
     orientation_math::{basis_from_angles, look_basis},
@@ -70,7 +71,7 @@ impl FrameComposer {
         );
         let orientation = slerp(from_orientation, to_orientation, fraction);
         self.roll = if dt > 0.0 {
-            ((to.framing[0] - self.roll) * settings.roll_response).mul_add(dt, self.roll)
+            ((to.framing[0] - self.roll) * settings.roll_response).fused_mul_add(dt, self.roll)
         } else {
             to.framing[0]
         };
@@ -117,9 +118,9 @@ impl FrameComposer {
         let result = Basis3 {
             columns: framing.columns.map(|column| {
                 core::array::from_fn(|i| {
-                    look.columns[2][i].mul_add(
+                    look.columns[2][i].fused_mul_add(
                         column[2],
-                        look.columns[1][i].mul_add(column[1], look.columns[0][i] * column[0]),
+                        look.columns[1][i].fused_mul_add(column[1], look.columns[0][i] * column[0]),
                     )
                 })
             }),
@@ -161,7 +162,7 @@ fn quaternion_from_basis(basis: Basis3) -> [f32; 4] {
     };
     let mut inverse = crate::physics::reciprocal_sqrt::estimate(sum);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-sum).mul_add(inverse * inverse, 1.0), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-sum).fused_mul_add(inverse * inverse, 1.0), inverse);
     }
     let root = sum * inverse;
     let half_inverse = 0.5 * inverse;

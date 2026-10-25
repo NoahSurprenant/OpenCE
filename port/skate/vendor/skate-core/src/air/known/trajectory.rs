@@ -1,5 +1,6 @@
 //! KnownAir trajectory setup, ground restoration, and follow update.
 
+use crate::fused::FusedMulAdd as _;
 use super::{
     data::{
         KnownAirFrame, KnownAirModeSettings, KnownAirSettings, KnownAirState, KnownAirTrajectory,
@@ -95,12 +96,12 @@ pub fn restore_velocity(
         geometry.landing_speed_blend_source,
     );
     let blend_weight = select(ONE - lower_clamped, lower_clamped, ONE);
-    let speed_scale = (curve_value - ONE).mul_add(blend_weight, ONE);
+    let speed_scale = (curve_value - ONE).fused_mul_add(blend_weight, ONE);
     let scaled_tangent = mul_scalar(geometry.tangential_velocity, speed_scale);
     let current_board_velocity = runtime.board_body_velocity();
     let preserved_normal_speed = runtime.dot3(current_board_velocity, frame.ground_normal_464);
     let restored = core::array::from_fn(|lane| {
-        frame.ground_normal_464[lane].mul_add(preserved_normal_speed, scaled_tangent[lane])
+        frame.ground_normal_464[lane].fused_mul_add(preserved_normal_speed, scaled_tangent[lane])
     });
     runtime.set_board_velocity(restored);
 
@@ -125,7 +126,7 @@ pub fn update_trajectory_follow(
     let trajectory = runtime.selector_trajectory_2704();
     let trajectory_position = trajectory_position(&trajectory, sample_time);
     state.target_com_position_160 = core::array::from_fn(|lane| {
-        state.trajectory_follow_offset_144[lane].mul_add(blend, trajectory_position[lane])
+        state.trajectory_follow_offset_144[lane].fused_mul_add(blend, trajectory_position[lane])
     });
 
     if frame.flags_2468 & 0x0000_0008 != 0 {
@@ -136,15 +137,15 @@ pub fn update_trajectory_follow(
 pub(crate) fn trajectory_position(trajectory: &KnownAirTrajectory, time: f32) -> Vector4 {
     let time_squared = time * time;
     core::array::from_fn(|lane| {
-        let linear = trajectory.velocity[lane].mul_add(time, trajectory.position[lane]);
+        let linear = trajectory.velocity[lane].fused_mul_add(time, trajectory.position[lane]);
         let half_acceleration = trajectory.acceleration[lane] * HALF;
-        half_acceleration.mul_add(time_squared, linear)
+        half_acceleration.fused_mul_add(time_squared, linear)
     })
 }
 
 pub(crate) fn trajectory_velocity(trajectory: &KnownAirTrajectory, time: f32) -> Vector4 {
     core::array::from_fn(|lane| {
-        trajectory.acceleration[lane].mul_add(time, trajectory.velocity[lane])
+        trajectory.acceleration[lane].fused_mul_add(time, trajectory.velocity[lane])
     })
 }
 

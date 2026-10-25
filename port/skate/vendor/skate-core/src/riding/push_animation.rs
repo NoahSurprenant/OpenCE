@@ -1,6 +1,7 @@
 //! TU3 push animation calculations, upstream of the contact-driven push force.
 //! `0x82BAD658` maps held time to strength; `0x82BACF50` updates the three
 //! Andale parameters. These do not select an animation or synthesize root motion.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 #[derive(Clone, Copy, Debug)]
@@ -72,7 +73,7 @@ fn approach(current: f32, target: f32, rate: f32, dt: f32) -> f32 {
     let difference = target - current;
     let result = if difference.abs() > 0.001 {
         if difference > 0.0 {
-            let candidate = dt.mul_add(rate, current);
+            let candidate = dt.fused_mul_add(rate, current);
             if candidate - target >= 0.0 {
                 target
             } else {
@@ -80,7 +81,7 @@ fn approach(current: f32, target: f32, rate: f32, dt: f32) -> f32 {
             }
         } else {
             // Native fnmsubs, followed by fsel; preserve the fused operation.
-            let candidate = -dt.mul_add(rate, -current);
+            let candidate = -dt.fused_mul_add(rate, -current);
             if candidate - target >= 0.0 {
                 candidate
             } else {

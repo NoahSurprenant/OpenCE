@@ -55,7 +55,7 @@ pub(super) fn angular_rows(
                 let perpendicular_z = relative[0][2];
                 let perpendicular_y = relative[0][1];
                 let squared =
-                    perpendicular_y.mul_add(perpendicular_y, perpendicular_z * perpendicular_z);
+                    perpendicular_y.fused_mul_add(perpendicular_y, perpendicular_z * perpendicular_z);
                 let root = squared * constraint_frames::reciprocal_sqrt(squared);
                 let root = if squared == 0.0 { 0.0 } else { root };
                 let inverse_length = constraint_frames::reciprocal(root) * 1.0;

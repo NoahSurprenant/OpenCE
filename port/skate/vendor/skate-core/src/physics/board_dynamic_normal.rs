@@ -1,5 +1,6 @@
 //! Dynamic wheel-response normal, original TU3 82C02388, with acceleration
 //! history from82C082AC..8348. This is Ground64, distinct from wheel normals.
+use crate::fused::FusedMulAdd as _;
 use super::{
     board_ground::BoardGroundState,
     board_motion_output::{add, dot, inverse_length_squared, scale, subtract},
@@ -75,9 +76,9 @@ impl BoardDynamicNormal {
             maximum
         };
         self.delta = Vector3::new(
-            direction.x.mul_add(amount, self.delta.x),
-            direction.y.mul_add(amount, self.delta.y),
-            direction.z.mul_add(amount, self.delta.z),
+            direction.x.fused_mul_add(amount, self.delta.x),
+            direction.y.fused_mul_add(amount, self.delta.y),
+            direction.z.fused_mul_add(amount, self.delta.z),
         );
         self.normal = normalize(add(self.normal, self.delta));
         self.last_contact_normal = contacts.overall_normal;

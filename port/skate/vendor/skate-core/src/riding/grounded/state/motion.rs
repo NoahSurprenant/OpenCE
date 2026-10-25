@@ -1,6 +1,7 @@
 //! Physical Ground entry82D37604..82D378A8 and future-deck82D38630 math.
 //! These operate on actual board rates/force records. Skeleton publication is
 //! separate because prediction moves its animation target, not the board.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     math::Vector3,
     physics::{
@@ -19,7 +20,7 @@ fn words(v: Vector3) -> [f32; 4] {
 fn reciprocal(value: f32) -> f32 {
     let mut r = reciprocal_estimate(value);
     for _ in 0..2 {
-        r = r.mul_add((-value).mul_add(r, 1.0), r);
+        r = r.fused_mul_add((-value).fused_mul_add(r, 1.0), r);
     }
     r
 }

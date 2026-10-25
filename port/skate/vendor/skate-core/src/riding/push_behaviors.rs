@@ -1,5 +1,6 @@
 //! Push behavior state and coefficient calculations from Skate 3 TU3.
 //! Animation-tree selection and graph transitions belong to the authored graph.
+use crate::fused::FusedMulAdd as _;
 use super::push_animation::{PushAnimationCurves, PushBlendParameters};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -85,8 +86,8 @@ impl PushAttributes {
             fast_gentle.length,
             fast_gentle.begin_velocity,
         );
-        let strong_length = (1.0 - strong).mul_add(slow_strong.length, fast_strong.length * strong);
-        let gentle_length = (1.0 - gentle).mul_add(slow_gentle.length, fast_gentle.length * gentle);
+        let strong_length = (1.0 - strong).fused_mul_add(slow_strong.length, fast_strong.length * strong);
+        let gentle_length = (1.0 - gentle).fused_mul_add(slow_gentle.length, fast_gentle.length * gentle);
         let strong_end = blended_end(strong, slow_strong, fast_strong);
         let gentle_end = blended_end(gentle, slow_gentle, fast_gentle);
         let target_end = bounded(strength + speed, gentle_end, strong_end);
@@ -130,7 +131,7 @@ impl PushAttributes {
         );
         let speed_factor =
             unit((speed - first_speed) / (self.maximum_begin_velocity - first_speed));
-        let combined = strength_factor.mul_add(1.0 - speed_weight, speed_factor * speed_weight);
+        let combined = strength_factor.fused_mul_add(1.0 - speed_weight, speed_factor * speed_weight);
         let lower = if -combined >= 0.0 { 0.0 } else { combined };
         native_min(maximum_out, lower)
     }
@@ -145,9 +146,9 @@ fn velocity_blend(
 ) -> f32 {
     let low_distance = low_length * low_velocity;
     let speed_distance = speed * low_length;
-    let sum = high_length.mul_add(high_velocity, speed_distance);
+    let sum = high_length.fused_mul_add(high_velocity, speed_distance);
     let numerator = speed_distance - low_distance;
-    let denominator = -speed.mul_add(high_length, -(sum - low_distance));
+    let denominator = -speed.fused_mul_add(high_length, -(sum - low_distance));
     unit(numerator / denominator)
 }
 fn blended_end(coefficient: f32, low: PushClipMetrics, high: PushClipMetrics) -> f32 {
@@ -155,7 +156,7 @@ fn blended_end(coefficient: f32, low: PushClipMetrics, high: PushClipMetrics) ->
     let high_weight = coefficient * high.length;
     let low_weight = (1.0 - coefficient) * low.length;
     high.end_velocity
-        .mul_add(high_weight, low.end_velocity * low_weight)
+        .fused_mul_add(high_weight, low.end_velocity * low_weight)
         / (high_weight + low_weight)
 }
 

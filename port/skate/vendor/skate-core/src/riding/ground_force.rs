@@ -1,6 +1,7 @@
 //! Complete TU3 82D931E8, called twice by Ground Update for tags 4 and 5.
 //! The research index has not recovered its original name. Keep its four
 //! caller-supplied scalar arguments explicit instead of inventing units.
+use crate::fused::FusedMulAdd as _;
 use super::vector::{clamp, dot3, normalize};
 #[derive(Clone)]
 pub struct GroundForceSettings {
@@ -30,9 +31,9 @@ pub fn calculate(s: &GroundForceSettings, i: &GroundForceInput) -> [f32; 8] {
     };
     let speed = (i.surface_speed * 0.125) * s.speed_scale_1224;
     let remainder = ((1.0 - fraction) * s.scale_1228) * zero_scalar;
-    let magnitude = -(speed.mul_add(fraction, remainder) * i.argument_4);
+    let magnitude = -(speed.fused_mul_add(fraction, remainder) * i.argument_4);
     let force =
-        core::array::from_fn(|n| i.axis_544[n].mul_add(magnitude, (-i.axis_384[n]) * i.argument_3));
+        core::array::from_fn(|n| i.axis_544[n].fused_mul_add(magnitude, (-i.axis_384[n]) * i.argument_3));
     let direction = normalize(i.velocity_400, s.normal_threshold);
     let projected = dot3(direction, force);
     let mut result = [0.0; 8];

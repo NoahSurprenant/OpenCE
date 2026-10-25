@@ -1,5 +1,6 @@
 //! Biped frame/position output stages82D80360 and82D80548.
 //! The retained state is part of the actual Biped owner; no inferred initialization.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::{native_arithmetic::dot3, reciprocal_sqrt::estimate, skeleton_root::orthonormalize};
 type Vector = [f32; 4];
 type Matrix = [Vector; 4];
@@ -28,7 +29,7 @@ impl FrameOutput {
         let mut change: Vector = std::array::from_fn(|i| (position_48[i] - self.frame[3][i]) * 60.0 - self.velocity[i]);
         change[1] = select(change[1] - -1.0, change[1], -1.0);
         self.velocity = std::array::from_fn(|i| self.velocity[i] + change[i]);
-        self.frame[3] = std::array::from_fn(|i| self.velocity[i].mul_add(DT, self.frame[3][i]));
+        self.frame[3] = std::array::from_fn(|i| self.velocity[i].fused_mul_add(DT, self.frame[3][i]));
     }
 }
 
@@ -63,20 +64,20 @@ pub fn update_position(position_368: &mut Vector, input: PositionInput) {
         let height = select(height - 0.3, 0.3, height);
         //82D80638 ble: unordered takes the update branch.
         if !(height <= 0.0) {
-            origin = std::array::from_fn(|i| up[i].mul_add(height, origin[i]));
+            origin = std::array::from_fn(|i| up[i].fused_mul_add(height, origin[i]));
         }
     }
     let delta = subtract(input.animation_position_272, origin);
     let projection = dot3(up, delta);
     let planar: Vector = std::array::from_fn(|i| delta[i] - up[i] * projection);
-    let target: Vector = std::array::from_fn(|i| up[i].mul_add(0.95, origin[i] + planar[i]));
+    let target: Vector = std::array::from_fn(|i| up[i].fused_mul_add(0.95, origin[i] + planar[i]));
     let delta = subtract(target, *position_368);
     let height = dot3(delta, up);
     let lower = select(-0.1 - height, -0.1, height);
     let bounded = select(0.1 - lower, lower, 0.1);
     let correction = bounded - height;
     *position_368 = std::array::from_fn(|i| {
-        position_368[i] + up[i].mul_add(correction, delta[i])
+        position_368[i] + up[i].fused_mul_add(correction, delta[i])
     });
 }
 
@@ -88,17 +89,17 @@ fn select(test: f32, positive: f32, negative: f32) -> f32 {
 }
 fn cross(a: Vector, b: Vector) -> Vector {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 fn normalize(vector: Vector) -> Vector {
     let squared = dot3(vector, vector);
     let mut inverse = estimate(squared);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-squared).mul_add(inverse * inverse, 1.0), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-squared).fused_mul_add(inverse * inverse, 1.0), inverse);
     }
     vector.map(|value| value * inverse)
 }

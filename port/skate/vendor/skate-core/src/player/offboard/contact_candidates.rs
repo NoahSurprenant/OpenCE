@@ -1,4 +1,5 @@
 //! Native candidate searches82D84D38/85070 and distance fallback82D84B98.
+use crate::fused::FusedMulAdd as _;
 use super::{
     contact_geometry,
     contact_queries::{Input, V},
@@ -30,7 +31,7 @@ pub fn rising(
     flags: u32,
 ) -> Option<Candidate> {
     let anchor = project(input, segments.items[index].end);
-    let end = [-1., (-1. - anchor[0]).mul_add(slope, anchor[1])];
+    let end = [-1., (-1. - anchor[0]).fused_mul_add(slope, anchor[1])];
     for i in (0..index).rev() {
         let s = segments.items[i];
         let fraction = contact_geometry::intersect(
@@ -71,7 +72,7 @@ pub fn rising(
             ));
         }
         let distance = s.length * fraction;
-        let position = std::array::from_fn(|k| s.direction[k].mul_add(distance, s.start[k]));
+        let position = std::array::from_fn(|k| s.direction[k].fused_mul_add(distance, s.start[k]));
         if dot3(input.surface_up, sub(position, input.position)) > 0.75 {
             return None;
         }
@@ -101,7 +102,7 @@ pub fn falling(
         index.map_or(input.position, |i| segments.items[i].start),
     );
     let x = f32::from_bits(0x4033_3333);
-    let end = [x, (x - anchor[0]).mul_add(slope, anchor[1])];
+    let end = [x, (x - anchor[0]).fused_mul_add(slope, anchor[1])];
     for i in index.map_or(0, |i| i + 1)..segments.last_surface_end {
         let s = segments.items[i];
         let fraction = contact_geometry::intersect(
@@ -123,7 +124,7 @@ pub fn falling(
         } else {
             let distance = s.length * fraction;
             (
-                std::array::from_fn(|k| s.direction[k].mul_add(distance, s.start[k])),
+                std::array::from_fn(|k| s.direction[k].fused_mul_add(distance, s.start[k])),
                 s.normal,
             )
         };
@@ -152,7 +153,7 @@ pub fn distance_fallback(
             (s.end, next_normal(input, segments, i))
         } else {
             (
-                std::array::from_fn(|k| s.direction[k].mul_add(distance, s.end[k])),
+                std::array::from_fn(|k| s.direction[k].fused_mul_add(distance, s.end[k])),
                 s.normal,
             )
         };

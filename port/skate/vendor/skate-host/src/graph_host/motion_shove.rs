@@ -1,5 +1,6 @@
 //! Original TU3 Shove constructor82BBCCF0, Begin82BBCDD0,
 //! Update82BBCDF0 and End82BBD540. The host owns channels and graph values.
+use skate_core::fused::FusedMulAdd as _;
 use super::motion_animation::MotionAnimation;
 use skate_core::animation::{
     channel_playback::ChannelSettings,
@@ -191,8 +192,8 @@ fn direction_angle(direction: [f32; 4], mirrored: bool) -> f32 {
         direction[2]
     };
     let reciprocal = z.recip();
-    let reciprocal = reciprocal.mul_add((-reciprocal).mul_add(z, 1.0), reciprocal);
-    let basic = skate_core::input::angle::atan(x.mul_add(reciprocal, 0.0));
+    let reciprocal = reciprocal.fused_mul_add((-reciprocal).fused_mul_add(z, 1.0), reciprocal);
+    let basic = skate_core::input::angle::atan(x.fused_mul_add(reciprocal, 0.0));
     let sign = x.to_bits() & 0x80000000;
     let angle = if z < 0.0 {
         basic + f32::from_bits(0x40490fdb | sign)

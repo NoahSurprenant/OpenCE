@@ -1,5 +1,6 @@
 //! Original Skeleton::GeneralUpdate82BDCA38 and discontinuity reset82BE2798.
 //! This operates on the same physical bodies later borrowed by the solver.
+use crate::fused::FusedMulAdd as _;
 use super::{
     native_arithmetic::reciprocal_estimate,
     rigid_body::RetailSimulationStep,
@@ -17,7 +18,7 @@ pub fn root_velocity(previous: &mut [f32; 4], current: [f32; 4], dt: f32) -> [f3
     let difference: [f32; 4] = std::array::from_fn(|i| current[i] - previous[i]);
     let mut inverse = reciprocal_estimate(dt);
     for _ in 0..2 {
-        inverse = inverse.mul_add((-inverse).mul_add(dt, 1.0), inverse);
+        inverse = inverse.fused_mul_add((-inverse).fused_mul_add(dt, 1.0), inverse);
     }
     let velocity = difference.map(|v| v * inverse);
     *previous = current;

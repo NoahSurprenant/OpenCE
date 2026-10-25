@@ -1,4 +1,5 @@
 //! Completed pose observations; original PhysOut template constructors.
+use crate::fused::FusedMulAdd as _;
 use super::types::RawMatrix;
 
 /// Skeleton reset82DE3A28 explicitly clears these scalars and flags.
@@ -34,8 +35,8 @@ impl SkeletonOutputFields {
         let forward = if board_flipped { forward.map(|v| -v) } else { forward };
         let [x, _, z, _] = forward;
         let reciprocal = reciprocal_estimate(z);
-        let refined = reciprocal.mul_add((-reciprocal).mul_add(z, 1.0), reciprocal);
-        let basic = crate::input::angle::atan(x.mul_add(refined, 0.0));
+        let refined = reciprocal.fused_mul_add((-reciprocal).fused_mul_add(z, 1.0), reciprocal);
+        let basic = crate::input::angle::atan(x.fused_mul_add(refined, 0.0));
         let sign = x.to_bits() & 0x8000_0000;
         let pi = f32::from_bits(0x4049_0fdb | sign);
         let half_pi = f32::from_bits(0x3fc9_0fdb | sign);

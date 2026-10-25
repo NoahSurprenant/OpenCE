@@ -1,5 +1,6 @@
 //! Complete TU3 Skeleton::UpdateLandingAdjust82BD9028. This owns the four
 //! landing modes and history; it does not synthesize physical COM observations.
+use crate::fused::FusedMulAdd as _;
 use super::skeleton_board_offset::SkateboardOffset;
 use crate::point_graph::PointGraph;
 const STEP: f32 = f32::from_bits(0x3C88_8889);
@@ -160,7 +161,7 @@ impl LandingAdjustment {
                 let height = settings
                     .coffin_height
                     .evaluate(self.time / settings.coffin_time);
-                self.position = height.mul_add(scale, settings.coffin_base_height);
+                self.position = height.fused_mul_add(scale, settings.coffin_base_height);
             } else {
                 let mut target = settings.desired_com_height;
                 if self.kind == 1 {
@@ -176,8 +177,8 @@ impl LandingAdjustment {
                 let previous_velocity = self.velocity;
                 // fnmsubs of damping*velocity and negative spring displacement.
                 let spring_force = -(displacement * spring);
-                let acceleration = -(previous_velocity.mul_add(damping, -spring_force));
-                let candidate = acceleration.mul_add(STEP, previous_velocity);
+                let acceleration = -(previous_velocity.fused_mul_add(damping, -spring_force));
+                let candidate = acceleration.fused_mul_add(STEP, previous_velocity);
                 let lower = select(
                     -settings.maximum_velocity - candidate,
                     -settings.maximum_velocity,
@@ -190,7 +191,7 @@ impl LandingAdjustment {
                 };
                 self.velocity = select(maximum - lower, lower, maximum);
                 let integrated =
-                    ((self.velocity + previous_velocity) * 0.5).mul_add(STEP, displacement);
+                    ((self.velocity + previous_velocity) * 0.5).fused_mul_add(STEP, displacement);
                 let height = integrated + target;
                 self.position = select(
                     height - settings.minimum_height,

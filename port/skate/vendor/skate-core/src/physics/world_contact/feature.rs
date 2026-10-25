@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::MaximumFeature;
 use crate::physics::reciprocal_sqrt::estimate;
 
@@ -20,7 +21,7 @@ pub fn initialize_feature_segment(output: &mut [u32; 16], origin: [u32; 4], end:
     // 82F837D8 broadcasts 8212BF78 (34000000) to threshold vector830BDD40.
     let mut reciprocal = estimate(squared);
     reciprocal =
-        (reciprocal * 0.5).mul_add((-squared).mul_add(reciprocal * reciprocal, 1.0), reciprocal);
+        (reciprocal * 0.5).fused_mul_add((-squared).fused_mul_add(reciprocal * reciprocal, 1.0), reciprocal);
     let length = if squared > f32::from_bits(0x3400_0000) {
         if squared == 0.0 {
             0.0
@@ -32,7 +33,7 @@ pub fn initialize_feature_segment(output: &mut [u32; 16], origin: [u32; 4], end:
     };
     output[12..16].fill(length.to_bits());
     let r = super::prism_math::reciprocal_estimate(length);
-    let r = r.mul_add((-r).mul_add(length, 1.0), r);
+    let r = r.fused_mul_add((-r).fused_mul_add(length, 1.0), r);
     let direction = if squared > f32::from_bits(0x3400_0000) {
         delta.map(|x| x * r)
     } else {
@@ -68,7 +69,7 @@ pub fn capsule_maximum_feature(
         output[140] = 1;
     } else {
         let point: [f32; 4] = if projection > 0.0 {
-            std::array::from_fn(|i| axis[i].mul_add(half, center[i]))
+            std::array::from_fn(|i| axis[i].fused_mul_add(half, center[i]))
         } else {
             std::array::from_fn(|i| center[i] - axis[i] * half)
         };

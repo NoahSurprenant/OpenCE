@@ -1,4 +1,5 @@
 //! Original TU3 trajectory launch calculations82D67D08/82D67320/82D682E8.
+use crate::fused::FusedMulAdd as _;
 use super::{LaunchInfo, QueryRequest, SelectorInput, SelectorSettings, Trajectory, math::*};
 
 pub(super) fn adjust_velocity(
@@ -138,7 +139,7 @@ pub(super) fn batch(info: LaunchInfo, input: SelectorInput, s: &SelectorSettings
 }
 ///82D68698 deliberately uses the original -19.6 and -1/9.8 coefficients.
 fn max_time(velocity: Vector, s: &SelectorSettings) -> f32 {
-    let square = velocity[1].mul_add(
+    let square = velocity[1].fused_mul_add(
         velocity[1],
         -(s.trajectory_max_drop * f32::from_bits(0xc19c_cccd)),
     );

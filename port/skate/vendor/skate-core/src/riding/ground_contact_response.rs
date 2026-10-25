@@ -1,5 +1,6 @@
 //! Wall-ride contact response, TU3 82D93DF0. Inputs are the native published
 //! board contact record and processed physical observations, not ray guesses.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     math::Vector3,
     physics::{board_motion_output::dot, force_queue::QueuedPointForce},
@@ -73,7 +74,7 @@ pub fn wall_ride_response(
     //height/velocity expression at82D94044. Older decompiles alias the two.
     let floor_wall = dot(xyz(frame.vector_8064), xyz(physical.board_normal));
     let height = (frame.vector_8048[1] - frame.vector_8032[1]).abs();
-    let predicted_height = physical.velocity[1].mul_add(settings.velocity_time_to_consider, height);
+    let predicted_height = physical.velocity[1].fused_mul_add(settings.velocity_time_to_consider, height);
     if !(floor_wall < settings.max_dot_floor_wall
         && (consider || predicted_height < settings.auto_jump_height || time > settings.max_time))
     {
@@ -87,7 +88,7 @@ pub fn wall_ride_response(
         tangent[1] *= settings.auto_jump_y_down_scalar;
     }
     response.vector_2688 = std::array::from_fn(|i| {
-        physical.board_normal[i].mul_add(settings.auto_jump_force, tangent[i])
+        physical.board_normal[i].fused_mul_add(settings.auto_jump_force, tangent[i])
     });
     response
 }

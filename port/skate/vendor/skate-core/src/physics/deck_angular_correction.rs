@@ -1,6 +1,7 @@
 //! Deck angular corrections from TU3 82C07000 and 82C075B8.
 //! These add angular acceleration before the shared solve. They never set yaw
 //! or orientation directly. Both native fixed-step conversions are retained.
+use crate::fused::FusedMulAdd as _;
 use super::{
     board_motion_output::{dot, inverse_length_squared},
     native_arithmetic::reciprocal_estimate,
@@ -94,21 +95,21 @@ fn invert_symmetric(tensor: Basis3) -> Basis3 {
 }
 fn reciprocal_refined(value: f32) -> f32 {
     let estimate = reciprocal_estimate(value);
-    let first = estimate.mul_add((-estimate).mul_add(value, 1.0), estimate);
-    first.mul_add((-first).mul_add(value, 1.0), first)
+    let first = estimate.fused_mul_add((-estimate).fused_mul_add(value, 1.0), estimate);
+    first.fused_mul_add((-first).fused_mul_add(value, 1.0), first)
 }
 fn cross(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(
-        (-a.z).mul_add(b.y, a.y * b.z),
-        (-a.x).mul_add(b.z, a.z * b.x),
-        (-a.y).mul_add(b.x, a.x * b.y),
+        (-a.z).fused_mul_add(b.y, a.y * b.z),
+        (-a.x).fused_mul_add(b.z, a.z * b.x),
+        (-a.y).fused_mul_add(b.x, a.x * b.y),
     )
 }
 fn multiply(matrix: Basis3, v: Vector3) -> Vector3 {
     let lane = |i: usize| {
-        matrix.columns[2][i].mul_add(
+        matrix.columns[2][i].fused_mul_add(
             v.z,
-            matrix.columns[1][i].mul_add(v.y, matrix.columns[0][i] * v.x),
+            matrix.columns[1][i].fused_mul_add(v.y, matrix.columns[0][i] * v.x),
         )
     };
     Vector3::new(lane(0), lane(1), lane(2))
@@ -218,9 +219,9 @@ fn ground_torque_scalar() -> f32 {
         0xbc188b0b,
     ]
     .map(f32::from_bits);
-    let low = cube.mul_add(log[3], square.mul_add(log[2], x.mul_add(log[1], log[0])));
-    let high = cube.mul_add(log[7], square.mul_add(log[6], x.mul_add(log[5], log[4])));
-    let exponent = (-x).mul_add(fourth.mul_add(high, low), -3.0);
+    let low = cube.fused_mul_add(log[3], square.fused_mul_add(log[2], x.fused_mul_add(log[1], log[0])));
+    let high = cube.fused_mul_add(log[7], square.fused_mul_add(log[6], x.fused_mul_add(log[5], log[4])));
+    let exponent = (-x).fused_mul_add(fourth.fused_mul_add(high, low), -3.0);
     let integral = exponent.floor();
     let fraction = exponent - integral;
     let square = fraction * fraction;
@@ -231,15 +232,15 @@ fn ground_torque_scalar() -> f32 {
         0xb7364261,
     ]
     .map(f32::from_bits);
-    let low = cube.mul_add(
+    let low = cube.fused_mul_add(
         exp[3],
-        square.mul_add(exp[2], fraction.mul_add(exp[1], exp[0])),
+        square.fused_mul_add(exp[2], fraction.fused_mul_add(exp[1], exp[0])),
     );
-    let high = cube.mul_add(
+    let high = cube.fused_mul_add(
         exp[7],
-        square.mul_add(exp[6], fraction.mul_add(exp[5], exp[4])),
+        square.fused_mul_add(exp[6], fraction.fused_mul_add(exp[5], exp[4])),
     );
-    let polynomial = fourth.mul_add(high, low);
+    let polynomial = fourth.fused_mul_add(high, low);
     //vexptefp sees an integral exponent here, so its power of two is exact.
     let power_of_two = f32::from_bits(((127 + integral as i32) as u32) << 23);
     (power_of_two * reciprocal_refined(polynomial)) * f32::from_bits(0xc0c1_999a)

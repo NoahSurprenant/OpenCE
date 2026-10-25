@@ -1,5 +1,6 @@
 //! Physical-output COM conditioning: original TU3 82DE56B0/82DE5978.
 //! Advances once after physical Skeleton publishes position64 and velocity16.
+use crate::fused::FusedMulAdd as _;
 use super::native_arithmetic::{dot3, reciprocal_estimate};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,10 +43,10 @@ impl CentreOfMassFilter {
     pub fn update(&mut self, position: [f32; 4], velocity: [f32; 4]) -> CentreOfMassOutput {
         let dt = f32::from_bits(0x3c888889);
         let old_velocity = self.velocity;
-        self.velocity = std::array::from_fn(|i| old_velocity[i].mul_add(0.75, velocity[i] * 0.25));
+        self.velocity = std::array::from_fn(|i| old_velocity[i].fused_mul_add(0.75, velocity[i] * 0.25));
         let mut inverse_dt = reciprocal_estimate(dt);
-        inverse_dt = inverse_dt.mul_add((-dt).mul_add(inverse_dt, 1.0), inverse_dt);
-        inverse_dt = inverse_dt.mul_add((-dt).mul_add(inverse_dt, 1.0), inverse_dt);
+        inverse_dt = inverse_dt.fused_mul_add((-dt).fused_mul_add(inverse_dt, 1.0), inverse_dt);
+        inverse_dt = inverse_dt.fused_mul_add((-dt).fused_mul_add(inverse_dt, 1.0), inverse_dt);
         let acceleration =
             std::array::from_fn(|i| (self.velocity[i] - old_velocity[i]) * inverse_dt);
         if !self.position_valid {
@@ -57,21 +58,21 @@ impl CentreOfMassFilter {
             let unity: [f32; 4] = [1.0, 1.0, 1.0, 0.0];
             self.position_velocity = std::array::from_fn(|i| {
                 (unity[i] - coefficient[i])
-                    .mul_add(self.position_velocity[i], coefficient[i] * velocity[i])
+                    .fused_mul_add(self.position_velocity[i], coefficient[i] * velocity[i])
             });
             let predicted: [f32; 4] =
-                std::array::from_fn(|i| self.position_velocity[i].mul_add(dt, self.position[i]));
+                std::array::from_fn(|i| self.position_velocity[i].fused_mul_add(dt, self.position[i]));
             self.position = std::array::from_fn(|i| {
-                (unity[i] - coefficient[i]).mul_add(predicted[i], coefficient[i] * position[i])
+                (unity[i] - coefficient[i]).fused_mul_add(predicted[i], coefficient[i] * position[i])
             });
             let error = std::array::from_fn(|i| position[i] - self.position[i]);
             if dot3(error, self.accumulated_error) > 0.0 {
                 self.position = std::array::from_fn(|i| {
-                    self.accumulated_error[i].mul_add(0.08, self.position[i])
+                    self.accumulated_error[i].fused_mul_add(0.08, self.position[i])
                 });
             }
             self.accumulated_error = std::array::from_fn(|i| {
-                self.accumulated_error[i].mul_add(0.95, (position[i] - self.position[i]) * 0.05)
+                self.accumulated_error[i].fused_mul_add(0.95, (position[i] - self.position[i]) * 0.05)
             });
         }
         CentreOfMassOutput {

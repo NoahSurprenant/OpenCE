@@ -1,6 +1,7 @@
 //! TU3 Pumping geometry82D8F280 and82D8F4A0..6AC. The reciprocal and
 //! reciprocal-square-root estimate primitives retain their documented host
 //! approximation boundary; source refinements, fused crosses and gates remain.
+use crate::fused::FusedMulAdd as _;
 use super::controller::{PumpingGeometry, PumpingSample};
 use crate::physics::{
     board_motion_output::inverse_length_squared,
@@ -56,14 +57,14 @@ impl PumpingGeometry for NativePumpingGeometry {
 fn reciprocal(value: f32) -> f32 {
     let mut inverse = reciprocal_estimate(value);
     for _ in 0..2 {
-        let error = (-inverse).mul_add(value, 1.0);
-        inverse = inverse.mul_add(error, inverse);
+        let error = (-inverse).fused_mul_add(value, 1.0);
+        inverse = inverse.fused_mul_add(error, inverse);
     }
     inverse
 }
 fn cross(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     let cyclic = [1, 2, 0, 3];
     let product: [f32; 4] =
-        std::array::from_fn(|i| (-a[cyclic[i]]).mul_add(b[i], a[i] * b[cyclic[i]]));
+        std::array::from_fn(|i| (-a[cyclic[i]]).fused_mul_add(b[i], a[i] * b[cyclic[i]]));
     cyclic.map(|i| product[i])
 }

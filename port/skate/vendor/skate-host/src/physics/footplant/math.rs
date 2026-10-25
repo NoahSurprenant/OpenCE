@@ -1,12 +1,13 @@
 //! Original vector operation order from82D6FD60/82D6F5F0/82D70070.
 //! Estimate seeds use independent PC math; Xenon bit equality is unverified.
+use skate_core::fused::FusedMulAdd as _;
 use super::V;
 pub(in crate::physics) const STEP: f32 = f32::from_bits(0x3c888889);
 pub(in crate::physics) fn dot(a: V, b: V) -> f32 {
     (a[0] * b[0] + a[1] * b[1]) + a[2] * b[2]
 }
 pub(in crate::physics) fn cross(a: V, b: V) -> V {
-    [a[1].mul_add(b[2], -a[2]*b[1]), a[2].mul_add(b[0], -a[0]*b[2]), a[0].mul_add(b[1], -a[1]*b[0]), 0.0]
+    [a[1].fused_mul_add(b[2], -a[2]*b[1]), a[2].fused_mul_add(b[0], -a[0]*b[2]), a[0].fused_mul_add(b[1], -a[1]*b[0]), 0.0]
 }
 pub(in crate::physics) fn add(a: V, b: V) -> V {
     std::array::from_fn(|i| a[i] + b[i])
@@ -18,19 +19,19 @@ pub(in crate::physics) fn scale(a: V, s: f32) -> V {
     a.map(|v| v * s)
 }
 pub(in crate::physics) fn madd(a: V, s: f32, b: V) -> V {
-    std::array::from_fn(|i| a[i].mul_add(s, b[i]))
+    std::array::from_fn(|i| a[i].fused_mul_add(s, b[i]))
 }
 pub(in crate::physics) fn reciprocal(s: f32) -> f32 {
     let mut r = s.recip();
     for _ in 0..2 {
-        r = (-s).mul_add(r, 1.0).mul_add(r, r);
+        r = (-s).fused_mul_add(r, 1.0).fused_mul_add(r, r);
     }
     r
 }
 fn rsqrt(s: f32) -> f32 {
     let mut r = s.sqrt().recip();
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-s).mul_add(r * r, 1.0), r);
+        r = (r * 0.5).fused_mul_add((-s).fused_mul_add(r * r, 1.0), r);
     }
     r
 }
@@ -51,16 +52,16 @@ pub(in crate::physics) fn normalize(a: V) -> V {
 }
 pub(in crate::physics) fn point(m: &[V; 4], p: V) -> V {
     std::array::from_fn(|i| {
-        let x = m[0][i].mul_add(p[0], m[3][i]);
-        let y = m[1][i].mul_add(p[1], x);
-        m[2][i].mul_add(p[2], y)
+        let x = m[0][i].fused_mul_add(p[0], m[3][i]);
+        let y = m[1][i].fused_mul_add(p[1], x);
+        m[2][i].fused_mul_add(p[2], y)
     })
 }
 pub(in crate::physics) fn rotate(m: &[V; 4], v: V) -> V {
     std::array::from_fn(|i| {
         let x = m[0][i] * v[0];
-        let y = m[1][i].mul_add(v[1], x);
-        m[2][i].mul_add(v[2], y)
+        let y = m[1][i].fused_mul_add(v[1], x);
+        m[2][i].fused_mul_add(v[2], y)
     })
 }
 pub(in crate::physics) fn clamp_length(v: V, maximum: f32) -> V {

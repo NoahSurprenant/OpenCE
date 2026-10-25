@@ -1,6 +1,7 @@
 //! Original trajectory collision leaf82771D08 and nearby triangle collector
 //!82772028, across the host's world-format boundary. BoardWorld stores static
 //!world-space triangles, so their source geometry transform is identity.
+use skate_core::fused::FusedMulAdd as _;
 use skate_core::{
     air::trajectory::{SurfaceHit, WorldWithoutGrindEdges},
     math::Vector3,
@@ -128,9 +129,9 @@ fn sub(a: Vector, b: Vector) -> Vector {
 }
 fn cross(a: Vector, b: Vector) -> Vector {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.0,
     ]
 }

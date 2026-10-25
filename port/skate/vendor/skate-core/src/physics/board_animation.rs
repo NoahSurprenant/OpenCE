@@ -1,6 +1,7 @@
 //! Original TU3 board error capture82C04368 and animation blend82C01878.
 //! PC arithmetic and the recovered refinements are used; this is not a claim
 //! of instruction-identical Xenon estimates or exceptional-lane execution.
+use crate::fused::FusedMulAdd as _;
 use super::{
     constraint_frames::{basis, reciprocal, reciprocal_sqrt},
     drive_frames::retail_quaternion_from_basis,
@@ -83,9 +84,9 @@ impl BoardAnimation {
             let same_sign = dot4(q, identity) > 0.0;
             let mixed: [f32; 4] = std::array::from_fn(|lane| {
                 if same_sign {
-                    fraction.mul_add(identity[lane] - q[lane], q[lane])
+                    fraction.fused_mul_add(identity[lane] - q[lane], q[lane])
                 } else {
-                    (-(identity[lane] + q[lane])).mul_add(fraction, q[lane])
+                    (-(identity[lane] + q[lane])).fused_mul_add(fraction, q[lane])
                 }
             });
             let inverse = reciprocal_sqrt(dot4(mixed, mixed));
@@ -97,7 +98,7 @@ impl BoardAnimation {
             let inverse = reciprocal(trigonometry::sin(theta));
             let weight_a = a * inverse;
             let weight_b = b * inverse;
-            std::array::from_fn(|lane| identity[lane].mul_add(weight_b, q[lane] * weight_a))
+            std::array::from_fn(|lane| identity[lane].fused_mul_add(weight_b, q[lane] * weight_a))
         };
         self.rotation_error = q;
         //82C01B04..BE0 uses the same sqrt(2) / paired residual basis kernel

@@ -1,4 +1,5 @@
 //! TU3 angular-tracking candidates; exceptional wrap conversion is unavailable.
+use crate::fused::FusedMulAdd as _;
 use super::{ScalarTracker, ScalarTrackerParameters};
 
 /// Angular state has the same six-word layout as the scalar tracker. Angles
@@ -17,7 +18,7 @@ impl AngleTracker {
         }
         let velocity = state.velocity;
         let inverse_dt = 1.0 / dt;
-        state.acceleration = inverse_dt.mul_add(delta, -velocity) * inverse_dt;
+        state.acceleration = inverse_dt.fused_mul_add(delta, -velocity) * inverse_dt;
         let magnitude = delta.abs();
         let fraction = if magnitude < parameters.delta_umbra {
             1.0
@@ -38,7 +39,7 @@ impl AngleTracker {
                 state.acceleration = (state.acceleration / magnitude) * state.acceleration_clamp;
             }
         }
-        state.velocity = state.acceleration.mul_add(dt, velocity);
+        state.velocity = state.acceleration.fused_mul_add(dt, velocity);
         let magnitude = state.velocity.abs();
         if magnitude > parameters.speed_clamp {
             state.velocity = (state.velocity / magnitude) * parameters.speed_clamp;
@@ -77,7 +78,7 @@ pub fn normalize_angle(angle: f32) -> f32 {
     }
     let count = turns as i32;
     let count = count as f32;
-    let reduced = -((count as f64).mul_add(TAU as f64, -(angle as f64))) as f32;
+    let reduced = -((count as f64).fused_mul_add(TAU as f64, -(angle as f64))) as f32;
     if reduced >= PI {
         reduced - TAU
     } else if reduced < NEG_PI {

@@ -1,6 +1,7 @@
 //! BoneDrives::EnableDrive82BECCE0 and mode-five interpolation82BECFB8.
 //! A bone shares its interpolation counter between the LOCAL and LOCAL_ROOT
 //! channels. Dispatch order is therefore observable even within one tick.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::drive_parameters::{RetailDriveDynamics, RetailDriveParams, RetailDriveType};
 
 const FREQUENCY: f32 = f32::from_bits(0x426F_FFFF);
@@ -122,9 +123,9 @@ fn interpolate(settings: DriveInterpolation, strength: f32, progress: f32) -> Re
     // The retained older pseudocode expands them to multiply+add expressions.
     let spring0 = settings.spring[0] * strength;
     let strength0 = settings.strength[0] * strength;
-    let spring = (settings.spring[1] * strength - spring0).mul_add(progress, spring0);
-    let force = (settings.strength[1] * strength - strength0).mul_add(progress, strength0);
-    let damping = (settings.damping[1] - settings.damping[0]).mul_add(progress, settings.damping[0]);
+    let spring = (settings.spring[1] * strength - spring0).fused_mul_add(progress, spring0);
+    let force = (settings.strength[1] * strength - strength0).fused_mul_add(progress, strength0);
+    let damping = (settings.damping[1] - settings.damping[0]).fused_mul_add(progress, settings.damping[0]);
     let nonnegative = |value| if value >= 0.0 { value } else { 0.0 };
     RetailDriveParams {
         spring_or_max_velocity: nonnegative(spring) * FREQUENCY,

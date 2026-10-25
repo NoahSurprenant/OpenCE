@@ -1,5 +1,6 @@
 //! Ground-owned Sync stages. The caller executes returned launch on its ONE
 //! persistent AirSelector before frame correction; no speculative transition.
+use skate_core::fused::FusedMulAdd as _;
 use super::Owner;
 use skate_core::player::offboard::{air_launch, ground_entry::Vector};
 
@@ -42,9 +43,9 @@ impl Owner {
         let frame = motion.animation_frame;
         let point = input.skeleton_point_10960;
         packet.position_32 = std::array::from_fn(|i| {
-            frame[2][i].mul_add(
+            frame[2][i].fused_mul_add(
                 point[2],
-                frame[1][i].mul_add(point[1], frame[0][i].mul_add(point[0], frame[3][i])),
+                frame[1][i].fused_mul_add(point[1], frame[0][i].fused_mul_add(point[0], frame[3][i])),
             )
         });
         Ok(Some(packet))

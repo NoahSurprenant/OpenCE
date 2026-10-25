@@ -1,4 +1,5 @@
 //! SkateboardWobble constructor82BF2E48, trigger82BF2F18, update82BF2FB8.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 #[derive(Clone)]
@@ -94,6 +95,6 @@ pub fn apply(
     ];
     *board = compose_affine(board, &rotation);
     for lane in 0..4 {
-        board[3][lane] = board[1][lane].mul_add(output.squish, board[3][lane]);
+        board[3][lane] = board[1][lane].fused_mul_add(output.squish, board[3][lane]);
     }
 }

@@ -1,3 +1,4 @@
+use skate_core::fused::FusedMulAdd as _;
 use super::{Bounds, EdgeBody, PrimaryEdges, Scene, Segment, transform};
 use skate_core::player::offboard::ground_query::{Edge, EdgeSearch, Frame};
 fn append(output: &mut Vec<Edge>, segments: &[Segment], frame: Frame, query: Bounds) {
@@ -34,7 +35,7 @@ pub(super) fn candidates(scene: &Scene<'_>, search: &EdgeSearch) -> Vec<Edge> {
             for provider in [*dynamic, *vehicles] {
                 for entry in provider {
                     let d = transform::sub(entry.local_to_world.position, center);
-                    let squared = d.z.mul_add(d.z, d.y.mul_add(d.y, d.x * d.x));
+                    let squared = d.z.fused_mul_add(d.z, d.y.fused_mul_add(d.y, d.x * d.x));
                     if squared >= 225. {
                         continue;
                     }

@@ -1,4 +1,5 @@
 //! Andale PhaseBlend, TU3 82D24C40..82D25808; construction 82D1B67C.
+use crate::fused::FusedMulAdd as _;
 use super::{clip_clock::AdvanceResult, output::attributes::{AnimationAttribute, AttributeName, MotionGraphAttribute}, playback_attributes, playback_parameters::SettableAttribute, playback_tree::{Evaluation, PlaybackTree, PoseCommand}};
 
 #[derive(Clone, Debug)]
@@ -32,7 +33,7 @@ impl PhaseBlend {
     }
     fn phase(&self) -> f32 { self.time/if -self.length >= 0.0 {1.0} else {self.length} }
     fn update_length(&mut self, phase: f32) {
-        self.length = self.children[self.right].length().mul_add(self.weight,self.children[self.left].length()*(1.0-self.weight));
+        self.length = self.children[self.right].length().fused_mul_add(self.weight,self.children[self.left].length()*(1.0-self.weight));
         self.set_time(self.length*phase);
     }
     pub fn set_speed(&mut self, speed: f32) {
@@ -77,7 +78,7 @@ impl PhaseBlend {
         }
         let minimum = self.values[self.order[0]];
         let maximum = self.values[*self.order.last().unwrap()];
-        let target = if self.normalized {(maximum-minimum).mul_add(self.parameter_value,minimum)} else {self.parameter_value};
+        let target = if self.normalized {(maximum-minimum).fused_mul_add(self.parameter_value,minimum)} else {self.parameter_value};
         let mut low = 0;
         let mut count = self.order.len();
         while count != 0 {
@@ -120,10 +121,10 @@ impl PhaseBlend {
         let lower = if c-self.weight >= 0.0 {c} else {self.weight};
         let upper = 1.0-c;
         let clamped = if upper-lower >= 0.0 {lower} else {upper};
-        let t = (clamped-c)/(-c).mul_add(2.0,1.0);
+        let t = (clamped-c)/(-c).fused_mul_add(2.0,1.0);
         let square = t*t;
-        let weight = if !(t>0.5) && self.left == self.order[0] {(-t).mul_add(4.0,4.0)*square}
-            else if t>0.5 && self.right == *self.order.last().unwrap() {let four=t*4.0;(8.0-four).mul_add(square,-four)+1.0}
+        let weight = if !(t>0.5) && self.left == self.order[0] {(-t).fused_mul_add(4.0,4.0)*square}
+            else if t>0.5 && self.right == *self.order.last().unwrap() {let four=t*4.0;(8.0-four).fused_mul_add(square,-four)+1.0}
             else {self.weight};
         let left=self.children[self.left].evaluate(parameters,enabled && weight<1.0,output)?;
         let right=self.children[self.right].evaluate(parameters,enabled && weight>0.0,output)?;

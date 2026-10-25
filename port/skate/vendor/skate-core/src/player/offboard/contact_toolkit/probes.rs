@@ -1,4 +1,5 @@
 //! Original descriptors82D856C8 and query geometry82D811C8.
+use crate::fused::FusedMulAdd as _;
 use super::{Vector, cross};
 use crate::air::trajectory::{QueryRequest, Trajectory};
 
@@ -172,9 +173,9 @@ impl ProbeLayout {
 fn transform(line: LineProbe, frame: [Vector; 4]) -> LineProbe {
     let point = |v: Vector| {
         std::array::from_fn(|i| {
-            frame[2][i].mul_add(
+            frame[2][i].fused_mul_add(
                 v[2],
-                frame[1][i].mul_add(v[1], frame[0][i].mul_add(v[0], frame[3][i])),
+                frame[1][i].fused_mul_add(v[1], frame[0][i].fused_mul_add(v[0], frame[3][i])),
             )
         })
     };

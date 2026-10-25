@@ -1,5 +1,6 @@
 //! Native record reduction82D830A8. Marks discarded distances, invokes the
 //! native sort and truncates to the retained count; neighbors are not rewritten.
+use crate::fused::FusedMulAdd as _;
 use super::{
     contact_queries::Input,
     contact_records::Record,
@@ -47,10 +48,10 @@ pub fn simplify(input: Input, records: &mut Vec<Record>) -> Reduction {
                 let a = incoming.map(|v| v * reciprocal(in_length));
                 let b = outgoing.map(|v| v * reciprocal(out_length));
                 let cross = [
-                    (-a[2]).mul_add(b[1], a[1] * b[2]),
-                    (-a[0]).mul_add(b[2], a[2] * b[0]),
-                    (-a[1]).mul_add(b[0], a[0] * b[1]),
-                    (-a[3]).mul_add(b[3], a[3] * b[3]),
+                    (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+                    (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+                    (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+                    (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
                 ];
                 remove = !(length_inverse(cross).0 >= f32::from_bits(0x3d4c_cccd));
             }

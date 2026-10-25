@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use crate::physics::world_contact::{FeaturePrism, MaximumFeature, prism_math::*};
 
 /// TU3 82ACCEF0. The quad owns the outer edge-intersection loop even when it is
@@ -53,7 +54,7 @@ fn append(
 // The contained-vertex passes use lane-wise multiply/FMA operations, with a
 // rounded Y product followed by X and Z FMAs, instead of the VMX three-lane dot.
 fn containment_dot(delta: V, normal: V) -> f32 {
-    delta[2].mul_add(normal[2], delta[0].mul_add(normal[0], delta[1] * normal[1]))
+    delta[2].fused_mul_add(normal[2], delta[0].fused_mul_add(normal[0], delta[1] * normal[1]))
 }
 
 fn intersect(

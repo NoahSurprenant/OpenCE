@@ -1,4 +1,5 @@
 //! Original Wipeout alignment82D3C770: Euler X/Y degrees -> rotated up axis.
+use crate::fused::FusedMulAdd as _;
 use super::math::{self, V};
 use crate::trigonometry::sin_cos;
 
@@ -12,9 +13,9 @@ pub fn alignment_up(x_degrees: f32, y_degrees: f32) -> V {
     let sxsz = sx * sz;
     let cxsz = cx * sz;
     //82D3C8B0 word114D4AAE: D10=A13*C10+B9, not A13*B9+C10.
-    let qy = cy.mul_add(sxsz, sy * cxcz);
+    let qy = cy.fused_mul_add(sxsz, sy * cxcz);
     //82D3C8B4 word11AD42EE: D13=A13*C11+B8.
-    let qw = cy.mul_add(cxcz, sy * sxsz);
+    let qw = cy.fused_mul_add(cxcz, sy * sxsz);
     let qz = cy * cxsz - sy * sxcz;
     let qx = cy * sxcz - sy * cxsz;
     rotate([qx, qy, qz, qw], [0.0, 1.0, 0.0, 0.0])

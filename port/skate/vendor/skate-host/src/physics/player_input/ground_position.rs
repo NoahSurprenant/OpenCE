@@ -1,6 +1,7 @@
 //! Ground-position observation from TU3 Skateboard::CalculateGroundPosition
 //! 82C02840. The four wheel rigid-body centres are expressed in Reckoning752,
 //! averaged laterally/longitudinally, and placed at the lowest wheel centre.
+use skate_core::fused::FusedMulAdd as _;
 use skate_core::physics::{
     board_runtime::BoardRuntime, skeleton_animation_record::AnimationPartTransform,
 };
@@ -43,8 +44,8 @@ fn wheel_ground_position(wheels: [[f32; 4]; 4], ground: &AnimationPartTransform)
 fn rotate(basis: &[[f32; 4]; 3], point: [f32; 4]) -> [f32; 4] {
     std::array::from_fn(|i| {
         let x = basis[0][i] * point[0];
-        let xy = basis[1][i].mul_add(point[1], x);
-        basis[2][i].mul_add(point[2], xy)
+        let xy = basis[1][i].fused_mul_add(point[1], x);
+        basis[2][i].fused_mul_add(point[2], xy)
     })
 }
 

@@ -1,5 +1,6 @@
 //! TU3 rig-to-positioner operation82E037F0. Authored settings and the subject
 //! adapter are inputs; the world provider retains the positioner's six-line ABI.
+use crate::fused::FusedMulAdd as _;
 use super::{
     AngularRigTracking, Positioner, PositionerCollisionProvider, PositionerConfig, RigFraming,
 };
@@ -84,7 +85,7 @@ impl RigPositioning {
         let first = subject.position_360(3);
         let second = subject.position_360(0);
         let third = subject.position_360(7);
-        let third = core::array::from_fn(|i| up[i].mul_add(f32::from_bits(0x3e19999a), third[i]));
+        let third = core::array::from_fn(|i| up[i].fused_mul_add(f32::from_bits(0x3e19999a), third[i]));
         let config = PositionerConfig {
             anchor,
             offset: framing.offset,
@@ -158,7 +159,7 @@ impl RigPositioning {
 /// Complete82DF3410: wrap delta, fused interpolation, then wrap result.
 fn blend_angle(current: f32, target: f32, weight: f32) -> f32 {
     super::rig_tracking::wrap_vmx(
-        weight.mul_add(super::rig_tracking::wrap_vmx(target - current), current),
+        weight.fused_mul_add(super::rig_tracking::wrap_vmx(target - current), current),
     )
 }
 fn clamp_elevation(value: f32) -> f32 {

@@ -1,5 +1,6 @@
 //! Andale BlendSpace82D22DA0..82D24B90. Authored simplex planes, original
 //! scalar selection82D23A50 and phase-coupled child clocks; no fitted metric.
+use crate::fused::FusedMulAdd as _;
 use super::{
     AdvanceResult, AnimationAttribute, AttributeName, Evaluation, PlaybackTree, PoseCommand,
     SettableAttribute,
@@ -23,9 +24,9 @@ impl Simplex {
                 let mut odd = 0.0;
                 let pairs = point.len() / 2;
                 for j in 0..pairs {
-                    even = self.normals[i][j * 2].mul_add(point[j * 2] - anchor[j * 2], even);
+                    even = self.normals[i][j * 2].fused_mul_add(point[j * 2] - anchor[j * 2], even);
                     odd = self.normals[i][j * 2 + 1]
-                        .mul_add(point[j * 2 + 1] - anchor[j * 2 + 1], odd);
+                        .fused_mul_add(point[j * 2 + 1] - anchor[j * 2 + 1], odd);
                 }
                 let mut dot = even + odd;
                 if point.len() % 2 != 0 {
@@ -67,7 +68,7 @@ impl Simplex {
                             a[1..]
                                 .iter()
                                 .zip(&b[1..])
-                                .map(|(&a, &b)| (b - a).mul_add(t, a))
+                                .map(|(&a, &b)| (b - a).fused_mul_add(t, a))
                                 .collect(),
                         );
                     }
@@ -153,7 +154,7 @@ impl BlendSpace {
     }
     pub fn length(&self) -> f32 {
         self.active_weights()
-            .fold(0., |sum, (i, w)| w.mul_add(self.children[i].length(), sum))
+            .fold(0., |sum, (i, w)| w.fused_mul_add(self.children[i].length(), sum))
     }
     pub fn set_time(&mut self, time: f32) {
         let phase = time / self.length();
@@ -225,8 +226,8 @@ impl BlendSpace {
                     .vertices
                     .iter()
                     .zip(&weights)
-                    .fold(0., |sum, (v, &w)| v[j].mul_add(w, sum));
-                distance = (projected - target).mul_add(projected - target, distance);
+                    .fold(0., |sum, (v, &w)| v[j].fused_mul_add(w, sum));
+                distance = (projected - target).fused_mul_add(projected - target, distance);
             }
             if distance < closest {
                 closest = distance;

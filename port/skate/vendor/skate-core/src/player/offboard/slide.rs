@@ -1,4 +1,5 @@
 //! Biped special-mode latch82D7C8E8 and sliding velocity82D7CC18.
+use crate::fused::FusedMulAdd as _;
 use super::contact_correction::{clamp_length, inverse_length, magnitude};
 use crate::{physics::native_arithmetic::dot3, point_graph::PointGraph};
 type Vector = [f32; 4];
@@ -57,7 +58,7 @@ impl Sliding {
         //82F82588 initializes830BD400 by splatting822F8B40 (-9.8).
         let acceleration = clamp_length(downhill.map(|v| v * (f32::from_bits(0xc11c_cccd) * factor)), 5.0);
         self.velocity_528 = std::array::from_fn(|i| {
-            acceleration[i].mul_add(f32::from_bits(0x3d4c_cccd), self.velocity_528[i] * 0.95)
+            acceleration[i].fused_mul_add(f32::from_bits(0x3d4c_cccd), self.velocity_528[i] * 0.95)
         });
         let threshold = f32::from_bits(0x3c23_d70b);
         if threshold > dot3(acceleration, acceleration) {

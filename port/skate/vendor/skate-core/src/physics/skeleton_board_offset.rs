@@ -1,5 +1,6 @@
 //! Complete Skeleton::UpdateSkateboardOffsetTransform82BDD630 and
 //! SkeletonIK::AddOffsetTransform82BF1C68. Counters are animation updates.
+use crate::fused::FusedMulAdd as _;
 use super::{
     board_motion_output::inverse_length_squared,
     native_arithmetic::dot3,
@@ -60,7 +61,7 @@ impl SkateboardOffset {
                 let identity_weight = 1.0 - weight;
                 for (axis, identity) in IDENTITY.iter().enumerate().take(3) {
                     for (lane, value) in self.transform[axis].iter_mut().enumerate() {
-                        *value = value.mul_add(weight, identity[lane] * identity_weight);
+                        *value = value.fused_mul_add(weight, identity[lane] * identity_weight);
                     }
                 }
                 // vrlimi mask4 retains Y. X/Z/W belong to orientation decay.

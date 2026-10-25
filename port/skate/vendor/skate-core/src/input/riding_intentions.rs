@@ -1,5 +1,6 @@
 //! Push, brake, body-spin, steering, kick-turn, crouch, powerslide and world-grab intents
 //! from the TU3 ActionGraph input listener (`825999F0`).
+use crate::fused::FusedMulAdd as _;
 use super::{
     angle::left_stick_angle,
     controller::{DerivedControllerInput, magnitude},
@@ -43,7 +44,7 @@ pub fn produce(
     } else {
         -f32::from_bits(0x40490fdb) - angle
     };
-    let length = magnitude(left[1].mul_add(left[1], left[0] * left[0]));
+    let length = magnitude(left[1].fused_mul_add(left[1], left[0] * left[0]));
     if preferences.automatic_push_enabled
         && allowed
         && !(right || left_push || new_right || new_left)

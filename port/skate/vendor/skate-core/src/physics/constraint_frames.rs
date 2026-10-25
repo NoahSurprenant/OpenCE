@@ -1,6 +1,7 @@
 //! Original TU3 constraint-frame arithmetic shared by joint and drive builders.
 //! 82AE0DB0 constructs quaternion-component rows directly from bilinear products.
 //! The builders compose frames and construct bases without normalizing inputs.
+use crate::fused::FusedMulAdd as _;
 use super::{
     native_arithmetic,
     rigid_body::{RetailPackedWorldInverseInertia, RetailQuaternion},
@@ -64,9 +65,9 @@ pub(crate) fn quaternion_rows(a: RetailQuaternion, b: RetailQuaternion) -> Quate
 pub(crate) fn compose(a: RetailQuaternion, b: RetailQuaternion) -> RetailQuaternion {
     let cross = cross(Vector3::new(a.x, a.y, a.z), Vector3::new(b.x, b.y, b.z));
     RetailQuaternion {
-        x: a.x.mul_add(b.w, b.x.mul_add(a.w, cross.x)),
-        y: a.y.mul_add(b.w, b.y.mul_add(a.w, cross.y)),
-        z: a.z.mul_add(b.w, b.z.mul_add(a.w, cross.z)),
+        x: a.x.fused_mul_add(b.w, b.x.fused_mul_add(a.w, cross.x)),
+        y: a.y.fused_mul_add(b.w, b.y.fused_mul_add(a.w, cross.y)),
+        z: a.z.fused_mul_add(b.w, b.z.fused_mul_add(a.w, cross.z)),
         w: a.w * b.w - native_arithmetic::dot3([a.x, a.y, a.z, 0.0], [b.x, b.y, b.z, 0.0]),
     }
 }
@@ -81,9 +82,9 @@ pub(crate) fn basis(q: RetailQuaternion) -> Basis3 {
     let y = q.y * root_two;
     let z = q.z * root_two;
     let w = q.w * root_two;
-    let dx = (-x).mul_add(x, 0.5);
-    let dy = (-y).mul_add(y, 0.5);
-    let dz = (-z).mul_add(z, 0.5);
+    let dx = (-x).fused_mul_add(x, 0.5);
+    let dy = (-y).fused_mul_add(y, 0.5);
+    let dz = (-z).fused_mul_add(z, 0.5);
     let xy = x * y;
     let yz = y * z;
     let zx = z * x;
@@ -102,17 +103,17 @@ pub(crate) fn basis(q: RetailQuaternion) -> Basis3 {
 pub(crate) fn transform_direction(b: Basis3, v: Vector3) -> Vector3 {
     let c = b.columns;
     Vector3::new(
-        c[2][0].mul_add(v.z, c[1][0].mul_add(v.y, c[0][0] * v.x)),
-        c[2][1].mul_add(v.z, c[1][1].mul_add(v.y, c[0][1] * v.x)),
-        c[2][2].mul_add(v.z, c[1][2].mul_add(v.y, c[0][2] * v.x)),
+        c[2][0].fused_mul_add(v.z, c[1][0].fused_mul_add(v.y, c[0][0] * v.x)),
+        c[2][1].fused_mul_add(v.z, c[1][1].fused_mul_add(v.y, c[0][1] * v.x)),
+        c[2][2].fused_mul_add(v.z, c[1][2].fused_mul_add(v.y, c[0][2] * v.x)),
     )
 }
 
 pub(crate) fn cross(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(
-        (-a.z).mul_add(b.y, a.y * b.z),
-        (-a.x).mul_add(b.z, a.z * b.x),
-        (-a.y).mul_add(b.x, a.x * b.y),
+        (-a.z).fused_mul_add(b.y, a.y * b.z),
+        (-a.x).fused_mul_add(b.z, a.z * b.x),
+        (-a.y).fused_mul_add(b.x, a.x * b.y),
     )
 }
 
@@ -120,27 +121,27 @@ pub(crate) fn cross(a: Vector3, b: Vector3) -> Vector3 {
 pub(crate) fn point_rate(linear: Vector3, angular: Vector3, arm: Vector3) -> Vector3 {
     Vector3::new(
         arm.z
-            .mul_add(angular.y, (-arm.y).mul_add(angular.z, linear.x)),
+            .fused_mul_add(angular.y, (-arm.y).fused_mul_add(angular.z, linear.x)),
         arm.x
-            .mul_add(angular.z, (-arm.z).mul_add(angular.x, linear.y)),
+            .fused_mul_add(angular.z, (-arm.z).fused_mul_add(angular.x, linear.y)),
         arm.y
-            .mul_add(angular.x, (-arm.x).mul_add(angular.y, linear.z)),
+            .fused_mul_add(angular.x, (-arm.x).fused_mul_add(angular.y, linear.z)),
     )
 }
 
 pub(crate) fn multiply_add(v: Vector3, scalar: f32, addend: Vector3) -> Vector3 {
     Vector3::new(
-        v.x.mul_add(scalar, addend.x),
-        v.y.mul_add(scalar, addend.y),
-        v.z.mul_add(scalar, addend.z),
+        v.x.fused_mul_add(scalar, addend.x),
+        v.y.fused_mul_add(scalar, addend.y),
+        v.z.fused_mul_add(scalar, addend.z),
     )
 }
 
 pub(crate) fn reciprocal(value: f32) -> f32 {
     let mut r = native_arithmetic::reciprocal_estimate(value);
     for _ in 0..2 {
-        let residual = (-r).mul_add(value, 1.0);
-        r = r.mul_add(residual, r);
+        let residual = (-r).fused_mul_add(value, 1.0);
+        r = r.fused_mul_add(residual, r);
     }
     r
 }
@@ -150,8 +151,8 @@ pub(crate) fn reciprocal_sqrt(value: f32) -> f32 {
     for _ in 0..2 {
         let squared = r * r;
         let half = r * 0.5;
-        let residual = (-value).mul_add(squared, 1.0);
-        r = half.mul_add(residual, r);
+        let residual = (-value).fused_mul_add(squared, 1.0);
+        r = half.fused_mul_add(residual, r);
     }
     r
 }
@@ -174,17 +175,17 @@ pub(crate) fn multiply_inertia_from_zero(
         t,
         v,
         Vector3::new(
-            t.full.x.mul_add(v.x, 0.0),
-            t.full.y.mul_add(v.x, 0.0),
-            t.full.z.mul_add(v.x, 0.0),
+            t.full.x.fused_mul_add(v.x, 0.0),
+            t.full.y.fused_mul_add(v.x, 0.0),
+            t.full.z.fused_mul_add(v.x, 0.0),
         ),
     )
 }
 
 fn inertia_tail(t: RetailPackedWorldInverseInertia, v: Vector3, first: Vector3) -> Vector3 {
     Vector3::new(
-        t.full.z.mul_add(v.z, t.full.y.mul_add(v.y, first.x)),
-        t.split.z.mul_add(v.z, t.split.y.mul_add(v.y, first.y)),
-        t.split.x.mul_add(v.z, t.split.z.mul_add(v.y, first.z)),
+        t.full.z.fused_mul_add(v.z, t.full.y.fused_mul_add(v.y, first.x)),
+        t.split.z.fused_mul_add(v.z, t.split.y.fused_mul_add(v.y, first.y)),
+        t.split.x.fused_mul_add(v.z, t.split.z.fused_mul_add(v.y, first.z)),
     )
 }

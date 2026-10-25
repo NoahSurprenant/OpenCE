@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::{Frame, Requests, Settings};
 use crate::physics::{board_motion_output::inverse_length_squared, native_arithmetic::dot3};
 pub(super) fn length(v: [f32; 4]) -> f32 {
@@ -42,7 +43,7 @@ pub(super) fn closing(state: &mut Requests, f: &Frame, xz: f32, y: f32) {
     let v = f.closing_velocity;
     let m = f.world_to_animation;
     let local: [f32; 4] =
-        std::array::from_fn(|i| m[2][i].mul_add(v[2], m[1][i].mul_add(v[1], m[0][i] * v[0])));
+        std::array::from_fn(|i| m[2][i].fused_mul_add(v[2], m[1][i].fused_mul_add(v[1], m[0][i] * v[0])));
     if length([local[0], 0.0, local[2], local[3]]) > xz || local[1].abs() > y {
         state.request(2, 0.0);
         if force(f, 1.0, 20.0) {

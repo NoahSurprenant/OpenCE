@@ -4,6 +4,7 @@
 //! path.  The listener publishes both grab variants every tick; the authored
 //! ActionGraph/MotionGraph decides which one is legal for the current stance.
 
+use crate::fused::FusedMulAdd as _;
 use super::controller::DerivedControllerInput;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,7 +71,7 @@ pub fn produce(controller: &DerivedControllerInput) -> Vec<TrickIntent> {
     // 82599B08..BB4: v125 = -RStickY is the denominator and v126 =
     // RStickX is the numerator. The quadrant correction also tests -RStickY.
     // This is atan2(RStickX, -RStickY), in that argument order.
-    let board_adjust_magnitude = (right_x.mul_add(right_x, right_y * right_y)).sqrt();
+    let board_adjust_magnitude = (right_x.fused_mul_add(right_x, right_y * right_y)).sqrt();
     if board_adjust_magnitude > 0.0 {
         emit("BoardAdjustAngle", right_x.atan2(-right_y));
         emit("BoardAdjustMag", board_adjust_magnitude);

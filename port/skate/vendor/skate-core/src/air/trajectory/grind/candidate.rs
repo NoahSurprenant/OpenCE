@@ -1,4 +1,5 @@
 //! Original S3 82D60C80/82D60B98/82D6A398/82D6A168.
+use crate::fused::FusedMulAdd as _;
 use super::*;
 
 ///82C1F310 after provider traversal; pairwise rejection preserves global order.
@@ -144,7 +145,7 @@ fn folded_approach_angle(a: Vector, b: Vector, normal: Vector) -> f32 {
     if aa > f32::from_bits(0x38d1_b717) && bb > f32::from_bits(0x38d1_b717) {
         let unit = |v, square| {
             let r = crate::physics::native_arithmetic::reciprocal_square_root_estimate(square);
-            scale(v, (r * 0.5).mul_add((-square).mul_add(r * r, 1.0), r))
+            scale(v, (r * 0.5).fused_mul_add((-square).fused_mul_add(r * r, 1.0), r))
         };
         if dot(cross(unit(a, aa), unit(b, bb)), normal) < 0.0 {
             angle = f32::from_bits(0x40c9_0fdb) - angle;

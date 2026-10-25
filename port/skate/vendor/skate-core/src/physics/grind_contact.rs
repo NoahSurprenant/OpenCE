@@ -1,5 +1,6 @@
 //! Native grind contact leaf82C1E2C8. This is distinct from the tolerant wheel
 //! triangle query: exact parallel rejection and closed segment/barycentric bounds.
+use crate::fused::FusedMulAdd as _;
 use super::native_arithmetic::dot3;
 type V = [f32; 4];
 #[path = "grind_contact/families.rs"]
@@ -234,7 +235,7 @@ pub fn truck_contacts(
     let [right, up, forward, position] = board;
     //821659F8 /8208EA7C: the probe starts .02 below the board and extends
     //another .20 down its local up axis. Do not substitute world vertical.
-    let centre = core::array::from_fn(|i| up[i].mul_add(-0.02, position[i]));
+    let centre = core::array::from_fn(|i| up[i].fused_mul_add(-0.02, position[i]));
     let side = scale(right, truck_to_wheel);
     let along = scale(forward, deck_center_to_truck);
     let down = scale(up, -0.2);
@@ -292,7 +293,7 @@ pub fn segment_triangle(start: V, end: V, triangle: [V; 3]) -> Option<V> {
     if u + v > 1.0 || u < 0.0 || v < 0.0 {
         return None;
     }
-    Some(core::array::from_fn(|i| direction[i].mul_add(t, start[i])))
+    Some(core::array::from_fn(|i| direction[i].fused_mul_add(t, start[i])))
 }
 
 fn sub(a: V, b: V) -> V {
@@ -306,9 +307,9 @@ fn scale(a: V, s: f32) -> V {
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.0,
     ]
 }

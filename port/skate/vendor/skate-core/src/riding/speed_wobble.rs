@@ -1,6 +1,7 @@
 //! Complete TU3 SpeedWobble::CalculateSpeedWobble (82C0DBE8).
 //! UpdateSpeedWobble 82C03638 supplies the selected-mode attributes and body
 //! inputs; Ground Update 82D38800 applies the returned tilt before truck targets.
+use crate::fused::FusedMulAdd as _;
 use crate::{point_graph::PointGraph, trigonometry::sin};
 
 #[derive(Clone, Copy, Debug)]
@@ -60,7 +61,7 @@ pub fn calculate(
     let height = (input.center_of_mass_height - settings.height_min)
         / (settings.height_max - settings.height_min);
     let crouch = unit(1.0 - height);
-    let threshold = crouch.mul_add(
+    let threshold = crouch.fused_mul_add(
         settings.crouch_threshold,
         settings.tightness_threshold * input.truck_tightness,
     ) + input.activation_threshold;
@@ -80,7 +81,7 @@ pub fn calculate(
         * settings.frequency_scale;
     let amplitude = settings.amplitude_speed.evaluate(speed_fraction)
         * settings.amplitude_time.evaluate(time_fraction);
-    let phase = frequency.mul_add(f32::from_bits(0x3DD6_7751), f32::from_bits(state.0[4]));
+    let phase = frequency.fused_mul_add(f32::from_bits(0x3DD6_7751), f32::from_bits(state.0[4]));
     let scale = (settings.amplitude_scale * amplitude) * input.amplitude_multiplier;
     let displacement = sin(phase) * scale;
     state.0[0] = (time + f32::from_bits(0x3C88_8889)).to_bits();

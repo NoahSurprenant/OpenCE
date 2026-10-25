@@ -3,6 +3,7 @@
 //! Embed this state once in Biped; callers supply actual movement/animation input.
 //! PC floating-point arithmetic is not proven bit-exact Xenon arithmetic.
 
+use crate::fused::FusedMulAdd as _;
 const DT: f32 = f32::from_bits(0x3c888889);
 const EPSILON: f32 = f32::from_bits(0x3a83126f);
 type Vector = [f32; 3];
@@ -99,10 +100,10 @@ impl BipedCadence {
             if horizontal_length > EPSILON {
                 //82D80A58..AA8 transposes rows, then accumulates x, y, z.
                 let local = input.frame_rows_0_16_32.map(|row| {
-                    row[2].mul_add(motion[2], row[1].mul_add(motion[1], row[0] * motion[0]))
+                    row[2].fused_mul_add(motion[2], row[1].fused_mul_add(motion[1], row[0] * motion[0]))
                 });
                 let projection = (1.0 / horizontal_length) * dot(local, horizontal);
-                magnitude = square_root(local[1].mul_add(local[1], projection * projection));
+                magnitude = square_root(local[1].fused_mul_add(local[1], projection * projection));
             }
             let animation_length = length(animation);
             self.phase.rate = if animation_length < EPSILON {
@@ -183,7 +184,7 @@ impl BipedPhase {
     ///82D7AD90: this fixed retail phase step is also used by Biped Air.
     pub fn advance(&mut self) {
         if self.target < 0.0 {
-            let next = self.rate.mul_add(DT, self.phase);
+            let next = self.rate.fused_mul_add(DT, self.phase);
             self.phase = next - next.floor();
         } else if self.forward_target {
             if self.phase == self.target {
@@ -195,7 +196,7 @@ impl BipedPhase {
                 self.target
             };
             let old = self.phase;
-            let next = self.rate.mul_add(DT, old);
+            let next = self.rate.fused_mul_add(DT, old);
             self.phase = if old < goal && next >= goal {
                 self.target
             } else {
@@ -265,7 +266,7 @@ fn wrap(lower: f32, value: f32, upper: f32) -> f32 {
     } else {
         0
     };
-    clamp((upper - lower).mul_add(count as f32, value), lower, upper)
+    clamp((upper - lower).fused_mul_add(count as f32, value), lower, upper)
 }
 
 fn select(test: f32, positive: f32, negative: f32) -> f32 {
@@ -292,7 +293,7 @@ fn square_root(squared: f32) -> f32 {
     // Independent PC seed. Preserve both original refinement steps and zero select.
     let mut inverse = squared.sqrt().recip();
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-squared).mul_add(inverse * inverse, 1.0), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-squared).fused_mul_add(inverse * inverse, 1.0), inverse);
     }
     let result = squared * inverse;
     if squared == 0.0 { 0.0 } else { result }

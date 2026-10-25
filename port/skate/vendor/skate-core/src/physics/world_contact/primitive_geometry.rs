@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::super::{PrimitiveKind, prism_math::*};
 use crate::{
     math::{Basis3, Vector3},
@@ -95,7 +96,7 @@ pub fn transform_triangle_volume(
 }
 fn refined_inverse(squared: f32) -> f32 {
     let seed = estimate(squared);
-    (seed * 0.5).mul_add((-squared).mul_add(seed * seed, 1.0), seed)
+    (seed * 0.5).fused_mul_add((-squared).fused_mul_add(seed * seed, 1.0), seed)
 }
 
 pub(in super::super) fn pack(shape: ContactPrimitive) -> ([u32; 48], PrimitiveKind) {

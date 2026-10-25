@@ -1,6 +1,7 @@
 //! Animation-record COM producer82BEBF88 and mass normalization82BEBAA8.
 //! Skeleton embeds this source state at6464, so com_to_deck_world4544 is the
 //! ProcessData82BD8918 input published from Skeleton11008 to Processed752.
+use crate::fused::FusedMulAdd as _;
 use super::rigid_body::{RetailQuaternion, basis_from_quaternion};
 use crate::math::Vector3;
 
@@ -52,8 +53,8 @@ pub fn map_animation_parts(
             } else {
                 std::array::from_fn(|lane| {
                     let x = physics[column][0] * animation[0][lane];
-                    let y = physics[column][1].mul_add(animation[1][lane], x);
-                    physics[column][2].mul_add(animation[2][lane], y)
+                    let y = physics[column][1].fused_mul_add(animation[1][lane], x);
+                    physics[column][2].fused_mul_add(animation[2][lane], y)
                 })
             }
         })
@@ -153,7 +154,7 @@ impl SkeletonAnimationRecord {
         let mut com = [0.0f32; 4];
         for (part, weight) in self.pose.iter().zip(masses.fractional) {
             for (lane, value) in com.iter_mut().enumerate() {
-                *value = part[3][lane].mul_add(weight, *value);
+                *value = part[3][lane].fused_mul_add(weight, *value);
             }
         }
         self.centre_of_mass_delta = std::array::from_fn(|i| com[i] - self.centre_of_mass[i]);
@@ -176,9 +177,9 @@ impl SkeletonAnimationRecord {
 }
 pub fn transform_point(transform: &AnimationPartTransform, point: [f32; 4]) -> [f32; 4] {
     std::array::from_fn(|i| {
-        let x = transform[0][i].mul_add(point[0], transform[3][i]);
-        let y = transform[1][i].mul_add(point[1], x);
-        transform[2][i].mul_add(point[2], y)
+        let x = transform[0][i].fused_mul_add(point[0], transform[3][i]);
+        let y = transform[1][i].fused_mul_add(point[1], x);
+        transform[2][i].fused_mul_add(point[2], y)
     })
 }
 
@@ -197,8 +198,8 @@ pub fn compose_affine(
         } else {
             std::array::from_fn(|lane| {
                 let x = child[column][0] * parent[0][lane];
-                let y = child[column][1].mul_add(parent[1][lane], x);
-                child[column][2].mul_add(parent[2][lane], y)
+                let y = child[column][1].fused_mul_add(parent[1][lane], x);
+                child[column][2].fused_mul_add(parent[2][lane], y)
             })
         }
     })

@@ -1,4 +1,5 @@
 //! Complete TU3 framing82E03560 and subject-driven mode selection82E053E0.
+use crate::fused::FusedMulAdd as _;
 use super::{AngularRigTracking, Positioner, direction_to_angles};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,7 +28,7 @@ impl RigFraming {
         }
         let mut camera = positioner.position;
         if positioner.flags & 0x80 == 0 {
-            camera = core::array::from_fn(|i| positioner.velocity[i].mul_add(dt, camera[i]));
+            camera = core::array::from_fn(|i| positioner.velocity[i].fused_mul_add(dt, camera[i]));
         }
         let mut anchor = tracked_anchor;
         anchor[1] = self.reference_height;
@@ -35,7 +36,7 @@ impl RigFraming {
         let square = super::vector_tracker::dot(delta, delta);
         let mut inverse = crate::physics::reciprocal_sqrt::estimate(square);
         for _ in 0..2 {
-            inverse = (inverse * 0.5).mul_add((-square).mul_add(inverse * inverse, 1.0), inverse);
+            inverse = (inverse * 0.5).fused_mul_add((-square).fused_mul_add(inverse * inverse, 1.0), inverse);
         }
         let magnitude = if square == 0.0 { 0.0 } else { square * inverse };
         let direction = core::array::from_fn(|i| {

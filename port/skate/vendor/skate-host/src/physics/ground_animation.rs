@@ -1,4 +1,5 @@
 //! GroundAnimation103 lifecycle82D33BF8/33DB8/33C70/34150, original Skate3TU3.
+use skate_core::fused::FusedMulAdd as _;
 mod board;
 mod settings;
 mod skeleton;
@@ -73,7 +74,7 @@ pub(crate) fn exit(physics: &mut GamePhysics, skater: &mut SkaterRuntime) -> Res
     if skater.ground_animation.jump.active {
         let p = &skater.player_input.processed;
         let mut reference = skater.ground_animation.jump.velocity;
-        reference[1] = p.gravity_2648.mul_add(p.timestep_2604, reference[1]);
+        reference[1] = p.gravity_2648.fused_mul_add(p.timestep_2604, reference[1]);
         let velocity = skate_core::air::state::clamp_jump_velocity(
             reference,
             p.vectors_400_416[0].map(f32::from_bits),

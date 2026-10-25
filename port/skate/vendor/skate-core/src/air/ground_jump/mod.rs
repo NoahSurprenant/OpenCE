@@ -1,5 +1,6 @@
 //! GroundAnimation's Toolkit_CalcGroundJump, original TU3 82D93618.
 //! Stock graph values and live animation/physical inputs determine launch.
+use crate::fused::FusedMulAdd as _;
 mod math;
 mod types;
 use crate::{
@@ -41,16 +42,16 @@ pub fn calculate(
             mode.minimum_height_68
         };
         let speed_fraction = clamp(input.surface_speed / s.speed_response_max_speed, 0.0, 1.0);
-        let low = s.minimum_height_vs_speed.evaluate(speed_fraction).mul_add(
+        let low = s.minimum_height_vs_speed.evaluate(speed_fraction).fused_mul_add(
             minimum - s.absolute_minimum_height,
             s.absolute_minimum_height,
         );
-        let high = s.maximum_height_vs_speed.evaluate(speed_fraction).mul_add(
+        let high = s.maximum_height_vs_speed.evaluate(speed_fraction).fused_mul_add(
             if hippy { s.hippy_maximum_height } else { mode.maximum_height }
                 - s.absolute_minimum_height,
             s.absolute_minimum_height,
         );
-        let height = low.mul_add(1.0 - input.jump_strength, high * input.jump_strength);
+        let height = low.fused_mul_add(1.0 - input.jump_strength, high * input.jump_strength);
         let current_height = dot(
             sub(
                 input.animation_com_position,

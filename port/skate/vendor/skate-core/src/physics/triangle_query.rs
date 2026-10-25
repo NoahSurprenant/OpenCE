@@ -1,6 +1,7 @@
 //! Native triangle segment queries used by wheel probes and camera sweeps.
 //! Thin test82AC7858 and dispatcher82ADF5D8, TU3. The world owns candidate
 //! storage; these routines retain the source winding, tolerances and arithmetic.
+use crate::fused::FusedMulAdd as _;
 use super::native_arithmetic;
 use crate::math::Vector3;
 
@@ -98,22 +99,22 @@ pub(super) fn scale(v: Vector3, scale: f32) -> Vector3 {
 }
 pub(super) fn madd(a: Vector3, scale: f32, b: Vector3) -> Vector3 {
     Vector3::new(
-        a.x.mul_add(scale, b.x),
-        a.y.mul_add(scale, b.y),
-        a.z.mul_add(scale, b.z),
+        a.x.fused_mul_add(scale, b.x),
+        a.y.fused_mul_add(scale, b.y),
+        a.z.fused_mul_add(scale, b.z),
     )
 }
 pub(super) fn cross(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(
-        (-a.z).mul_add(b.y, a.y * b.z),
-        (-a.x).mul_add(b.z, a.z * b.x),
-        (-a.y).mul_add(b.x, a.x * b.y),
+        (-a.z).fused_mul_add(b.y, a.y * b.z),
+        (-a.x).fused_mul_add(b.z, a.z * b.x),
+        (-a.y).fused_mul_add(b.x, a.x * b.y),
     )
 }
 pub(super) fn inverse_length(squared: f32) -> f32 {
     let mut inverse = native_arithmetic::reciprocal_square_root_estimate(squared);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-squared).mul_add(inverse * inverse, 1.0), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-squared).fused_mul_add(inverse * inverse, 1.0), inverse);
     }
     inverse
 }

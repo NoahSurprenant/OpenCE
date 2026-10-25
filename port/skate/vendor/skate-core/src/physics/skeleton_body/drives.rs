@@ -1,5 +1,6 @@
 //! Original SkeletonDrives82BEA670/82BEB488: two channels per physical bone
 //! and four independent static targets, all solved in the same island.
+use crate::fused::FusedMulAdd as _;
 use super::{
     ANIMATION_PART_COUNT, BoneDriveDynamics, BoneDriveSettings, PART_COUNT, SkeletonTargets,
     TARGET_COUNT, bone_drive_frames, prepare_bone_drive_frames,
@@ -127,7 +128,7 @@ impl SkeletonDrives {
                 std::array::from_fn(|channel| {
                     let c = settings.collision_strength[part][channel];
                     //82BEB6F0/F4 are fmadds, followed by scalar fmuls.
-                    (1.0 - c).mul_add(collision_weight, c) * settings.strength[channel]
+                    (1.0 - c).fused_mul_add(collision_weight, c) * settings.strength[channel]
                 })
             } else {
                 bone.dynamics.mode = 0;

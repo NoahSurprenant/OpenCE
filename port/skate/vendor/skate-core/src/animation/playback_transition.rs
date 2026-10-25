@@ -1,4 +1,5 @@
 //! TU3 Sequence82B95C18 and Blend82B96058/82B961F8/82B963D8.
+use crate::fused::FusedMulAdd as _;
 use super::{clip_clock::AdvanceResult, output::attributes::{AnimationAttribute,AttributeName}, playback::TransitionSettings, playback_parameters::SettableAttribute, playback_tree::{Evaluation,PlaybackTree,PoseCommand}};
 
 #[derive(Clone,Debug)]
@@ -51,7 +52,7 @@ impl PlaybackTransition {
         let weight=if 1.0-lower>=0.0 {lower} else {1.0};
         if self.settings.seconds<f32::from_bits(0x3d4ccccd) || weight>1.0 || weight<0.0 {return weight;}
         let square=weight*weight;let cube=square*weight;
-        square.mul_add(3.0,-(cube*2.0))
+        square.fused_mul_add(3.0,-(cube*2.0))
     }
     pub fn evaluate(&mut self,parameters:Evaluation,enabled:bool,output:&mut Vec<PoseCommand>)->Result<bool,String> {
         if self.settings.kind==4 {return if self.sequence_complete {self.to.evaluate(parameters,enabled,output)} else {self.from.evaluate(parameters,enabled,output)};}

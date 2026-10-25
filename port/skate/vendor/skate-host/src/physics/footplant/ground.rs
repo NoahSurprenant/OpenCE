@@ -1,4 +1,5 @@
 //! FootPlant601, vtable82327400 and manager82D704B0/82D70E40.
+use skate_core::fused::FusedMulAdd as _;
 use super::{Footplant, math::*};
 use crate::physics::{GamePhysics, SkaterRuntime, air_phase, plant_skeleton};
 
@@ -106,7 +107,7 @@ impl Footplant {
     ///82D70CE0: authored BodyAdjustX/Z move the release point, retaining
     ///the last handle length.82C1E170 removes only positive up projection.
     fn adjust(&mut self, t: f32, input: [f32; 2]) {
-        let amount = (1.0 - t).mul_add(0.02, t * 0.01);
+        let amount = (1.0 - t).fused_mul_add(0.02, t * 0.01);
         let mut movement = [input[0] * amount, 0.0, input[1] * amount, 0.0];
         let projection = dot(movement, normalize(self.current_up));
         if projection > 0.0 {

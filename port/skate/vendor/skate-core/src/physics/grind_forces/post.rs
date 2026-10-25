@@ -1,5 +1,6 @@
 //! Grind Post82D43098 -> Wipeout82D90898; S2 82D85E78 ->82DDF248.
 //! Unlike Ground, no cooldown/vehicle/squash/balance checks are added here.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     physics::{board_motion_output::inverse_length_squared, native_arithmetic::dot3},
     player::wipeout::{Frame, Requests, regional_force},
@@ -31,7 +32,7 @@ pub fn check(state: &mut Requests, settings: Settings, frame: &Frame) {
         let v = frame.closing_velocity;
         let m = frame.world_to_animation;
         let local: [f32; 4] = core::array::from_fn(|i| {
-            m[2][i].mul_add(v[2], m[1][i].mul_add(v[1], m[0][i] * v[0]))
+            m[2][i].fused_mul_add(v[2], m[1][i].fused_mul_add(v[1], m[0][i] * v[0]))
         });
         let square = dot3([local[0], 0.0, local[2], local[3]],
             [local[0], 0.0, local[2], local[3]]);

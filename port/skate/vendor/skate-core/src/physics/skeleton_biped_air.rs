@@ -1,5 +1,6 @@
 //! Biped Skeleton82BDDD70: COM-constrained animation root, not a body teleport.
 //! Original S3 SHA431b8eba...0395a; ordinary PC arithmetic, not Xenon parity.
+use crate::fused::FusedMulAdd as _;
 use super::{
     skeleton_animation_record::{AnimationPartTransform as Frame, compose_affine},
     skeleton_root::{SkeletonRootFrames, orthonormalize},
@@ -24,8 +25,8 @@ pub fn prepare(
     }
     frame[3] = core::array::from_fn(|lane| {
         let x = frame[0][lane] * local_com[0];
-        let y = frame[1][lane].mul_add(local_com[1], x);
-        trajectory_position[lane] - frame[2][lane].mul_add(local_com[2], y)
+        let y = frame[1][lane].fused_mul_add(local_com[1], x);
+        trajectory_position[lane] - frame[2][lane].fused_mul_add(local_com[2], y)
     });
     roots.reset_initial_alignment(orthonormalize(frame));
     *flags_2468 |= 0x80000;

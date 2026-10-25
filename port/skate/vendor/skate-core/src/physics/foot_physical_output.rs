@@ -1,6 +1,7 @@
 //! Full original SkeletonIK::FillPhysOut_FeetDeckInteraction82BF22A0.
 //! Physical toe positions and derivatives are observed in the physical board's
 //! frame. They are distinct from animation targets and contact-query validity.
+use crate::fused::FusedMulAdd as _;
 use super::{
     native_arithmetic::reciprocal_estimate,
     skeleton_animation_record::AnimationPartTransform as Transform,
@@ -42,7 +43,7 @@ impl FootPhysicalState {
         let positions = [15usize, 19].map(|part| transform_point(&inverse, record.pose[part][3]));
         let mut inverse_dt = reciprocal_estimate(dt);
         for _ in 0..2 {
-            inverse_dt = inverse_dt.mul_add((-inverse_dt).mul_add(dt, 1.0), inverse_dt);
+            inverse_dt = inverse_dt.fused_mul_add((-inverse_dt).fused_mul_add(dt, 1.0), inverse_dt);
         }
         let local_velocity = core::array::from_fn(|foot| {
             core::array::from_fn(|lane| {
@@ -79,16 +80,16 @@ fn inverse_physical_board(board: &Transform) -> Transform {
     //82BF2398..241C builds -P.z * inverseZ, then Y and X in source order.
     for lane in 0..4 {
         let z = -board[3][2] * inverse[2][lane];
-        let yz = (-board[3][1]).mul_add(inverse[1][lane], z);
-        inverse[3][lane] = (-board[3][0]).mul_add(inverse[0][lane], yz);
+        let yz = (-board[3][1]).fused_mul_add(inverse[1][lane], z);
+        inverse[3][lane] = (-board[3][0]).fused_mul_add(inverse[0][lane], yz);
     }
     inverse
 }
 fn transform_point(frame: &Transform, p: [f32; 4]) -> [f32; 4] {
     core::array::from_fn(|lane| {
-        let x = frame[0][lane].mul_add(p[0], frame[3][lane]);
-        let xy = frame[1][lane].mul_add(p[1], x);
-        frame[2][lane].mul_add(p[2], xy)
+        let x = frame[0][lane].fused_mul_add(p[0], frame[3][lane]);
+        let xy = frame[1][lane].fused_mul_add(p[1], x);
+        frame[2][lane].fused_mul_add(p[2], xy)
     })
 }
 #[cfg(test)]

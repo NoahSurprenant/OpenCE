@@ -1,4 +1,5 @@
 //!82D7EEAC..F454 moving support history and800C0 output filtering.
+use crate::fused::FusedMulAdd as _;
 use super::math::*;
 use super::{Frame, GroundMotionInput, GroundMotionState};
 use crate::trigonometry;
@@ -54,7 +55,7 @@ pub(super) fn update(s: &mut GroundMotionState, i: &GroundMotionInput) -> Frame 
         let sine = clamp_signed(dot(cross(s.frame_0[2], direction), UP));
         let yaw = trigonometry::asin(sine) * RATE;
         s.support_yaw_336 = yaw;
-        s.predicted_support_yaw_344 = yaw.mul_add(2.0, -s.previous_support_yaw_340);
+        s.predicted_support_yaw_344 = yaw.fused_mul_add(2.0, -s.previous_support_yaw_340);
         s.previous_support_yaw_340 = yaw;
         if dot(
             s.predicted_support_velocity_272,

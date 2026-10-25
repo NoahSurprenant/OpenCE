@@ -1,4 +1,5 @@
 //! Original S3 82D6A840 admission and82D6AF58 landing publication.
+use crate::fused::FusedMulAdd as _;
 use super::*;
 ///position/material stay intact; time, frame, trajectory and normal change.
 pub fn apply_admitted_target(
@@ -60,8 +61,8 @@ fn clamp_angle(target: Vector, reference: Vector, limit: f32) -> Vector {
     let b = normalize(reference);
     let axis = cross(a, b);
     let angle = crate::trigonometry::acos(dot(a, b).clamp(-1.0, 1.0));
-    let turns = angle.mul_add(f32::from_bits(0x3e22_f983), 0.5).floor();
-    let wrapped = (-turns).mul_add(f32::from_bits(0x40c9_0fdb), angle);
+    let turns = angle.fused_mul_add(f32::from_bits(0x3e22_f983), 0.5).floor();
+    let wrapped = (-turns).fused_mul_add(f32::from_bits(0x40c9_0fdb), angle);
     if wrapped.abs() < limit || f32::from_bits(0x3780_0000) > dot(axis, axis) {
         return target;
     }
@@ -146,10 +147,10 @@ pub fn admitted_displacement(
     let distance = length(correction);
     if distance >= limits.lock_distance {
         let half_dimension =
-            limits.deck_dimensions[1].mul_add(0.5, limits.deck_dimensions[0] * 0.5);
+            limits.deck_dimensions[1].fused_mul_add(0.5, limits.deck_dimensions[0] * 0.5);
         correction = scale(
             correction,
-            (-limits.tip_scalar).mul_add(half_dimension, distance) / distance,
+            (-limits.tip_scalar).fused_mul_add(half_dimension, distance) / distance,
         );
     }
     let original = prediction.request.trajectory.velocity;

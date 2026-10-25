@@ -1,6 +1,7 @@
 //! Deck acceleration conditioning82DF0508 and IsBumped82BA7310, original TU3.
 //! Matrices are the raw physical deck and Reckoning ground frames; the effective
 //! animation deck is a different source. No render transform participates here.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::{native_arithmetic, skeleton_animation_record::AnimationPartTransform};
 
 #[derive(Clone, Copy, Debug)]
@@ -53,8 +54,8 @@ pub fn is_bumped(mut acceleration: [f32; 4], settings: &Settings) -> bool {
     for _ in 0..2 {
         let square = reciprocal * reciprocal;
         let half = reciprocal * 0.5;
-        let error = (-squared).mul_add(square, 1.0);
-        reciprocal = half.mul_add(error, reciprocal);
+        let error = (-squared).fused_mul_add(square, 1.0);
+        reciprocal = half.fused_mul_add(error, reciprocal);
     }
     let magnitude = if squared == 0.0 {
         0.0
@@ -66,17 +67,17 @@ pub fn is_bumped(mut acceleration: [f32; 4], settings: &Settings) -> bool {
 
 fn inverse_rotate(frame: AnimationPartTransform, vector: [f32; 4]) -> [f32; 4] {
     core::array::from_fn(|lane| {
-        frame[lane][2].mul_add(
+        frame[lane][2].fused_mul_add(
             vector[2],
-            frame[lane][1].mul_add(vector[1], frame[lane][0] * vector[0]),
+            frame[lane][1].fused_mul_add(vector[1], frame[lane][0] * vector[0]),
         )
     })
 }
 fn rotate(frame: AnimationPartTransform, vector: [f32; 4]) -> [f32; 4] {
     core::array::from_fn(|lane| {
-        frame[2][lane].mul_add(
+        frame[2][lane].fused_mul_add(
             vector[2],
-            frame[1][lane].mul_add(vector[1], frame[0][lane] * vector[0]),
+            frame[1][lane].fused_mul_add(vector[1], frame[0][lane] * vector[0]),
         )
     })
 }

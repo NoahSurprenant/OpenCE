@@ -1,4 +1,5 @@
 //! CameraMan shot-to-rig binding82DFF23C..82DFF864.
+use crate::fused::FusedMulAdd as _;
 use super::{DropPredictor,LookInput,ManagerState,ManagerSubject,Rig,RigOrientation,Shot};
 use super::manager_state::clamp;
 use super::vector_tracker::length;
@@ -24,14 +25,14 @@ impl ManagerState {
             let time=(self.frames as f32)*f32::from_bits(0x3dd67750);
             let distance_wave=crate::trigonometry::sin(time*f32::from_bits(0x3d321643));
             let heading_wave=crate::trigonometry::sin(time*f32::from_bits(0x3c23d70a));
-            heading=heading_wave.mul_add(f32::from_bits(0x40278d36),heading);
+            heading=heading_wave.fused_mul_add(f32::from_bits(0x40278d36),heading);
             distance=(distance_wave+distance)+1.0;
         }
         let mut drop_elevation=0.0;
         if self.options&0x40!=0 {
             let speed=length(self.anchor_velocity);
             let (minimum,maximum)=if self.options&0x10!=0 {(0.7,0.8)} else {(0.9,1.0)};
-            let scale=clamp(-(speed-4.0).mul_add(f32::from_bits(0x3cccccd0),-maximum),minimum,maximum);
+            let scale=clamp(-(speed-4.0).fused_mul_add(f32::from_bits(0x3cccccd0),-maximum),minimum,maximum);
             drop_elevation=drop.elevation*scale;
             distance=drop.distance_offset+distance;
         }
@@ -39,7 +40,7 @@ impl ManagerState {
             let maximum=if distance-2.5>=0.0 {2.5} else {distance};
             let fraction=clamp((maximum-rig.positioner.available_distance)/maximum,0.0,1.0);
             let angle=(if subject.rig.off_board!=0 {60.0} else {50.0})*f32::from_bits(0x3c8efa35);
-            let target=angle.mul_add(fraction,-drop_elevation);
+            let target=angle.fused_mul_add(fraction,-drop_elevation);
             let mut target=if target>=0.0 {target} else {0.0};
             if subject.is_ground_camera(rig.fields.height_mode) && subject.ground_normal[1]< -0.2 {
                 target *= -1.0;
@@ -54,13 +55,13 @@ impl ManagerState {
             clamp(self.collision_elevation,-f32::from_bits(0x3fb2b8c2),f32::from_bits(0x3fb2b8c2))
         };
         rig.fields.distance=distance;
-        let turns=heading.mul_add(f32::from_bits(0x3e22f983),0.5).floor();
-        let reference=-turns.mul_add(f32::from_bits(0x40c90fdb),-heading);
+        let turns=heading.fused_mul_add(f32::from_bits(0x3e22f983),0.5).floor();
+        let reference=-turns.fused_mul_add(f32::from_bits(0x40c90fdb),-heading);
         rig.fields.heading_reference=reference;
         rig.fields.heading_target=if reset {reference} else {
             let from=rig.fields.avoidance_heading;
             let delta=super::rig_tracking::wrap_vmx(reference-from);
-            super::rig_tracking::wrap_vmx(delta.mul_add(1.0-rig.fields.heading_weight,from))
+            super::rig_tracking::wrap_vmx(delta.fused_mul_add(1.0-rig.fields.heading_weight,from))
         };
         rig.set_elevation(elevation,!reset);
         rig.fields.elevation_offset=drop_elevation+look.elevation;
@@ -72,10 +73,10 @@ impl ManagerState {
         rig.fields.collision_mode=shot.collision_hint;
         let h=1.0-shot.smoothing[0];let e=1.0-shot.smoothing[1];
         let pan=1.0-shot.smoothing[2];let tilt=1.0-shot.smoothing[3];
-        rig.fields.heading_smoothing=1.0-(-h.mul_add(h,-1.0));
-        rig.fields.elevation_smoothing=1.0-(-e.mul_add(e,-1.0));
-        orientation.pan_smoothing=-pan.mul_add(pan,-1.0);
-        orientation.tilt_smoothing=-tilt.mul_add(tilt,-1.0);
+        rig.fields.heading_smoothing=1.0-(-h.fused_mul_add(h,-1.0));
+        rig.fields.elevation_smoothing=1.0-(-e.fused_mul_add(e,-1.0));
+        orientation.pan_smoothing=-pan.fused_mul_add(pan,-1.0);
+        orientation.tilt_smoothing=-tilt.fused_mul_add(tilt,-1.0);
         orientation.roll=previous_roll;
         heading_mirror
     }

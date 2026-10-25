@@ -1,4 +1,5 @@
 //! Bind stock child geometry to the live solver part transforms.
+use skate_core::fused::FusedMulAdd as _;
 use super::settings::PhysicsSettings;
 use skate_core::{
     math::{Basis3, Vector3},
@@ -116,11 +117,11 @@ fn capsule(pose: RetailAffineTransform, radius: f32, half_length: f32) -> Contac
 fn transform(basis: Basis3, point: Vector3, origin: Vector3) -> Vector3 {
     let translation = [origin.x, origin.y, origin.z];
     let component = |row| {
-        point.z.mul_add(
+        point.z.fused_mul_add(
             basis.columns[2][row],
-            point.y.mul_add(
+            point.y.fused_mul_add(
                 basis.columns[1][row],
-                point.x.mul_add(basis.columns[0][row], translation[row]),
+                point.x.fused_mul_add(basis.columns[0][row], translation[row]),
             ),
         )
     };
@@ -133,9 +134,9 @@ fn compose(parent: RetailAffineTransform, child: RetailAffineTransform) -> Retai
                 // CreateGP82AD8758 starts basis composition with a product;
                 // only position composition includes an initial translation.
                 core::array::from_fn(|row| {
-                    c[2].mul_add(
+                    c[2].fused_mul_add(
                         parent.basis.columns[2][row],
-                        c[1].mul_add(
+                        c[1].fused_mul_add(
                             parent.basis.columns[1][row],
                             c[0] * parent.basis.columns[0][row],
                         ),

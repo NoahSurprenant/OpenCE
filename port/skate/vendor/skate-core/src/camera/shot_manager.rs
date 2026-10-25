@@ -1,6 +1,7 @@
 //! Normal camera ShotManager82E06370/82E064B0/82E068B8/82E06E38.
 //! The host owns immutable stock definitions and tree allocation. The authored
 //! child order, filter history and transition calculations retain TU3 behavior.
+use crate::fused::FusedMulAdd as _;
 use super::{Shot, blend_interval, filter_blend_value, position_from_angles};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -284,9 +285,9 @@ impl ShotManager {
         let duration = self.duration(true);
         if duration <= 0.0 { return 1.0; }
         let fraction = super::manager_state::clamp(self.elapsed / duration, 0.0, 1.0);
-        crate::trigonometry::sin(fraction.mul_add(
+        crate::trigonometry::sin(fraction.fused_mul_add(
             f32::from_bits(0x40490fdb), -f32::from_bits(0x3fc90fdb)))
-            .mul_add(0.5, 0.5)
+            .fused_mul_add(0.5, 0.5)
     }
 
     fn duration(&self, camera_man: bool) -> f32 {

@@ -1,6 +1,7 @@
 //! Stateful direct Andale Clip clock and attribute evaluation.
 //! Init827B8AB0, AddTime82D25A00, GetAttributes82D25E30,
 //! Attribute::Init82D164F8 and scalar curve lookup82D193E0.
+use crate::fused::FusedMulAdd as _;
 use super::{clip_clock::{AdvanceResult, ClipClock}, output::attributes::{AnimationAttribute, AttributeName, AttributePayload}};
 
 #[derive(Clone, Debug)]
@@ -102,5 +103,5 @@ pub fn sample_curve(words: &[u32], time: f32) -> Result<f32, String> {
         } else { return Ok(y); }
     }
     let slope = (low_y-high_y)/(low_x-high_x);
-    Ok(slope.mul_add(time-high_x,high_y))
+    Ok(slope.fused_mul_add(time-high_x,high_y))
 }

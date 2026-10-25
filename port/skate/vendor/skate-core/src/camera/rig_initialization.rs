@@ -1,4 +1,5 @@
 //! State construction82E02738, reset82E02E58 and teleport82E031D8.
+use crate::fused::FusedMulAdd as _;
 use super::*;
 
 impl Rig {
@@ -136,7 +137,7 @@ impl Rig {
                     super::rig_tracking::wrap_vmx(self.fields.avoidance_elevation - elevation);
                 self.fields.elevation_target =
                     super::rig_tracking::wrap_vmx(super::rig_tracking::wrap_vmx(
-                        delta.mul_add(self.fields.elevation_weight, elevation),
+                        delta.fused_mul_add(self.fields.elevation_weight, elevation),
                     ));
             }
         }

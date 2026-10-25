@@ -1,5 +1,6 @@
 //! TU3 PhysicsAir Update (`0x82D346C0`) and COM launch helper (`0x82D34570`).
 
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 use super::{
@@ -123,15 +124,15 @@ pub fn wrap_signed_angle(angle: f32) -> f32 {
 pub fn integrate_trajectory_fixed_step(trajectory: &mut AirTrajectory) {
     let step_squared = FIXED_STEP * FIXED_STEP;
     let linear_position: Vector4 = core::array::from_fn(|lane| {
-        trajectory.velocity[lane].mul_add(FIXED_STEP, trajectory.position[lane])
+        trajectory.velocity[lane].fused_mul_add(FIXED_STEP, trajectory.position[lane])
     });
     let next_velocity: Vector4 = core::array::from_fn(|lane| {
-        trajectory.acceleration[lane].mul_add(FIXED_STEP, trajectory.velocity[lane])
+        trajectory.acceleration[lane].fused_mul_add(FIXED_STEP, trajectory.velocity[lane])
     });
     let half = ONE * HALF;
     let half_acceleration = trajectory.acceleration.map(|lane| lane * half);
     let next_position: Vector4 = core::array::from_fn(|lane| {
-        half_acceleration[lane].mul_add(step_squared, linear_position[lane])
+        half_acceleration[lane].fused_mul_add(step_squared, linear_position[lane])
     });
     trajectory.position = next_position;
     trajectory.velocity = next_velocity;
@@ -167,7 +168,7 @@ fn adjust_centre_of_mass_launch_info<R: PhysicsAirRuntime>(
     runtime.fill_skeleton_launch_info(info);
 
     let velocity = core::array::from_fn(|lane| {
-        world_acceleration[lane].mul_add(FIXED_STEP, state.centre_of_mass_trajectory.velocity[lane])
+        world_acceleration[lane].fused_mul_add(FIXED_STEP, state.centre_of_mass_trajectory.velocity[lane])
     });
     info.set_start_velocity(velocity);
     info.set_player_jumped(true);

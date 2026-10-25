@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::math::{DT, IDENTITY, UP, ZERO};
 use super::*;
 fn state() -> GroundMotionState {
@@ -262,10 +263,10 @@ fn limiter_keeps_quaternion_w_lane_fused_residuals() {
     let from = [0.0, 1.0, 0.0, 0.37];
     let got = math::limit_angle([1.0, 0.0, 0.0, 0.0], from, limit);
     let (_, c) = crate::trigonometry::sin_cos(-limit * 0.5);
-    let first_w = (-c).mul_add(from[3], c * from[3]);
-    let middle_w = from[3].mul_add(c, first_w);
-    let second_w = (-c).mul_add(middle_w, c * middle_w);
-    let expected = second_w.mul_add(2.0, from[3]);
+    let first_w = (-c).fused_mul_add(from[3], c * from[3]);
+    let middle_w = from[3].fused_mul_add(c, first_w);
+    let second_w = (-c).fused_mul_add(middle_w, c * middle_w);
+    let expected = second_w.fused_mul_add(2.0, from[3]);
     assert_eq!(got[3].to_bits(), expected.to_bits());
 }
 #[test]

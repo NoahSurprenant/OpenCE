@@ -1,4 +1,5 @@
 //!82BD41B0 delta bound and82C1E170 one-sided projection, original raw audited.
+use crate::fused::FusedMulAdd as _;
 use super::Vector;
 pub(super) fn select(test: f32, yes: f32, no: f32) -> f32 { if test >= 0.0 { yes } else { no } }
 pub(super) fn clamp(value: f32, low: f32, high: f32) -> f32 {
@@ -8,7 +9,7 @@ pub(super) fn clamp(value: f32, low: f32, high: f32) -> f32 {
 pub(super) fn dot(a: Vector, b: Vector) -> f32 { a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
 pub(super) fn scale(a: Vector, s: f32) -> Vector { a.map(|v| v * s) }
 pub(super) fn sub(a: Vector, b: Vector) -> Vector { std::array::from_fn(|i| a[i] - b[i]) }
-pub(super) fn madd(a: Vector, s: f32, b: Vector) -> Vector { std::array::from_fn(|i| a[i].mul_add(s, b[i])) }
+pub(super) fn madd(a: Vector, s: f32, b: Vector) -> Vector { std::array::from_fn(|i| a[i].fused_mul_add(s, b[i])) }
 fn inverse_squared(value: f32) -> f32 {
     // The portable estimate preserves subnormals. For a tiny positive squared
     // length, r*r can overflow even though both the length and inverse root
@@ -22,8 +23,8 @@ fn inverse_squared(value: f32) -> f32 {
     //PC seed is not bit-exact Xenon; retain both original refinement stages.
     let mut r = crate::physics::reciprocal_sqrt::estimate(value);
     for _ in 0..2 {
-        let error = (-value).mul_add(r * r, 1.0);
-        r = (r * 0.5).mul_add(error, r);
+        let error = (-value).fused_mul_add(r * r, 1.0);
+        r = (r * 0.5).fused_mul_add(error, r);
     }
     r * rescale
 }

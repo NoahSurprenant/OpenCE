@@ -2,6 +2,7 @@
 //! Callers supply native state, parameters and timestep; no camera tuning or
 //! initialization policy is inferred here. See docs/agents/camera/CAM-01.md.
 
+use crate::fused::FusedMulAdd as _;
 /// The six scalar words written/read at tracker offsets +0 through +20.
 /// Acceleration clamp retains its prior value when acceleration opposes error.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,7 +42,7 @@ impl ScalarTracker {
         }
         let velocity = self.velocity;
         let reciprocal_dt = 1.0 / dt;
-        self.acceleration = reciprocal_dt.mul_add(delta, -velocity) * reciprocal_dt;
+        self.acceleration = reciprocal_dt.fused_mul_add(delta, -velocity) * reciprocal_dt;
 
         let absolute_delta = delta.abs();
         let fraction = if absolute_delta < parameters.delta_umbra {
@@ -66,16 +67,16 @@ impl ScalarTracker {
             }
         }
 
-        self.velocity = self.acceleration.mul_add(dt, velocity);
+        self.velocity = self.acceleration.fused_mul_add(dt, velocity);
         let absolute_velocity = self.velocity.abs();
         if absolute_velocity > parameters.speed_clamp {
             self.velocity = (self.velocity / absolute_velocity) * parameters.speed_clamp;
         }
 
-        let next_position = self.velocity.mul_add(dt, position);
+        let next_position = self.velocity.fused_mul_add(dt, position);
         self.smoothing = interpolate(parameters.smoothing_min, parameters.smoothing_max, fraction);
         // Smoothing changes position only. Do not derive velocity back from it.
-        self.position = (next_position - position).mul_add(1.0 - self.smoothing, position);
+        self.position = (next_position - position).fused_mul_add(1.0 - self.smoothing, position);
     }
 }
 
@@ -85,6 +86,6 @@ pub(super) fn interpolate(minimum: f32, maximum: f32, fraction: f32) -> f32 {
     if minimum == maximum {
         maximum
     } else {
-        (maximum - minimum).mul_add(fraction, minimum)
+        (maximum - minimum).fused_mul_add(fraction, minimum)
     }
 }

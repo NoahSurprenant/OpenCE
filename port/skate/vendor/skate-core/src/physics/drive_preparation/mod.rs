@@ -2,6 +2,7 @@
 //! The active-drive list is visited before thaw/partition and island-table
 //! construction. Every island mode runs this loop, regardless of body flags.
 
+use crate::fused::FusedMulAdd as _;
 /// Normalize each nonnull frame record in native active-list order. Entries
 /// are frame-record indices, not drive/body indices; duplicate references are
 /// processed repeatedly just as live pointers are in 82763BB4..82763C50.
@@ -25,7 +26,7 @@ pub fn normalize_drive_frames(frames: &mut [u32; 16]) {
         for _ in 0..2 {
             let squared = e * e;
             let half = e * 0.5;
-            e = half.mul_add((-d).mul_add(squared, 1.0), e);
+            e = half.fused_mul_add((-d).fused_mul_add(squared, 1.0), e);
         }
         for i in 0..4 {
             frames[offset + i] = (q[i] * e).to_bits();

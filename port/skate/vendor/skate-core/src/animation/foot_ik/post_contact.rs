@@ -1,4 +1,5 @@
 //! SkeletonIK::CheckFootAgainstBoard82BF0D70, including raised deck ends.
+use crate::fused::FusedMulAdd as _;
 use super::{math::reciprocal, settings::Settings, transforms::inverse_rigid};
 use crate::physics::{
     native_arithmetic::vector_min,
@@ -55,7 +56,7 @@ pub(super) fn target(
         } else {
             maximum
         };
-        height = distance.mul_add(tangent(angle), height);
+        height = distance.fused_mul_add(tangent(angle), height);
     }
     if midpoint[1] >= height || midpoint[1] <= height - f32::from_bits(0x3E99_999A) {
         return None;
@@ -69,16 +70,16 @@ pub(super) fn target(
 ///clamped to [.01,1.5607964]; coefficients come from822FE3C0..E0.
 fn tangent(angle: f32) -> f32 {
     let quadrant = (angle * f32::from_bits(0x3F22_F983)).round_ties_even();
-    let reduced = (-quadrant).mul_add(f32::from_bits(0x3FC9_0FDB), angle);
-    let reduced = (-quadrant).mul_add(f32::from_bits(0x2E85_A309), reduced);
+    let reduced = (-quadrant).fused_mul_add(f32::from_bits(0x3FC9_0FDB), angle);
+    let reduced = (-quadrant).fused_mul_add(f32::from_bits(0x2E85_A309), reduced);
     let squared = reduced * reduced;
-    let denominator = squared.mul_add(f32::from_bits(0x3505_BBA8), f32::from_bits(0xB9A3_7B25));
-    let denominator = squared.mul_add(denominator, f32::from_bits(0x3CD2_3CF5));
-    let denominator = squared.mul_add(denominator, f32::from_bits(0xBEEE_F582));
-    let denominator = squared.mul_add(denominator, 1.0);
-    let numerator = squared.mul_add(f32::from_bits(0xB795_D5B9), f32::from_bits(0x3B60_7415));
-    let numerator = squared.mul_add(numerator, f32::from_bits(0xBE08_95AF));
-    let numerator = reduced.mul_add(squared * numerator, reduced);
+    let denominator = squared.fused_mul_add(f32::from_bits(0x3505_BBA8), f32::from_bits(0xB9A3_7B25));
+    let denominator = squared.fused_mul_add(denominator, f32::from_bits(0x3CD2_3CF5));
+    let denominator = squared.fused_mul_add(denominator, f32::from_bits(0xBEEE_F582));
+    let denominator = squared.fused_mul_add(denominator, 1.0);
+    let numerator = squared.fused_mul_add(f32::from_bits(0xB795_D5B9), f32::from_bits(0x3B60_7415));
+    let numerator = squared.fused_mul_add(numerator, f32::from_bits(0xBE08_95AF));
+    let numerator = reduced.fused_mul_add(squared * numerator, reduced);
     //vcmpbfp's two high result bits select corresponding sign/exponent bits.
     //The bounded constructor argument preserves these bits in both operands;
     //retain the actual bit-select rather than replacing it by a boolean branch.

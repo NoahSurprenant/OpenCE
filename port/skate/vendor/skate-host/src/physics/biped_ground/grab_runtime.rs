@@ -1,5 +1,6 @@
 //! PlayerGrabSpline82D73FC0/74270/740F8/749D0, distinct from possession.
 //! Scene execution is concrete; retained results become visible only at Sync.
+use skate_core::fused::FusedMulAdd as _;
 mod selection;
 #[cfg(test)]
 mod tests;
@@ -53,7 +54,7 @@ impl Owner {
         let lines = std::array::from_fn(|i| {
             let mut start = frame[3];
             start[1] += (i as f32) * f32::from_bits(0x3eb851eb);
-            let end = std::array::from_fn(|axis| frame[2][axis].mul_add(2., start[axis]));
+            let end = std::array::from_fn(|axis| frame[2][axis].fused_mul_add(2., start[axis]));
             Line {
                 start,
                 end,

@@ -1,5 +1,6 @@
 //! Deck and wall probes in TU3 82C07788/82C079E0, with the actual optional
 //! wall-line producer82C01F10. Wheel probes remain in board_ground.
+use crate::fused::FusedMulAdd as _;
 use super::{
     board_ground::WheelLine,
     board_motion_output::{dot, inverse_length_squared},
@@ -88,9 +89,9 @@ pub fn wall_probe(input: WallLineInput) -> Option<WheelLine> {
     }
     let normal = input.contact_normal;
     let start = Vector3::new(
-        normal.x.mul_add(0.05, input.deck_position.x),
-        normal.y.mul_add(0.05, input.deck_position.y),
-        normal.z.mul_add(0.05, input.deck_position.z),
+        normal.x.fused_mul_add(0.05, input.deck_position.x),
+        normal.y.fused_mul_add(0.05, input.deck_position.y),
+        normal.z.fused_mul_add(0.05, input.deck_position.z),
     );
     let first = cross(Vector3::new(0., 1., 0.), normal);
     let down = cross(first, normal);
@@ -105,17 +106,17 @@ pub fn wall_probe(input: WallLineInput) -> Option<WheelLine> {
     Some(WheelLine {
         start,
         end: Vector3::new(
-            down.x.mul_add(4., start.x),
-            down.y.mul_add(4., start.y),
-            down.z.mul_add(4., start.z),
+            down.x.fused_mul_add(4., start.x),
+            down.y.fused_mul_add(4., start.y),
+            down.z.fused_mul_add(4., start.z),
         ),
     })
 }
 fn cross(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(
-        (-a.z).mul_add(b.y, a.y * b.z),
-        (-a.x).mul_add(b.z, a.z * b.x),
-        (-a.y).mul_add(b.x, a.x * b.y),
+        (-a.z).fused_mul_add(b.y, a.y * b.z),
+        (-a.x).fused_mul_add(b.z, a.z * b.x),
+        (-a.y).fused_mul_add(b.x, a.x * b.y),
     )
 }
 

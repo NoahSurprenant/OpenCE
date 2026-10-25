@@ -1,4 +1,5 @@
 //! Persistent result owner82D6CC50 and frame publication82D6E3F8.
+use crate::fused::FusedMulAdd as _;
 use super::{air_completion::Completed, air_launch::V, air_queries::Prepared};
 use crate::{air::trajectory::Trajectory, point_graph::PointGraph};
 const STEP: f32 = f32::from_bits(0x3c888889);
@@ -78,7 +79,7 @@ impl Prediction {
         let original = self.original.position_at(t);
         Packet {
             position: std::array::from_fn(|i| {
-                original[i].mul_add(1. - self.blend, selected[i] * self.blend)
+                original[i].fused_mul_add(1. - self.blend, selected[i] * self.blend)
             }),
             velocity: self.selected.velocity_at(t),
             normal: self.result.normal,
@@ -135,7 +136,7 @@ impl Prediction {
             //82D6E178 recomputes the native9.8 m/s² arc to the same end point.
             let duration = (2. * length(sub(arc.position, end)) / 9.8)
                 .sqrt()
-                .mul_add(0.66, self.landing_frame as f32 * f32::from_bits(0x3bb9af72));
+                .fused_mul_add(0.66, self.landing_frame as f32 * f32::from_bits(0x3bb9af72));
             if duration > 0.2 {
                 let acceleration = [0., -9.8, 0., 0.];
                 self.selected.velocity = sub(

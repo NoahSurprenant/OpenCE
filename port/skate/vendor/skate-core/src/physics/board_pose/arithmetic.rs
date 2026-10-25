@@ -1,4 +1,5 @@
 //! Arithmetic order from the retained TU3 pose functions; guest lane order.
+use crate::fused::FusedMulAdd as _;
 use super::PoseMatrix;
 pub(super) type V = [f32; 4];
 pub(super) type M = [V; 4];
@@ -18,10 +19,10 @@ pub(super) fn mul(a: V, b: V) -> V {
     core::array::from_fn(|i| a[i] * b[i])
 }
 pub(super) fn madd(a: V, b: V, c: V) -> V {
-    core::array::from_fn(|i| a[i].mul_add(b[i], c[i]))
+    core::array::from_fn(|i| a[i].fused_mul_add(b[i], c[i]))
 }
 pub(super) fn nmsub(a: V, b: V, c: V) -> V {
-    core::array::from_fn(|i| (-a[i]).mul_add(b[i], c[i]))
+    core::array::from_fn(|i| (-a[i]).fused_mul_add(b[i], c[i]))
 }
 pub(super) fn perm(a: V, p: [usize; 4]) -> V {
     p.map(|i| a[i])
@@ -38,7 +39,7 @@ pub(super) fn rsqrt(v: f32) -> f32 {
     for _ in 0..2 {
         let s = e * e;
         let h = e * 0.5;
-        e = h.mul_add((-v).mul_add(s, 1.0), e);
+        e = h.fused_mul_add((-v).fused_mul_add(s, 1.0), e);
     }
     e
 }

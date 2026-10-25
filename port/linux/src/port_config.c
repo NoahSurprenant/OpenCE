@@ -614,6 +614,11 @@ static const struct config_setting config_settings[] =
 		"too) or anything else (as it sees fit); one\n"
 		"entry after a star (\"*ram\") is every bot's. For\n"
 		"the tests. Empty: all as they see fit." },
+	{ "debug.skate_bot_period", _config_integer, "0", "HALO_SKATE_BOT_PERIOD", _environment_value, _platform_all,
+		"Every how many ticks each bot's skater steps (Skate 3 mode), 1 or 2,\n"
+		"gliding on between its steps, as a host short of processors has the\n"
+		"skaters far from people do (skate.c, \"many bots on boards\"). For the\n"
+		"tests. 0: as the host's processors allow." },
 	{ "debug.bot_tricks", _config_string, "\"\"", "HALO_BOT_TRICKS", _environment_value, _platform_all,
 		"How each bot does skate tricks on its board (Skate 3 mode), with commas\n"
 		"between, one for each bot in the order they join: \"off\" (it only\n"

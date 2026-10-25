@@ -1,5 +1,6 @@
 //! Original S3 82D4D150/82E09D28; S2 82D97D68 lacks S3 eligibility tests.
 //! PC reciprocal estimates retain native refinement steps, not Xenon bit parity.
+use crate::fused::FusedMulAdd as _;
 use crate::player::offboard::grab_scene::{Record,closest_point};
 type Vector = [f32; 4];
 
@@ -8,7 +9,7 @@ fn sub(a: Vector, b: Vector) -> Vector { std::array::from_fn(|i| a[i]-b[i]) }
 fn scale(a: Vector, s: f32) -> Vector { a.map(|x| x*s) }
 fn inverse_length(squared: f32) -> f32 {
     let mut r = crate::physics::reciprocal_sqrt::estimate(squared);
-    for _ in 0..2 { r = (r*0.5).mul_add((-squared).mul_add(r*r, 1.), r); }
+    for _ in 0..2 { r = (r*0.5).fused_mul_add((-squared).fused_mul_add(r*r, 1.), r); }
     r
 }
 fn horizontal(mut v: Vector) -> Vector {

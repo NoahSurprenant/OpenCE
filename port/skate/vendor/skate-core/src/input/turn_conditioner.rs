@@ -1,5 +1,6 @@
 //! Complete steering conditioner 82DEFF38, called by82DEFB30.
 //! The settings decoder supplies global830CFDA4 slot204's verified layout.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 #[derive(Clone, Copy, Debug)]
@@ -58,10 +59,10 @@ fn filter(state: &mut [f32; 9], coefficients: [f32; 4], input: f32) -> f32 {
     let input_difference = input - state[5];
     let complement = 1.0 - state[3];
     state[5] = input;
-    state[8] = input_difference.mul_add(state[3], state[8] * complement);
-    state[6] = difference.mul_add(state[3], complement * state[6]);
-    let term = (state[8] - state[7]).mul_add(state[2], state[1] * state[6]);
-    let term = difference.mul_add(state[0], term);
+    state[8] = input_difference.fused_mul_add(state[3], state[8] * complement);
+    state[6] = difference.fused_mul_add(state[3], complement * state[6]);
+    let term = (state[8] - state[7]).fused_mul_add(state[2], state[1] * state[6]);
+    let term = difference.fused_mul_add(state[0], term);
     let result = term + state[4];
     state[7] = result - state[4];
     state[4] = result;
@@ -75,8 +76,8 @@ pub fn update(state: &mut State, input: Input, settings: &Settings) -> Output {
     let speed_fraction = clamp(input.body_160 / p[11], 0.0, 1.0);
     let other_fraction = clamp((input.bundle_36_field_160 / p[10]) * sign, -1.0, 1.0);
     let base = settings.input_curve.evaluate(speed_fraction) * scaled;
-    let attenuated = (-(1.0 - p[8])).mul_add(input.body_176, 1.0) * other_fraction;
-    let target = attenuated.mul_add(p[9], (1.0 - p[9]) * base);
+    let attenuated = (-(1.0 - p[8])).fused_mul_add(input.body_176, 1.0) * other_fraction;
+    let target = attenuated.fused_mul_add(p[9], (1.0 - p[9]) * base);
     let first = filter(
         &mut state.filters[0],
         settings.filter_coefficients[0],
@@ -104,7 +105,7 @@ pub fn update(state: &mut State, input: Input, settings: &Settings) -> Output {
     state.history[0] = movement;
     state.history[2] = difference
         .abs()
-        .mul_add(p[2], (1.0 - p[2]) * state.history[2]);
+        .fused_mul_add(p[2], (1.0 - p[2]) * state.history[2]);
     let ratio = state.history[2] / p[1];
     let squared = ratio * ratio;
     let bounded = if squared - 1.0 >= 0.0 { 1.0 } else { squared };
@@ -121,15 +122,15 @@ pub fn update(state: &mut State, input: Input, settings: &Settings) -> Output {
     state.history[1] = movement;
     state.history[5] = difference
         .abs()
-        .mul_add(p[5], (1.0 - p[5]) * state.history[5]);
+        .fused_mul_add(p[5], (1.0 - p[5]) * state.history[5]);
     let hold: f32 = if state.history[5] < p[3] { 1.0 } else { 0.0 };
-    let alpha = (1.0 - hold).mul_add(p[7], p[6] * hold);
-    let next = (1.0 - alpha).mul_add(state.history[4], alpha * hold);
+    let alpha = (1.0 - hold).fused_mul_add(p[7], p[6] * hold);
+    let next = (1.0 - alpha).fused_mul_add(state.history[4], alpha * hold);
     let difference = next - state.history[4];
     state.history[6] = clamp(difference, state.history[6] - p[4], state.history[6] + p[4]);
     state.history[4] = clamp(state.history[4] + state.history[6], 0.0, 1.0);
     let alpha = settings.smoothing_curve.evaluate(input.body_176);
-    state.history[7] = (1.0 - alpha).mul_add(state.history[7], alpha * first);
+    state.history[7] = (1.0 - alpha).fused_mul_add(state.history[7], alpha * first);
     let turn = clamp(state.history[7], -1.0, 1.0);
     [
         turn,

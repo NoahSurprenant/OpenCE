@@ -1,5 +1,6 @@
 //! BipedToolkit query initialization82D856C8 and submission geometry82D811C8.
 //! These are contact probes, separate from the seven-line ledge query.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::native_arithmetic::dot3;
 pub type V = [f32; 4];
 #[cfg(test)]
@@ -48,7 +49,7 @@ impl Default for Layout {
         let mut horizontal = Vec::new();
         for n in 0..12 {
             let fraction = n as f32 * f32::from_bits(0x3dba_2e8c);
-            let y = fraction.mul_add(height, -((1. - fraction) * height));
+            let y = fraction.fused_mul_add(height, -((1. - fraction) * height));
             let reverse_id = (y < 0.).then_some(id + 1);
             horizontal.push(probe(point(0., y, 0.), point(0., y, f32::from_bits(0x3fe6_6666)),
                 0., id, reverse_id));
@@ -56,7 +57,7 @@ impl Default for Layout {
         }
         let radius = f32::from_bits(0x3dcc_cccc);
         for n in 0..3 {
-            let y = (n as f32).mul_add(2., 1.).mul_add(radius, height);
+            let y = (n as f32).fused_mul_add(2., 1.).fused_mul_add(radius, height);
             horizontal.push(probe(point(0., y, radius), point(0., y, f32::from_bits(0x3fd9_9999)),
                 radius, id, None));
             id += 1;
@@ -82,14 +83,14 @@ impl Input {
             let a = self.animation_right;
             let b = self.animation_up;
             let forward = [
-                (-a[2]).mul_add(b[1], a[1] * b[2]),
-                (-a[0]).mul_add(b[2], a[2] * b[0]),
-                (-a[1]).mul_add(b[0], a[0] * b[1]),
-                (-a[3]).mul_add(b[3], a[3] * b[3]),
+                (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+                (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+                (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+                (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
             ];
             (a, b, forward)
         } else { (self.surface_right, self.surface_up, self.surface_forward) };
-        std::array::from_fn(|i| z[i].mul_add(p[2], y[i].mul_add(p[1], x[i].mul_add(p[0], self.position[i]))))
+        std::array::from_fn(|i| z[i].fused_mul_add(p[2], y[i].fused_mul_add(p[1], x[i].fused_mul_add(p[0], self.position[i]))))
     }
 }
 

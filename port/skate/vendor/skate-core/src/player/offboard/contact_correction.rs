@@ -1,5 +1,6 @@
 //! Biped contact correction82D7C9E0, called before slide/movement/cadence.
 //! Input displacement vectors come from actual skeleton collision output.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::{native_arithmetic, reciprocal_sqrt::estimate};
 type Vector = [f32; 4];
 
@@ -62,7 +63,7 @@ fn reject(vector: Vector, axis: Vector) -> Vector {
 pub(super) fn inverse_length(squared: f32) -> f32 {
     let mut inverse = estimate(squared);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-squared).mul_add(inverse * inverse, 1.0), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-squared).fused_mul_add(inverse * inverse, 1.0), inverse);
     }
     inverse
 }
@@ -80,7 +81,7 @@ pub(super) fn clamp_length(vector: Vector, maximum: f32) -> Vector {
     let bounded = select(maximum - length, length, maximum);
     let mut inverse = native_arithmetic::reciprocal_estimate(length);
     for _ in 0..2 {
-        inverse = inverse.mul_add((-inverse).mul_add(length, 1.0), inverse);
+        inverse = inverse.fused_mul_add((-inverse).fused_mul_add(length, 1.0), inverse);
     }
     vector.map(|value| (value * bounded) * inverse)
 }

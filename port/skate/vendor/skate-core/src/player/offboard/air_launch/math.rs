@@ -1,5 +1,6 @@
 //! Recovered leaf expressions. Ordinary PC estimates retain native refinements;
 //! they are not claimed to be bit-exact Xenon arithmetic.
+use crate::fused::FusedMulAdd as _;
 use super::Vector;
 pub(in crate::player::offboard) use crate::player::wipeout_state::math::{
     add, clamp, cross, dot, length, madd, normalize, normalize_or, scale, sub, wrap_angle,
@@ -30,8 +31,8 @@ pub(in crate::player::offboard) fn limit_angle(target: Vector, from: Vector, max
     let b = normalize_or(from, ZERO);
     let axis = cross(a, b);
     let angle = crate::trigonometry::acos(dot(a, b).max(-1.0).min(1.0));
-    let turns = angle.mul_add(f32::from_bits(0x3e22_f983), 0.5).floor();
-    let closest = (-turns).mul_add(f32::from_bits(0x40c9_0fdb), angle);
+    let turns = angle.fused_mul_add(f32::from_bits(0x3e22_f983), 0.5).floor();
+    let closest = (-turns).fused_mul_add(f32::from_bits(0x40c9_0fdb), angle);
     if closest.abs() < maximum || dot(axis, axis) < f32::from_bits(0x3780_0000) {
         return target;
     }
@@ -51,11 +52,11 @@ pub(in crate::player::offboard) fn rotate(v: Vector, axis: Vector, angle: f32) -
     let t = 1.0 - c;
     let (tx, ty, tz) = (t * x, t * y, t * z);
     let (sx, sy, sz) = (s * x, s * y, s * z);
-    let xx = tx.mul_add(x, c);
+    let xx = tx.fused_mul_add(x, c);
     let yx = ty * x - sz;
-    let zx = tz.mul_add(x, sy);
-    let right = [xx, tx.mul_add(y, sz), tx * z - sy, 0.];
-    let up = [yx, ty.mul_add(y, c), ty.mul_add(z, sx), 0.];
-    let forward = [zx, tz * y - sx, tz.mul_add(z, c), 0.];
+    let zx = tz.fused_mul_add(x, sy);
+    let right = [xx, tx.fused_mul_add(y, sz), tx * z - sy, 0.];
+    let up = [yx, ty.fused_mul_add(y, c), ty.fused_mul_add(z, sx), 0.];
+    let forward = [zx, tz * y - sx, tz.fused_mul_add(z, c), 0.];
     madd(forward, v[2], madd(up, v[1], scale(right, v[0])))
 }

@@ -1,5 +1,6 @@
 //! LaunchSkateboard82D73AB0; S2 named counterpart82DCB3A8.
 //! S3 replaces tunables with literals; energy cost is0.6, not ZIP's0.2.
+use crate::fused::FusedMulAdd as _;
 use super::{length, reciprocal, scale, sub, V};
 use crate::physics::{grind_contact::manager::Jumper, native_arithmetic::dot3};
 
@@ -33,13 +34,13 @@ pub fn launch(mut jumper: Jumper, input: Input) -> Output {
         let amount = if jumper.family == 4 { -0.1093 } else { 0.291 };
         core::array::from_fn(|i| normal[i] + outward[i] * amount)
     } else {
-        core::array::from_fn(|i| geometry.upmost[i].mul_add(0.5, normal[i] * 0.5))
+        core::array::from_fn(|i| geometry.upmost[i].fused_mul_add(0.5, normal[i] * 0.5))
     };
     let magnitude = length(candidate);
     if magnitude > 0.1 { normal = scale(candidate, reciprocal(magnitude)); }
     let planar = sub(input.velocity_400, scale(normal, dot3(input.velocity_400, normal)));
     let vertical = input.vertical_jump * 1.03;
-    let base: V = core::array::from_fn(|i| normal[i].mul_add(vertical, planar[i]));
+    let base: V = core::array::from_fn(|i| normal[i].fused_mul_add(vertical, planar[i]));
     let across = cross(geometry.direction, normal);
     let mut balance = input.balance_2800;
     let low_energy = jumper.energy < 0.31;
@@ -67,8 +68,8 @@ pub fn launch(mut jumper: Jumper, input: Input) -> Output {
 }
 
 fn cross(a: V, b: V) -> V {
-    [(-a[2]).mul_add(b[1], a[1] * b[2]),
-     (-a[0]).mul_add(b[2], a[2] * b[0]),
-     (-a[1]).mul_add(b[0], a[0] * b[1]),
-     (-a[3]).mul_add(b[3], a[3] * b[3])]
+    [(-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+     (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+     (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+     (-a[3]).fused_mul_add(b[3], a[3] * b[3])]
 }

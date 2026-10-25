@@ -60,15 +60,15 @@ impl Control {
             }
             //82D8A238/240: round the nudge product, then fused translation.
             let yaw = deadzone(translation)
-                .mul_add(0.85, deadzone(nudge) * 0.79)
+                .fused_mul_add(0.85, deadzone(nudge) * 0.79)
                 .clamp(-0.85, 0.85);
             (yaw * yaw * yaw, target * target * target, target != input)
         } else {
             (0.0, 0.0, false)
         };
         let response: f32 = if modified { 0.76 } else { 0.91 };
-        self.yaw = self.yaw.mul_add(0.91, yaw * f32::from_bits(0x3db851e8));
-        self.pitch = (1.0 - response).mul_add(pitch, self.pitch * response);
+        self.yaw = self.yaw.fused_mul_add(0.91, yaw * f32::from_bits(0x3db851e8));
+        self.pitch = (1.0 - response).fused_mul_add(pitch, self.pitch * response);
         if self.yaw.abs() < 0.0001 {
             self.yaw = 0.0;
         }

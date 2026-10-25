@@ -1,4 +1,5 @@
 //! SkeletonIK::CalculateExternalIKOffset82BEE390.
+use crate::fused::FusedMulAdd as _;
 use super::{
     math::{axis_rotation, cross, length, limit_length, reciprocal},
     status::{LimbStatus, Mode},
@@ -54,7 +55,7 @@ pub fn update(
     if status.mode == Mode::Local {
         let weight = status.target_blend;
         let desired: [f32; 4] = core::array::from_fn(|lane| {
-            (target.animation_position[lane] - animated[3][lane]).mul_add(
+            (target.animation_position[lane] - animated[3][lane]).fused_mul_add(
                 weight,
                 status.external_target_local_delta[lane] * (1.0 - weight),
             )

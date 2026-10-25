@@ -30,7 +30,11 @@ pub fn hash(text: &str) -> u64 {
     mix(a,b,c).2
 }
 pub fn numeric_name(text: &str) -> String {
-    let key = text.strip_prefix("Hash_").or_else(|| text.strip_prefix("0x"))
-        .and_then(|hex| u64::from_str_radix(hex,16).ok()).unwrap_or_else(|| hash(text));
-    format!("Hash_{key:016X}")
+    format!("Hash_{:016X}", numeric_key(text))
+}
+/// The identity `numeric_name` spells, as a number (two names are the same
+/// identity exactly when their numbers are).
+pub fn numeric_key(text: &str) -> u64 {
+    text.strip_prefix("Hash_").or_else(|| text.strip_prefix("0x"))
+        .and_then(|hex| u64::from_str_radix(hex,16).ok()).unwrap_or_else(|| hash(text))
 }
