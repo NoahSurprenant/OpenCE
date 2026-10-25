@@ -214,6 +214,11 @@ int halo_skate_take_held_hit(struct halo_skate_held_hit *out);
 they ride, as running into a person at closing world units a second is (given
 up after half a second of not riding). 0, or -1 */
 int halo_skate_force_bail(float closing);
+/* the board turns scale times as sharply as the engine's own from the next
+step (its trucks' steering angles scaled: a tighter carve at the same
+speed), within 1 and 2 (Infection's infected: ../linux/game/infection.c).
+A session made later starts at 1: the game tells it every tick. 0, or -1 */
+int halo_skate_set_turn_scale(float scale);
 
 /* multiplayer (../linux/game/skate_network.c): where the skater's last pose
 has the board, 7 floats (a unit quaternion x, y, z, w, and a position in world
@@ -265,6 +270,7 @@ int halo_skate_set_skeleton_in(int session, int count, const char *names, const 
 int halo_skate_pose_nodes_in(int session, float *out, int capacity);
 int halo_skate_take_held_hit_in(int session, struct halo_skate_held_hit *out);
 int halo_skate_force_bail_in(int session, float closing);
+int halo_skate_set_turn_scale_in(int session, float scale);
 int halo_skate_board_placement_in(int session, float *out);
 /* the grind rails the engine found in the session's map (rails.rs), for the
 game's bots: each rail's points (3 floats each, world units) into points

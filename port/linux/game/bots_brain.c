@@ -1482,9 +1482,10 @@ static boolean bot_infection_flee(
 	struct data_iterator iterator;
 	struct player_datum *player;
 	/* (how far it looks out for one, by its difficulty: an easy bot never
-	steps aside, a normal one only late) */
+	steps aside, a normal one only late - a board has to hit it, so a step
+	aside in time is all it takes) */
 	real reach = bot->difficulty == _bot_difficulty_easy ? 0.0f :
-		bot->difficulty == _bot_difficulty_normal ? BOT_FLEE_DISTANCE * 2.0f / 3.0f : BOT_FLEE_DISTANCE;
+		bot->difficulty == _bot_difficulty_normal ? BOT_FLEE_DISTANCE / 2.0f : BOT_FLEE_DISTANCE;
 	real best = reach * reach;
 
 	real away_x = 0.0f, away_y = 0.0f;

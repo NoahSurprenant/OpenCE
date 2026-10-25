@@ -430,13 +430,16 @@ the setting for one start of the game. It has priority over the file.
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.game_seed` | `0` | `HALO_GAME_SEED` | The start of the game's random numbers instead of the time (0: the time), so that a test's games go the same way each run. |
 | `server.infection_run_over` | `0` | `HALO_SERVER_INFECTION_RUN_OVER` | Infection: the damage of an infected skater's run-over, in percent of any skater's; `0`: the game type's own. Refer to "Infection". |
-| `server.infection_damage_taken` | `0` | `HALO_SERVER_INFECTION_DAMAGE_TAKEN` | Infection: the damage the infected take, in percent of anyone's; `0`: the game type's own (50). |
-| `server.infection_speed` | `0` | `HALO_SERVER_INFECTION_SPEED` | Infection: the infected's boards' speed, in percent of any skater's; `0`: the game type's own (115). |
+| `server.infection_damage_taken` | `0` | `HALO_SERVER_INFECTION_DAMAGE_TAKEN` | Infection: the damage the infected take, in percent of anyone's; `0`: the game type's own (35). |
+| `server.infection_speed` | `0` | `HALO_SERVER_INFECTION_SPEED` | Infection: the infected's boards' speed, in percent of any skater's; `0`: the game type's own (140). |
+| `server.infection_turning` | `0` | `HALO_SERVER_INFECTION_TURNING` | Infection: how sharply the infected's boards turn, in percent of any skater's (their trucks steer that much further, 100 to 200); `0`: the game type's own (175). |
 | `debug.gametype_edit` | `""` | `HALO_GAMETYPE_EDIT` | A test's gametype (`debug.network_test`'s host), edited as the gametype editor's spinners do it: `<spinner>=<value>` pairs with commas between, each set to the spinner's choice nearest the value. |
 
-| `debug.infection_reach` | `0` | `HALO_INFECTION_REACH` | Infection's tuning: how much wider a survivor is to an infected skater's board, in hundredths of a world unit; `0`: the game type's own (80). |
+| `debug.infection_reach` | `0` | `HALO_INFECTION_REACH` | Infection's tuning: how much wider a survivor is to an infected skater's board, in hundredths of a world unit; `0`: the game type's own (none: the board has to hit them). |
+| `debug.infection_out_of_reach` | `0` | `HALO_INFECTION_OUT_OF_REACH` | Infection's tests and tuning: the seconds a survivor may stay where no board reaches before it hurts them; `0`: the game type's own (10), below `0` never. |
+| `debug.infection_test_place` | `""` | `HALO_INFECTION_TEST_PLACE` | Infection's tests: players the host puts somewhere once their first unit is in the game, `<player>:<x>,<y>,<z>` (world units; `client` for the person on another machine) with semicolons between. |
 
-| `debug.infection_first` | `""` | `HALO_INFECTION_FIRST` | Infection's tests: the players (absolute indices, with commas between) who start infected, instead of a random choice; `client`: the people on other machines than the host. |
+| `debug.infection_first` | `""` | `HALO_INFECTION_FIRST` | Infection's tests: the players (absolute indices, with commas between) who start infected, instead of a random choice; `client`: the people on other machines than the host; `bots`: every bot. |
 | `debug.skate_test_under_floor` | `0.0` | `HALO_SKATE_TEST_UNDER_FLOOR` | Skate 3 mode's test: that many seconds into a game, the host's first bot skater riding on a floor gets off, is left a little in the floor and gets on again; where its board is, logged. |
 | `debug.infection_test_press` | `false` | `HALO_INFECTION_TEST_PRESS` | Infection's tests: the infected press fire, melee, grenade, action, swap and reload every tick, and bots ask off their boards; none of it may happen, and the host logs what it refused. |
 | `debug.bot_nav_build_delay` | `0.0` | `HALO_BOT_NAV_BUILD_DELAY` | Seconds more that a bots' walking graph not in the cache takes to build (on its own thread: the game goes on), for the tests. Refer to "The walking graph". |
@@ -1154,25 +1157,46 @@ server `infection` in `server.game_types` or `server.maps`
   vehicle, and have no weapons. They come back three seconds after a death,
   on a board again. Their run-over (a skater riding into a person on foot,
   port/skate/README.md's "Multiplayer") deals 300% of any skater's
-  (`server.infection_run_over`, the game type's `infection_run_over`), and
-  a survivor is 0.8 world units wider to their board than to anyone's
-  (`infection_reach`). They are tougher: they take half the damage
-  (`server.infection_damage_taken`, the game type's `infection_damage_taken`),
-  and their boards are 15% quicker, pushing and at speed (their skate
-  sessions step 1.15 times as fast: `server.infection_speed`, the game
-  type's `infection_speed`).
+  (`server.infection_run_over`, the game type's `infection_run_over`); the
+  board has to hit the survivor (`infection_reach`, BOARD REACH, can make a
+  survivor wider to it; none by default). They are tougher: they take 35% of
+  the damage (`server.infection_damage_taken`, the game type's
+  `infection_damage_taken`), their boards are 40% quicker, pushing and at
+  speed (their skate sessions step 1.4 times as fast: `server.infection_speed`,
+  the game type's `infection_speed`), and they carve more sharply than
+  anyone (their trucks steer 1.75 times as far: `server.infection_turning`,
+  the game type's `infection_turning`).
+- **Out of reach:** a survivor who stays 10 seconds where no skateboard
+  reaches (a base's roof, a cliff ledge, Hang 'Em High's tower top) is
+  hurt each second until they come down - a quarter of their health, the
+  shield gone - and one who dies of it comes back infected (the game type's
+  `infection_out_of_reach`, OUT OF REACH: 5 to 30 seconds, or off).
+  "RETURN TO COMBAT" in the middle of their screen counts the seconds down
+  first, and stays while it hurts. Where a board reaches is the bots'
+  walking graph of the map ("The walking graph"): from the main ground a
+  board rides all round, what it rolls up (no steeper than a riding bot
+  takes), down, or drops onto - no jumps, ladders or teleporters; a spot
+  hardly above such ground (under a world unit, within three) counts as
+  reached. The host decides and hurts (no wire change: the vitality goes
+  out as any damage's); every machine builds the graph (a client too, aside,
+  as a host does) to warn its own players. Until the graph is built,
+  nobody is hurt.
 - **Editing it:** Edit Gametypes (or Server Setup's game type) on a Slayer
   gametype: INFECTION OPTIONS... opens Infection's screen - INFECTION
   (on or off: any Slayer gametype can be Infection), INFECTED SPEED,
-  INFECTED DAMAGE TAKEN, RUN-OVER DAMAGE, BOARD REACH, FIRST INFECTED and
-  ROUND TIME, the built-in's values at first. They are kept in the gametype
+  INFECTED DAMAGE TAKEN, RUN-OVER DAMAGE, INFECTED TURNING, BOARD REACH,
+  FIRST INFECTED, ROUND TIME and OUT OF REACH, the built-in's values at first. They are kept in the gametype
   and travel with the game; a dedicated server's `server.infection_*`
   settings override its own.
-- **Tuned with bots:** eight normal bots, five-minute rounds on Blood Gulch
-  (tools/test_infection.py's balance test, seeds 3 to 10): the infected won 5
-  rounds of 8 with the boards at 115% (3 of 8 at 100%; with run-over damage
-  alone they infected 2 or 3 survivors a round and never won: their hits were
-  rare, and already lethal).
+- **Tuned with bots:** eight normal bots, five-minute rounds on Blood
+  Gulch, Sidewinder and Hang 'Em High (tools/test_infection.py's balance
+  test, seeds 3 to 10 on each): with the board having to hit, the infected
+  won 12 rounds of 24 (Blood Gulch 4 of 8, Sidewinder 2, Hang 'Em High 6)
+  at 140% speed, 175% turning and 35% damage taken. At 130% and 50% they
+  won 3 of 12, at 140% and 50% 2 of 12, at 140% and 40% 4 of 12: they have to
+  get to the survivors through their fire, and many of their hits come too
+  slow to run anyone over. (Before, a survivor was 0.8 world units wider to their
+  boards, and they won 5 rounds of 8 on Blood Gulch at 115%.)
 - **The survivors** play as in Team Slayer, with their weapons (no vehicles:
   one in a vehicle could not be run over). A survivor who dies, however,
   comes back infected; a player who joins during the game starts infected.
@@ -1375,11 +1399,14 @@ netgame flags. It still fights what it meets on the way.
 
 `server.game_types` takes `juggernaut` and `infection` too. In Infection
 an infected bot is always on its board and hunts the survivors on it: it
-heads for the nearest survivor and rides at one it sees within 15 world
+heads for the nearest survivor and rides at one it sees within 25 world
 units, at every difficulty but peaceful (a peaceful infected rides about and
-never rides at anyone on purpose). A survivor bot stays on foot and fights
-with its weapons, and steps sideways off the line of an infected skater
-coming at it within 9 world units (or away from one nearer than 2.5).
+never rides at anyone on purpose), steering hard for where they will be when
+it gets there (its board has to hit them). A survivor bot stays on foot and
+fights with its weapons, steps sideways off the line of an infected skater
+coming at it (within 9 world units; a normal bot only within 4.5; or away
+from one nearer than 2.5), and, out of reach for three seconds, heads for
+the nearest ground a board reaches.
 
 ### Bots in vehicles
 

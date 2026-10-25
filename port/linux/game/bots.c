@@ -683,6 +683,19 @@ boolean bots_graphs_ready(
 	return bots_count() == 0 || bots_nav_ready(config_integer("server.bot_vehicles") >= 0);
 }
 
+/* (bots_graph_wanted) the walking graph wanted with no bots */
+static boolean bots_graph_wanted_now;
+
+void bots_graph_wanted(
+	boolean wanted)
+{
+	bots_graph_wanted_now = wanted;
+	/* (a machine hosting no game - a client - has no bots_update: its own
+	graph here) */
+	if (wanted && !global_network_game_server_get())
+		bots_nav_update(TRUE, FALSE);
+}
+
 void bots_update(
 	void)
 {
@@ -737,7 +750,7 @@ void bots_update(
 		return;
 	count = bots_count();
 	/* (the walking graph of the map being played, once there are bots) */
-	bots_nav_update(count > 0, config_integer("server.bot_vehicles") >= 0);
+	bots_nav_update(count > 0 || bots_graph_wanted_now, config_integer("server.bot_vehicles") >= 0);
 	bots_report();
 	wanted = bots_globals.wanted;
 	/* (server.bots_fill: as many as make the players server.bots) */

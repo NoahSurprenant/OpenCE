@@ -272,6 +272,8 @@ struct bot_skate
 	boolean on;
 	boolean riding;
 	boolean ramming;
+	/* (Infection) it is infected: it hunts on its board */
+	boolean infected;
 	boolean bailing;
 	/* it grinds; it lines up with a rail, and the tick before which it tries
 	no other */

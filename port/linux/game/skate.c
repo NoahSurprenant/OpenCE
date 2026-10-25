@@ -2906,7 +2906,9 @@ static void skate_bots_begin_steps(void)
 		if (skate_bots_load.every > 1 && (game_time_get() + index) % skate_bots_load.every != 0)
 			continue;
 		skate_send_obstacles(skater, skater->unit_index);
-		/* (Infection: an infected's board quicker, its session faster) */
+		/* (Infection: an infected's board quicker, its session faster, and
+		turning more sharply) */
+		halo_skate_set_turn_scale_in(index, infection_skate_turn_scale(skater->unit_index));
 		skater->stepping = halo_skate_step_begin_in(index, &skater->pad,
 			infection_skate_time_scale(skater->unit_index) / TICKS_PER_SECOND) == 0;
 		skate_bots_load.stepped += skater->stepping;
@@ -3108,6 +3110,17 @@ static void skate_local_update(void)
 		{
 			told_scale = scale;
 			platform_log("skate: this machine's skater rides at %.2f times the speed (Infection)", scale);
+		}
+		{
+			static real told_turn = 1.f;
+			real turn = infection_skate_turn_scale(skater->unit_index);
+
+			if (turn != told_turn)
+			{
+				told_turn = turn;
+				platform_log("skate: this machine's skater turns %.2f times as sharply (Infection)", turn);
+			}
+			halo_skate_set_turn_scale(turn);
 		}
 		stepped = halo_skate_step(&pad, scale / TICKS_PER_SECOND, &skater->frame);
 	}

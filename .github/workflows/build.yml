@@ -548,19 +548,23 @@ jobs:
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-bots" \
             tools/test_skating_bots.py -k "not floor" > "$RUNNER_TEMP/skate-bots.log" 2>&1 &
           bots=$!
-          # (and Infection, tools/test_infection.py, beside them too)
+          # (and Infection, tools/test_infection.py, beside them too; its out of
+          # reach test with the dedicated server tests, the shortest group)
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/infection" \
             tools/test_infection.py tools/test_skating_bots.py::test_skating_bots_floors \
-            tools/test_skating_bots.py::test_skating_bots_get_on_in_the_floor > "$RUNNER_TEMP/infection.log" 2>&1 &
+            tools/test_skating_bots.py::test_skating_bots_get_on_in_the_floor -k "not test_infection_out_of_reach" \
+            > "$RUNNER_TEMP/infection.log" 2>&1 &
           infection=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
-            tools/test_linux_port.py -k "test_skate_multiplayer or test_skate_hitbox or test_dedicated_server" 2>&1 | tee "$RUNNER_TEMP/skate-mp.log" || true
+            tools/test_linux_port.py tools/test_infection.py::test_infection_out_of_reach \
+            -k "test_skate_multiplayer or test_skate_hitbox or test_dedicated_server or test_infection_out_of_reach" 2>&1 |
+            tee "$RUNNER_TEMP/skate-mp.log" || true
           wait $bots || true
           wait $infection || true
           cat "$RUNNER_TEMP/skate-bots.log"
           cat "$RUNNER_TEMP/infection.log"
-          if ! grep -q '7 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
-            echo "::error::test_skate_multiplayer, test_skate_hitbox and the five test_dedicated_server tests did not all run and pass"
+          if ! grep -q '8 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
+            echo "::error::test_skate_multiplayer, test_skate_hitbox, the five test_dedicated_server tests and test_infection_out_of_reach did not all run and pass"
             exit 1
           fi
           if ! grep -q '8 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
@@ -568,7 +572,7 @@ jobs:
             exit 1
           fi
           if ! grep -q '7 passed' "$RUNNER_TEMP/infection.log" || grep -qi 'skipped' "$RUNNER_TEMP/infection.log"; then
-            echo "::error::the five tests of tools/test_infection.py and the two floor tests did not all run and pass"
+            echo "::error::five tests of tools/test_infection.py and the two floor tests did not all run and pass"
 
             exit 1
           fi
@@ -581,8 +585,8 @@ jobs:
       - name: Game logs
         if: failure()
         run: |
-          for f in "$RUNNER_TEMP"/skate-mp/*/*/run.log "$RUNNER_TEMP"/skate-bots/*/*/run.log \
-            "$RUNNER_TEMP"/infection/*/*/run.log; do
+          for f in "$RUNNER_TEMP"/skate-mp/*/*/run.log "$RUNNER_TEMP"/skate-mp/*/*/*/run.log \
+            "$RUNNER_TEMP"/skate-bots/*/*/run.log "$RUNNER_TEMP"/infection/*/*/run.log; do
 
             [ -f "$f" ] && { echo "== $f"; tail -n 60 "$f"; }
           done

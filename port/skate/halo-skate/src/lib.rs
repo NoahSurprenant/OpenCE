@@ -129,6 +129,8 @@ pub(crate) enum Job {
     /// A bail the game's host decided (`halo_skate_force_bail`): its hit's
     /// closing speed, metres a second.
     ForceBail { closing: f32 },
+    /// (`halo_skate_set_turn_scale`)
+    TurnScale { scale: f32 },
     Step { sequence: u64, pad: HaloSkatePad, dt: f32 },
     Suspend,
 }
@@ -717,6 +719,12 @@ impl Worker {
             Job::Impulse { velocity } => {
                 if let Some((_, s)) = session.as_mut() {
                     s.apply_impulse(velocity.to_array());
+                }
+                return true;
+            }
+            Job::TurnScale { scale } => {
+                if let Some((_, s)) = session.as_mut() {
+                    s.set_turn_scale(scale);
                 }
                 return true;
             }
@@ -1838,6 +1846,16 @@ pub extern "C" fn halo_skate_force_bail(closing: f32) -> i32 {
     with_host(|host| if host.jobs.send(Job::ForceBail { closing }).is_ok() { 0 } else { -1 }).unwrap_or(-1)
 }
 
+/// The board turns `scale` times as sharply as the engine's own from the
+/// next step on (the trucks' steering angles scaled: a tighter carve at the
+/// same speed), within 1 and 2; not finite is 1. The game sends it every
+/// tick (a session made later starts at 1). Returns 0, or -1.
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_set_turn_scale(scale: f32) -> i32 {
+    let scale = if scale.is_finite() { scale.clamp(1.0, 2.0) } else { 1.0 };
+    with_host(|host| if host.jobs.send(Job::TurnScale { scale }).is_ok() { 0 } else { -1 }).unwrap_or(-1)
+}
+
 /// How the riding biped stands on the deck: its ankle node `ankle_height`
 /// world units above its soles (0 or less for unknown, which leaves its
 /// ankles on the skater's), and raised `offset` world units more along the
@@ -2307,6 +2325,11 @@ pub unsafe extern "C" fn halo_skate_take_held_hit_in(session: i32, out: *mut Hal
 #[unsafe(no_mangle)]
 pub extern "C" fn halo_skate_force_bail_in(session: i32, closing: f32) -> i32 {
     in_session(session, -1, || halo_skate_force_bail(closing))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn halo_skate_set_turn_scale_in(session: i32, scale: f32) -> i32 {
+    in_session(session, -1, || halo_skate_set_turn_scale(scale))
 }
 
 /// # Safety

@@ -133,6 +133,11 @@ pub(crate) struct GamePhysics {
     pub(crate) run_over_keep: f32,
     pub(crate) run_through: Vec<(u32, u64)>,
     pub(crate) run_over_slowing: Option<f32>,
+    /// halo-skate: how much more sharply the board turns than the engine's
+    /// own (`Session::set_turn_scale`): the trucks' steering angles this many
+    /// times as large, so the board carves a tighter line at the same speed;
+    /// 1 at first.
+    pub(crate) turn_scale: f32,
     clock: clock::SimulationClock,
     pub board: BoardRuntime,
     pub riding: RidingOutputs,
@@ -382,6 +387,7 @@ impl GamePhysics {
             run_over_keep: 1.0,
             run_through: Vec::new(),
             run_over_slowing: None,
+            turn_scale: 1.0,
             clock: clock::SimulationClock::default(),
             board,
             riding,

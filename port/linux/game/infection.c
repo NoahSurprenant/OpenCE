@@ -40,6 +40,7 @@ gametype's auto team balance already moves players. So the wire is the same.
 #include "bots.h"
 #include "skate.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -73,6 +74,15 @@ static struct
 	long refused_ticks;
 	long breaches;
 	long next_report_tick;
+	/* out of reach: each player's ticks where no board reaches (held while
+	unknown), the unit they were counted for, and the hurts dealt (the host) */
+	long out_of_reach_ticks[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
+	long out_of_reach_unit[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
+	long out_of_reach_hurts[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
+	/* (debug.infection_test_place) the players put where the test wants */
+	boolean placed[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
+	/* the graph's reach was told (the log: once a game) */
+	boolean reach_told;
 } infection;
 
 static struct game_variant const *infection_variant(void)
@@ -221,7 +231,12 @@ void infection_game_starting(void)
 	{
 		infection.infected_tick[index] = NONE;
 		infection.disarmed_unit[index] = NONE;
+		infection.out_of_reach_ticks[index] = 0;
+		infection.out_of_reach_unit[index] = NONE;
+		infection.out_of_reach_hurts[index] = 0;
+		infection.placed[index] = FALSE;
 	}
+	infection.reach_told = FALSE;
 	infection.started = TRUE;
 	infection.over_logged = FALSE;
 	infection.local_team = NONE;
@@ -236,9 +251,11 @@ void infection_game_starting(void)
 		struct slayer_variant const *slayer = &infection_variant()->game_engine_variant.slayer;
 
 		platform_log("infection: the variant: round %ld seconds, run-overs %d%%, speed %d%%, damage taken %d%%, "
-			"reach %d, one infected in %d", infection_time_limit_ticks(game_variant_options_get()->time_limit) /
-			TICKS_PER_SECOND, slayer->infection_run_over, slayer->infection_speed, slayer->infection_damage_taken,
-			slayer->infection_reach, slayer->infection_ratio);
+			"reach %d, one infected in %d, turning %d%%, out of reach %d",
+			infection_time_limit_ticks(game_variant_options_get()->time_limit) / TICKS_PER_SECOND,
+			slayer->infection_run_over, slayer->infection_speed, slayer->infection_damage_taken,
+			slayer->infection_reach, slayer->infection_ratio, slayer->infection_turning,
+			slayer->infection_out_of_reach);
 	}
 	if (!infection_host())
 		return;
@@ -271,8 +288,18 @@ void infection_game_starting(void)
 		char const *list = config_string("debug.infection_first");
 
 		/* ("client": every person on another machine - neither the host's
-		own players nor bots) */
-		if (!strcmp(list, "client"))
+		own players nor bots; "bots": every bot) */
+		if (!strcmp(list, "bots"))
+		{
+			data_iterator_new(&iterator, player_data);
+			while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+			{
+				if (!player->quit_out_of_game && bots_player_is_bot(player))
+					infection_set_team(iterator.datum_index, INFECTION_TEAM_INFECTED, "starts infected (the test's bot)");
+			}
+			list = "";
+		}
+		else if (!strcmp(list, "client"))
 		{
 			data_iterator_new(&iterator, player_data);
 			while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
@@ -436,6 +463,199 @@ static void infection_disarm(void)
 	}
 }
 
+/* ---------- out of reach (infection.h) */
+
+/* the hurt each second out of reach: the shield gone (and held down), and
+this much of the body's vitality - dead in four seconds */
+#define INFECTION_OUT_OF_REACH_HURT 0.25f
+/* a survivor is warned (infection_draw) once out of reach this long: a hop
+onto a crate and back down tells nothing */
+#define INFECTION_OUT_OF_REACH_WARN_TICKS (2 * TICKS_PER_SECOND)
+
+/* the ticks a survivor may stay out of reach before it hurts them; 0: never */
+static long infection_out_of_reach_limit(void)
+{
+	long seconds = infection_variant()->game_engine_variant.slayer.infection_out_of_reach;
+
+	if (seconds == INFECTION_OUT_OF_REACH_NEVER)
+		return 0;
+	if (seconds <= 0)
+		seconds = INFECTION_DEFAULT_OUT_OF_REACH;
+	return seconds * TICKS_PER_SECOND;
+}
+
+/* (debug.infection_test_place, the host) each player the test names put
+where it says, once, as their first unit is in the game */
+static void infection_test_place(void)
+{
+	char const *list = config_string("debug.infection_test_place");
+	struct player_datum *player;
+
+	if (!list || !list[0])
+		return;
+	while (*list)
+	{
+		char *end;
+		long wanted = strtol(list, &end, 10);
+		real_point3d point;
+		/* ("client": the person on another machine, as debug.infection_first) */
+		boolean client = !strncmp(list, "client:", 7);
+
+		if (client)
+			end = (char *)list + 6;
+		else if (end == list || *end != ':')
+			break;
+		list = end + 1;
+		point.x = (real)strtod(list, &end);
+		list = *end == ',' ? end + 1 : end;
+		point.y = (real)strtod(list, &end);
+		list = *end == ',' ? end + 1 : end;
+		point.z = (real)strtod(list, &end);
+		list = end;
+		while (*list == ';' || *list == ' ')
+			list++;
+		{
+			struct data_iterator iterator;
+
+			data_iterator_new(&iterator, player_data);
+			while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+			{
+				long absolute = infection_absolute(iterator.datum_index);
+
+				if (absolute == NONE || infection.placed[absolute] || player->unit_index == NONE ||
+					!object_try_and_get(player->unit_index) || (client ? player->local_player_index != NONE ||
+					bots_player_is_bot(player) : absolute != wanted))
+				{
+					continue;
+				}
+				wanted = absolute;
+				object_set_position(player->unit_index, &point, NULL, NULL);
+				infection.placed[wanted] = TRUE;
+				platform_log("infection: the test puts player %ld at (%.2f %.2f %.2f) at tick %ld", wanted, point.x,
+					point.y, point.z, game_time_get());
+			}
+		}
+	}
+}
+
+/* (the host) a survivor out of reach too long hurt: their vitality, which
+the host's object updates carry to the other machines as any damage's; at
+nothing, killed (nobody's kill: they come back infected) */
+static void infection_out_of_reach_hurt(long unit_index)
+{
+	struct object_datum *object = object_get(unit_index);
+
+	object->object.shield_vitality = 0.0f;
+	object->object.shield_stun_ticks = (short)MAX(object->object.shield_stun_ticks, 2 * TICKS_PER_SECOND);
+	object->object.body_vitality -= INFECTION_OUT_OF_REACH_HURT;
+	if (object->object.body_vitality <= 0.001f)
+	{
+		object->object.body_vitality = 0.0f;
+		unit_kill(unit_index);
+	}
+}
+
+/* every machine, each tick of the game: each survivor's time out of reach
+(a client, its own players'), and the host's hurt once it runs past the
+limit, each second until they come down (or die, infected) */
+static void infection_out_of_reach_update(void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	long limit = infection_out_of_reach_limit();
+	boolean host = infection_host();
+	long now = game_time_get();
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		long absolute = infection_absolute(iterator.datum_index);
+		struct object_datum *unit;
+		real_point3d origin;
+		real node_x = 0.0f, node_y = 0.0f, node_z = 0.0f;
+		long reach;
+
+		if (absolute == NONE)
+			continue;
+		unit = player->unit_index != NONE ? object_try_and_get(player->unit_index) : NULL;
+		if (limit <= 0 || !unit || player->team_index != INFECTION_TEAM_SURVIVORS ||
+			TEST_FLAG(unit->object.damage_flags, _object_dead_bit) || (!host && player->local_player_index == NONE))
+		{
+			infection.out_of_reach_ticks[absolute] = 0;
+			infection.out_of_reach_unit[absolute] = NONE;
+			continue;
+		}
+		if (infection.out_of_reach_unit[absolute] != player->unit_index)
+		{
+			infection.out_of_reach_unit[absolute] = player->unit_index;
+			infection.out_of_reach_ticks[absolute] = 0;
+			infection.out_of_reach_hurts[absolute] = 0;
+		}
+		object_get_origin(player->unit_index, &origin);
+		reach = bots_board_reaches(origin.x, origin.y, origin.z, &node_x, &node_y, &node_z);
+		if (!infection.reach_told && reach != NONE)
+		{
+			infection.reach_told = TRUE;
+			platform_log("infection: out of reach is decided by the walking graph from tick %ld", now);
+		}
+		if (reach == 1)
+		{
+			if (infection.out_of_reach_ticks[absolute] > 0)
+			{
+				platform_log("infection: player %ld is back in reach at (%.2f %.2f %.2f) after %ld ticks at tick %ld",
+					absolute, origin.x, origin.y, origin.z, infection.out_of_reach_ticks[absolute], now);
+			}
+			infection.out_of_reach_ticks[absolute] = 0;
+			continue;
+		}
+		if (reach != 0)
+			continue;
+		if (infection.out_of_reach_ticks[absolute]++ == 0)
+		{
+			platform_log("infection: player %ld is out of reach at (%.2f %.2f %.2f), node (%.2f %.2f %.2f), at tick %ld",
+				absolute, origin.x, origin.y, origin.z, node_x, node_y, node_z, now);
+		}
+		if (host && infection.out_of_reach_ticks[absolute] >= limit &&
+			(infection.out_of_reach_ticks[absolute] - limit) % TICKS_PER_SECOND == 0)
+		{
+			real shield = unit->object.shield_vitality, body = unit->object.body_vitality;
+
+			infection_out_of_reach_hurt(player->unit_index);
+			unit = object_try_and_get(player->unit_index);
+			infection.out_of_reach_hurts[absolute]++;
+			platform_log("infection: player %ld hurt out of reach (%ld) at (%.2f %.2f %.2f) at tick %ld: shield %.2f to "
+				"%.2f, body %.2f to %.2f%s", absolute, infection.out_of_reach_hurts[absolute], origin.x, origin.y,
+				origin.z, now, shield, unit ? unit->object.shield_vitality : 0.0f, body,
+				unit ? unit->object.body_vitality : 0.0f,
+				!unit || TEST_FLAG(unit->object.damage_flags, _object_dead_bit) ? ", killed" : "");
+		}
+	}
+}
+
+long infection_out_of_reach_ticks(long player_index)
+{
+	long absolute = infection_absolute(player_index);
+
+	return absolute != NONE && infection_active() ? infection.out_of_reach_ticks[absolute] : 0;
+}
+
+/* the local player's warning: (TRUE) out of reach long enough to be told,
+with the seconds left before it hurts (0: hurting) */
+static boolean infection_out_of_reach_warning(long player_index, long *seconds_left)
+{
+	long absolute = infection_absolute(player_index);
+	long limit = infection_out_of_reach_limit();
+	long ticks;
+
+	if (absolute == NONE || limit <= 0)
+		return FALSE;
+	ticks = infection.out_of_reach_ticks[absolute];
+	if (ticks < MIN(INFECTION_OUT_OF_REACH_WARN_TICKS, limit / 2) || ticks <= 0)
+		return FALSE;
+	*seconds_left = ticks >= limit ? 0 : (limit - ticks + TICKS_PER_SECOND - 1) / TICKS_PER_SECOND;
+	return TRUE;
+}
+
 void infection_update(void)
 {
 	struct data_iterator iterator;
@@ -443,7 +663,12 @@ void infection_update(void)
 	long now = game_time_get();
 
 	if (!infection_active())
+	{
+		bots_graph_wanted(FALSE);
 		return;
+	}
+	/* (out of reach: the map's walking graph, a client's its own) */
+	bots_graph_wanted(infection_out_of_reach_limit() > 0);
 	/* (every machine: each player's side from their unit, which the host
 	made - a client's own player's too, whose unit is not always attached as
 	the others' are; and when each was first seen infected) */
@@ -479,9 +704,13 @@ void infection_update(void)
 				mine->team_index == INFECTION_TEAM_INFECTED ? "infected" : "a survivor", now);
 		}
 	}
+	/* (every machine: out of reach) */
+	if (game_engine_port_game_active())
+		infection_out_of_reach_update();
 	if (!infection_host() || !game_engine_port_game_active())
 		return;
 
+	infection_test_place();
 	infection_disarm();
 	/* the last infected gone (quit) with survivors still playing: one of them
 	is infected, dying where they stand to come back on a board */
@@ -563,6 +792,10 @@ void infection_variant_defaults(struct game_variant *variant)
 		slayer->infection_reach = INFECTION_DEFAULT_REACH;
 	if (!slayer->infection_speed)
 		slayer->infection_speed = INFECTION_DEFAULT_SPEED;
+	if (!slayer->infection_turning)
+		slayer->infection_turning = INFECTION_DEFAULT_TURNING;
+	if (!slayer->infection_out_of_reach)
+		slayer->infection_out_of_reach = INFECTION_DEFAULT_OUT_OF_REACH;
 }
 
 real infection_skate_time_scale(long unit_index)
@@ -574,6 +807,16 @@ real infection_skate_time_scale(long unit_index)
 		return 1.0f;
 	percent = infection_variant()->game_engine_variant.slayer.infection_speed;
 	return percent > 0 ? (real)PIN(percent, 50, 250) / 100.0f : 1.0f;
+}
+
+real infection_skate_turn_scale(long unit_index)
+{
+	long percent;
+
+	if (!infection_unit_restricted(unit_index))
+		return 1.0f;
+	percent = infection_variant()->game_engine_variant.slayer.infection_turning;
+	return percent > 0 ? (real)PIN(percent, 100, 200) / 100.0f : 1.0f;
 }
 
 real infection_board_reach(long skater_unit_index, long biped_index)
@@ -642,4 +885,44 @@ void infection_draw(short local_player_index)
 	/* draw mode 2: centred */
 	draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
 	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, text);
+	/* out of reach: told in the middle of the screen, the seconds left before
+	it hurts, and held while it does */
+	{
+		long seconds_left;
+		short middle;
+
+		if (player->team_index != INFECTION_TEAM_SURVIVORS || !infection_out_of_reach_warning(player_index, &seconds_left))
+			return;
+		if (seconds_left > 0)
+			usnprintf(text, NUMBEROF(text) - 1, L"RETURN TO COMBAT\r\n%ld", seconds_left);
+		else
+			usnprintf(text, NUMBEROF(text) - 1, L"RETURN TO COMBAT");
+		text[NUMBEROF(text) - 1] = 0;
+		/* (red, beating once a second while it hurts) */
+		color.red = 1.0f;
+		color.green = 0.2f;
+		color.blue = 0.15f;
+		color.alpha = seconds_left > 0 ? 1.0f : 0.55f + 0.45f * (real)fabs(sin((real)game_time_get() * _pi / TICKS_PER_SECOND));
+		/* (above the crosshair, clear of it) */
+		bounds = render.camera.window_bounds;
+		middle = (short)((bounds.y0 + bounds.y1) / 2);
+		bounds.y0 = (short)(middle - 3 * height - 8);
+		bounds.y1 = (short)(bounds.y0 + 2 * height + 4);
+		/* (a dark shadow under it, two pixels down and right, so that it
+		reads over the sky and the sand alike) */
+		{
+			real_argb_color shadow = { 0.8f, 0.0f, 0.0f, 0.0f };
+			rectangle2d below = bounds;
+
+			shadow.alpha = color.alpha * 0.8f;
+			below.x0 += 2;
+			below.x1 += 2;
+			below.y0 += 2;
+			below.y1 += 2;
+			draw_string_set_draw_mode(font_index, NONE, 2, 0, &shadow);
+			rasterizer_draw_unicode_string(&below, NULL, NULL, 0, text);
+		}
+		draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
+		rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, text);
+	}
 }
