@@ -18,6 +18,7 @@ objects (render.c). */
 #include "items/weapon_definitions.h"
 #include "items/weapons.h"
 #include "main/console.h"
+#include "main/main.h"
 #include "models/model_definitions.h"
 #include "objects/object_definitions.h"
 #include "objects/objects.h"
@@ -93,6 +94,11 @@ teleporter or a script, and the skater goes there (skate_follow_teleport) */
 it: the skate engine's level has a hole there, or the skater went through a
 seam; Halo's own falls are a biped's, and a skater's biped is the engine's */
 #define SKATE_FALLEN_DEPTH 2.f
+/* a skater fallen out of the level again this soon after it was put back
+(ticks), or with nowhere in the level known to put it back, is not put back
+on the board there: off it, at the spawn nearest, with the level sent to its
+session again (skate_reset_fallen): put back, it fell again and again */
+#define SKATE_FALLEN_AGAIN_TICKS (10 * TICKS_PER_SECOND)
 
 /* a skater this machine runs the skate engine for: its player's (skater 0,
 driven by the pad), or one of the host's bots' (skate_bot_..., driven by
@@ -133,6 +139,8 @@ struct skate_skater
 	boolean grounded;
 	real_point3d ground_position;
 	real ground_yaw;
+	/* the game time it was last put back after a fall (NONE: not this game) */
+	long rescued_time;
 	boolean placed;
 	real_point3d placed_position;
 	real placed_yaw;
@@ -648,6 +656,7 @@ void skate_initialize(void)
 		skater->loaded_structure_bsp_index = NONE;
 		skater->skeleton_definition_index = NONE;
 		skater->wanted_time = NONE;
+		skater->rescued_time = NONE;
 	}
 	/* (the engine says when there is no assets folder; nothing more happens
 	until J). A dedicated server has no player of its own to skate: only its
@@ -681,15 +690,19 @@ void skate_structure_bsp_changed(void)
 		/* (a J still waiting for its load waits for this bsp's instead) */
 		boolean waiting = skater->activate_when_ready && !skater->skating;
 
+		/* (this bsp is not the one loaded, even where a new map's scenario tag
+		has the old one's index - the multiplayer maps' do - for
+		every session: one given up by its bot kept the last map's level, and a
+		bot given it later rode that, falling through the floors this one has
+		and out of the level again and again) */
+		skater->loaded_scenario_index = NONE;
+		skater->loaded_structure_bsp_index = NONE;
+		skater->map_pending = FALSE;
+		skater->rescued_time = NONE;
 		if (!skate_skater_used(skater))
 			continue;
 		/* the board is left in the old bsp's collision */
 		skate_stop(skater, "the level changed");
-		/* (and this bsp is not the one loaded, even where a new map's scenario
-		tag has the old one's index) */
-		skater->loaded_scenario_index = NONE;
-		skater->loaded_structure_bsp_index = NONE;
-		skater->map_pending = FALSE;
 		/* nobody skates in the main menu; a failed preload is retried on J
 		(a bot's, when it next wants to ride) */
 		if (!skater->preloaded || !scenario || scenario->type == _scenario_type_main_menu ||
@@ -1395,14 +1408,74 @@ static real_point3d skate_ground_under(long unit_index, real_point3d const *from
 
 /* the skater put on the board again at spot (on the ground under it), facing
 yaw: the network test's duel (debug.network_test_skate_duel) */
-static void skate_put(struct skate_skater *skater, long unit_index, real_point3d const *spot, real yaw)
+static boolean skate_put(struct skate_skater *skater, long unit_index, real_point3d const *spot, real yaw)
 {
 	real_point3d ground = skate_ground_under(unit_index, spot);
 
 	if (halo_skate_activate_in(skate_session(skater), &ground.x, yaw, &skater->frame) != 0)
-		return;
+		return FALSE;
 	skate_skater_board_forget(skater);
 	skate_apply_frame(skater, unit_index, TRUE);
+	return TRUE;
+}
+
+/* fallen out of the level again soon after it was put back, or with nowhere
+known in the level to put it: the skater's session has a level that is not
+this one where it rides (a session given its level on a map before kept that
+map's), or the place it was put back is no floor in it. Off the board, its
+biped put at the spawn nearest (Halo's physics, which has the level, holds it
+up), and the level sent to its session again: the bot (or J) gets on again
+from there */
+static void skate_reset_fallen(struct skate_skater *skater, long unit_index, char const *why)
+{
+	struct scenario *scenario = global_scenario_get();
+	real_point3d from, spot;
+	real best = -1.f;
+	real facing = 0.f;
+	long index;
+
+	from.x = skater->grounded ? skater->ground_position.x : skater->frame.position[0];
+	from.y = skater->grounded ? skater->ground_position.y : skater->frame.position[1];
+	from.z = skater->grounded ? skater->ground_position.z : skater->frame.position[2];
+	spot = from;
+	for (index = 0; scenario && index < scenario->players.count; index++)
+	{
+		struct player_starting_location *start = TAG_BLOCK_GET_ELEMENT(&scenario->players, index,
+			struct player_starting_location);
+		real distance = distance_squared3d(&start->position, &from);
+
+		if (best < 0.f || distance < best)
+		{
+			best = distance;
+			spot = start->position;
+			facing = start->facing;
+		}
+	}
+	platform_log("skate: %s fell out of the level %s at (%.2f %.2f %.2f): off the board at the spawn at (%.2f %.2f "
+		"%.2f), the level sent to its session again", skater == skate_local ? "this machine's skater" : "a bot's skater",
+		why, skater->frame.position[0], skater->frame.position[1], skater->frame.position[2], spot.x, spot.y, spot.z);
+	skate_stop(skater, "put at a spawn");
+	skater->rescued_time = NONE;
+	skater->grounded = FALSE;
+	/* (its level sent on the next tick, as to a session just made) */
+	skater->loaded_scenario_index = NONE;
+	skater->loaded_structure_bsp_index = NONE;
+	skater->map_pending = skate_skater_used(skater) && skater->preloaded;
+	if (best >= 0.f)
+	{
+		struct object_datum *object = object_get(unit_index);
+		real_vector3d forward, up;
+
+		forward.i = (real)cos(facing);
+		forward.j = (real)sin(facing);
+		forward.k = 0.f;
+		up.i = up.j = 0.f;
+		up.k = 1.f;
+		object_set_position(unit_index, &spot, &forward, &up);
+		object->object.translational_velocity.i = 0.f;
+		object->object.translational_velocity.j = 0.f;
+		object->object.translational_velocity.k = 0.f;
+	}
 }
 
 /* each tick a skater is posed: where it is on the ground kept; fallen out
@@ -1427,13 +1500,28 @@ static void skate_rescue_fallen(struct skate_skater *skater, long unit_index)
 		skater->ground_yaw = (real)atan2(skater->frame.forward[1], skater->frame.forward[0]);
 		return;
 	}
-	if (!skater->grounded || !(skater->frame.position[2] < bsp->world_bounds.z0 - SKATE_FALLEN_DEPTH))
+	if (!(skater->frame.position[2] < bsp->world_bounds.z0 - SKATE_FALLEN_DEPTH))
 		return;
+	/* (put back there before, it fell again: off the board, the level sent
+	again; never put back where it falls on and on) */
+	if (!skater->grounded)
+	{
+		skate_reset_fallen(skater, unit_index, "with nowhere in the level to be put back");
+		return;
+	}
+	if (skater->rescued_time != NONE && game_time_get() >= skater->rescued_time &&
+		game_time_get() - skater->rescued_time < SKATE_FALLEN_AGAIN_TICKS)
+	{
+		skate_reset_fallen(skater, unit_index, "again, soon after it was put back");
+		return;
+	}
 	platform_log("skate: %s fell out of the level at (%.2f %.2f %.2f), below %.2f: back on the board at (%.2f %.2f %.2f)",
 		skater == skate_local ? "this machine's skater" : "a bot's skater", skater->frame.position[0],
 		skater->frame.position[1], skater->frame.position[2], bsp->world_bounds.z0, skater->ground_position.x,
 		skater->ground_position.y, skater->ground_position.z);
-	skate_put(skater, unit_index, &skater->ground_position, skater->ground_yaw);
+	skater->rescued_time = game_time_get();
+	if (!skate_put(skater, unit_index, &skater->ground_position, skater->ground_yaw))
+		skate_reset_fallen(skater, unit_index, "and could not be put back");
 }
 
 
@@ -1480,6 +1568,66 @@ static void skate_test_under_floor(struct skate_skater *skater)
 		skater->frame.position[2] - collision.point.z);
 }
 
+const char *config_string(const char *name);
+
+/* debug.skate_test_spot "MAP SECONDS X Y Z YAW [SESSION]": that many seconds
+into the first game on that map, the first bot's skater riding (that skate
+session's, when given) gets off, its biped is put at the spot facing yaw
+(degrees) and it gets on its board there, as a respawn there and a get-on
+would; for the next five seconds where it is, logged (a fall out of the level
+is logged as ever) */
+static void skate_test_spot(struct skate_skater *skater)
+{
+	static long done_time = NONE;
+	static struct skate_skater *tested = NULL;
+	char const *setting = config_string("debug.skate_test_spot");
+	char const *map = main_get_multiplayer_map_name();
+	char name[32];
+	float seconds, x, y, z, yaw;
+	int session = 0;
+	long unit_index = skater->unit_index;
+	real_point3d spot;
+	real_vector3d forward, up;
+
+	if (!setting || sscanf(setting, "%31s %f %f %f %f %f %d", name, &seconds, &x, &y, &z, &yaw, &session) < 6)
+		return;
+	if (done_time != NONE)
+	{
+		long since = game_time_get() - done_time;
+
+		/* (watched in that game alone) */
+		if (since < 0 || since > 5 * TICKS_PER_SECOND)
+			tested = NULL;
+		if (skater == tested && since > 0 && since <= 5 * TICKS_PER_SECOND && since % 5 == 0)
+		{
+			platform_log("skate test spot: %ld ticks after, the skater at (%.2f %.2f %.2f), %s", since,
+				skater->frame.position[0], skater->frame.position[1], skater->frame.position[2], skater->frame.state);
+		}
+		return;
+	}
+	if (game_time_get() < (long)(seconds * TICKS_PER_SECOND) || !map || !strstr(map, name) ||
+		(session > 0 && skate_session(skater) != session))
+	{
+		return;
+	}
+	done_time = game_time_get();
+	tested = skater;
+	skate_stop(skater, "the test's");
+	forward.i = (real)cos(yaw * M_PI / 180.);
+	forward.j = (real)sin(yaw * M_PI / 180.);
+	forward.k = 0.f;
+	up.i = up.j = 0.f;
+	up.k = 1.f;
+	spot.x = x;
+	spot.y = y;
+	spot.z = z;
+	object_set_position(unit_index, &spot, &forward, &up);
+	skate_start(skater, unit_index);
+	platform_log("skate test spot: a bot's skater got on its board at (%.2f %.2f %.2f) facing %.0f degrees: the board at "
+		"(%.2f %.2f %.2f), %s", x, y, z, yaw, skater->frame.position[0], skater->frame.position[1],
+		skater->frame.position[2], skater->frame.state);
+}
+
 static void skate_start(struct skate_skater *skater, long unit_index)
 {
 
@@ -1503,7 +1651,9 @@ static void skate_start(struct skate_skater *skater, long unit_index)
 	}
 	skater->skating = TRUE;
 	skater->unit_index = unit_index;
-	skater->grounded = TRUE;
+	/* (a get-on under the level - the ground probe found nothing - is nowhere
+	to put a fallen skater back) */
+	skater->grounded = global_structure_bsp_get() && ground.z >= global_structure_bsp_get()->world_bounds.z0;
 	skater->ground_position = ground;
 	skater->ground_position.z += 0.1f;
 	skater->ground_yaw = (real)atan2(object->object.forward.j, object->object.forward.i);
@@ -2689,6 +2839,9 @@ static struct skate_skater *skate_bot_skater_for(long player_index)
 	short allowed = skate_bots_allowed();
 	short index;
 
+	/* (its own, its level to be sent again: skate_reset_fallen) */
+	if (skater && skater->preloaded && !skate_map_loaded(skater))
+		skater->map_pending = TRUE;
 	if (skater || !skate_bots_data)
 		return skater;
 	for (index = 1; index <= allowed; index++)
@@ -2897,6 +3050,8 @@ static void skate_bots_begin_steps(void)
 			continue;
 		/* (debug.skate_test_under_floor) */
 		skate_test_under_floor(skater);
+		/* (debug.skate_test_spot) */
+		skate_test_spot(skater);
 		/* (moved by a teleporter or a script: the skater goes there) */
 		skate_follow_teleport(skater, skater->unit_index);
 		/* (a blast pushed them) */

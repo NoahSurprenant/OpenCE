@@ -681,6 +681,11 @@ static const struct config_setting config_settings[] =
 		"Skate 3 mode's test: that many seconds into a game, the host's first bot\n"
 		"skater riding on a floor gets off, is left a little in the floor (as a\n"
 		"wipeout leaves one) and gets on again; where its board is, logged." },
+	{ "debug.skate_test_spot", _config_string, "\"\"", "HALO_SKATE_TEST_SPOT", _environment_value, _platform_all,
+		"Skate 3 mode's test: \"<map> <seconds> <x> <y> <z> <yaw> [session]\": that\n"
+		"many seconds into the first game on that map, the host's first bot\n"
+		"skater riding (that skate session's, when given) gets off, is put at\n"
+		"the spot facing yaw (degrees) and gets on there; where it goes, logged." },
 	{ "debug.game_seed", _config_integer, "0", "HALO_GAME_SEED", _environment_value, _platform_all,
 
 

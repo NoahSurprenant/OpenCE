@@ -642,6 +642,39 @@ lossy link and expects none, and `test_skating_bots_get_on_in_the_floor`
 (`debug.skate_test_under_floor`) a biped left in the floor to get on its
 board on it.
 
+Bots still fell out of Hang 'Em High hundreds of times a game on the live
+server, put back and falling again at once, because their skate session
+rode another map's level:
+
+- A session keeps the level it was sent. On a new map every session in use
+  was told to forget it, but one given up (its bot died, left, or stopped
+  riding) kept the last map's, and a new map's scenario has the old one's
+  tag index - the multiplayer maps' do -
+  so when a bot was given that session later it counted as loaded: the bot
+  rode Sidewinder's level on Hang 'Em High, through its floors and out.
+  Now every session forgets its level on a new map
+  (`skate_structure_bsp_changed`), used or not.
+- Skate 3's own reset after a bail (`physics/respawn.rs` in the vendored
+  skate-host) picks among checkpoints where the skater rode; they were kept
+  across get-ons, so a session copied from the first, or kept from another
+  map, could be thrown to one outside this level. They are forgotten when
+  the skater is put on the board (`travel_to`), the new spot the only one.
+- The rescue never loops: a skater that falls out again within 10 seconds of
+  being put back, or with nowhere in this level known to put it, or that
+  cannot be put back, is taken off its board at the nearest spawn (Halo's
+  physics, which has the level, holds it up) and its session sent the level
+  again (`skate_reset_fallen`; the log says `fell out of the level again
+  ...: off the board at the spawn at ...`); the bot, or J, gets on again
+  from there.
+
+`test_skating_bots_a_board_on_the_level_it_rides` plays Infection on
+Sidewinder then Hang 'Em High with a bot's session given up in the first and
+taken by a bot added in the second, put on its board where the live server's
+fell (`debug.skate_test_spot`); `test_skating_bots_never_fall_again` puts a
+bot's board under Blood Gulch and expects one fall and no more;
+`real_assets_halo_map.rs`'s `a_bail_resets_about_where_the_skater_was_put`
+the engine's reset never to go back to where the skater rode before.
+
 
 ### Feet on the deck
 
