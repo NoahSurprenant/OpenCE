@@ -5,7 +5,7 @@
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/game_type_select/header_rules"/>
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_options_menu"/>
 	</widget>
-	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_options_help" type="text" controller="1" left="68" top="321" width="482" height="79" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/cap_infection_options" font="ui\large_ui" color="#FFFFFFFF">
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_options_help" type="text" controller="1" left="68" top="345" width="482" height="66" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/cap_infection_options" font="ui\large_ui" color="#FFFFFFFF">
 	</widget>
 	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_options_menu" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_children" description="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_options_help">
 		<data input="game settings lists text update"/>
@@ -14,9 +14,11 @@
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_speed" x="54" y="103"/>
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_damage_taken" x="54" y="133"/>
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_run_over" x="54" y="163"/>
-		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_reach" x="54" y="193"/>
-		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_ratio" x="54" y="223"/>
-		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_minutes" x="54" y="253"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_turning" x="54" y="193"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_reach" x="54" y="223"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_ratio" x="54" y="253"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_minutes" x="54" y="283"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_out_of_reach" x="54" y="313"/>
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
@@ -98,16 +100,33 @@
 		<string text="500%"/>
 		<string text="1000%"/>
 	</strings>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_turning" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_turning_label"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_turning_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_turning_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_labels" string_index="4" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_turning_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/var_infection_turning" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/var_infection_turning">
+		<string text="100%"/>
+		<string text="125%"/>
+		<string text="150%"/>
+		<string text="175%"/>
+		<string text="200%"/>
+	</strings>
 	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_reach" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_reach_label"/>
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_reach_spinner" x="286" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_reach_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_labels" string_index="4" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_reach_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_labels" string_index="5" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
 	</widget>
 	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_reach_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/var_infection_reach" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/var_infection_reach">
+		<string text="0.0 WU"/>
 		<string text="0.2 WU"/>
 		<string text="0.4 WU"/>
 		<string text="0.6 WU"/>
@@ -119,7 +138,7 @@
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_ratio_label"/>
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_ratio_spinner" x="286" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_ratio_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_labels" string_index="5" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_ratio_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_labels" string_index="6" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
 	</widget>
 	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_ratio_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/var_infection_ratio" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
@@ -136,7 +155,7 @@
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_minutes_label"/>
 		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_minutes_spinner" x="286" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_minutes_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_labels" string_index="6" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_minutes_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_labels" string_index="7" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
 	</widget>
 	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_minutes_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/var_infection_minutes" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
@@ -151,14 +170,33 @@
 		<string text="8 MIN"/>
 		<string text="10 MIN"/>
 	</strings>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/op_infection_out_of_reach" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_out_of_reach_label"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_out_of_reach_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_out_of_reach_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_labels" string_index="8" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_out_of_reach_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/var_infection_out_of_reach" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/var_infection_out_of_reach">
+		<string text="OFF"/>
+		<string text="5 SEC"/>
+		<string text="10 SEC"/>
+		<string text="15 SEC"/>
+		<string text="20 SEC"/>
+		<string text="30 SEC"/>
+	</strings>
 	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_labels">
 		<string text="INFECTION:"/>
 		<string text="INFECTED SPEED:"/>
 		<string text="INFECTED DAMAGE TAKEN:"/>
 		<string text="RUN-OVER DAMAGE:"/>
+		<string text="INFECTED TURNING:"/>
 		<string text="BOARD REACH:"/>
 		<string text="FIRST INFECTED:"/>
 		<string text="ROUND TIME:"/>
+		<string text="OUT OF REACH:"/>
 	</strings>
 	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/cap_infection_options">
 		<string text="Slayer as it is."/>
@@ -186,6 +224,12 @@
 		<string text="An infected's run-over deals 400% of any\nskater's."/>
 		<string text="An infected's run-over deals 500% of any\nskater's."/>
 		<string text="An infected's run-over deals 1000% of any\nskater's."/>
+		<string text="The infected's boards turn 100% as sharply as\nanyone's."/>
+		<string text="The infected's boards turn 125% as sharply as\nanyone's."/>
+		<string text="The infected's boards turn 150% as sharply as\nanyone's."/>
+		<string text="The infected's boards turn 175% as sharply as\nanyone's."/>
+		<string text="The infected's boards turn 200% as sharply as\nanyone's."/>
+		<string text="An infected's board has to hit a survivor."/>
 		<string text="A survivor is 0.2 world units wider to an\ninfected's board."/>
 		<string text="A survivor is 0.4 world units wider to an\ninfected's board."/>
 		<string text="A survivor is 0.6 world units wider to an\ninfected's board."/>
@@ -206,6 +250,12 @@
 		<string text="The survivors win if any is left after 6\nminutes."/>
 		<string text="The survivors win if any is left after 8\nminutes."/>
 		<string text="The survivors win if any is left after 10\nminutes."/>
+		<string text="A survivor may stay anywhere."/>
+		<string text="A survivor where no board reaches is hurt after\n5 seconds, until they come down."/>
+		<string text="A survivor where no board reaches is hurt after\n10 seconds, until they come down."/>
+		<string text="A survivor where no board reaches is hurt after\n15 seconds, until they come down."/>
+		<string text="A survivor where no board reaches is hurt after\n20 seconds, until they come down."/>
+		<string text="A survivor where no board reaches is hurt after\n30 seconds, until they come down."/>
 	</strings>
 	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/slayer_edit/op_infection_options" type="text" width="512" height="28" bitmap="bitmaps/option_bkds" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_row" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
 		<on event="a" open="main_menu/settings_select/multiplayer_setup/playlist_edit/infection_edit/infection_options_screen"/>

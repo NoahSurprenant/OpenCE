@@ -610,7 +610,8 @@ static const struct config_setting config_settings[] =
 		"How each bot goes about boards (Skate 3 mode), with commas between, one\n"
 		"for each bot in the order they join: \"ram\" (it stays on its board in a\n"
 		"fight and rides at people on foot), \"never\" (it stays on foot),\n"
-		"\"stand\" (it stands still on foot) or anything else (as it sees fit); one\n"
+		"\"stand\" (it stands still on foot), \"hold\" (it stands still, infected\n"
+		"too) or anything else (as it sees fit); one\n"
 		"entry after a star (\"*ram\") is every bot's. For\n"
 		"the tests. Empty: all as they see fit." },
 	{ "debug.bot_tricks", _config_string, "\"\"", "HALO_BOT_TRICKS", _environment_value, _platform_all,
@@ -635,10 +636,10 @@ static const struct config_setting config_settings[] =
 	{ "server.infection_damage_taken", _config_integer, "0", "HALO_SERVER_INFECTION_DAMAGE_TAKEN", _environment_value,
 		_platform_all,
 		"Infection: the damage the infected take, in percent of anyone's (their\n"
-		"toughness); 0 for the game type's own (50)." },
+		"toughness); 0 for the game type's own (35)." },
 	{ "debug.infection_reach", _config_integer, "0", "HALO_INFECTION_REACH", _environment_value, _platform_all,
 		"Infection's tuning: how much wider a survivor is to an infected skater's\n"
-		"board, in hundredths of a world unit; 0 for the game type's own (80)." },
+		"board, in hundredths of a world unit; 0 for the game type's own (none)." },
 	{ "debug.infection_test_press", _config_boolean,
 
  "false", "HALO_INFECTION_TEST_PRESS", _environment_value,
@@ -653,12 +654,28 @@ static const struct config_setting config_settings[] =
 	{ "server.infection_speed", _config_integer, "0", "HALO_SERVER_INFECTION_SPEED", _environment_value,
 		_platform_all,
 		"Infection: the infected's boards' speed, in percent of any skater's; 0\n"
-		"for the game type's own (115)." },
+		"for the game type's own (140)." },
+	{ "server.infection_turning", _config_integer, "0", "HALO_SERVER_INFECTION_TURNING", _environment_value,
+		_platform_all,
+		"Infection: how sharply the infected's boards turn, in percent of any\n"
+		"skater's (their trucks steer that much further, 100 to 200); 0 for the\n"
+		"game type's own (175)." },
+	{ "debug.infection_out_of_reach", _config_integer, "0", "HALO_INFECTION_OUT_OF_REACH", _environment_value,
+		_platform_all,
+		"Infection's tests and tuning: the seconds a survivor may stay where no\n"
+		"board reaches before it hurts them; 0 for the game type's own (10),\n"
+		"below 0 never." },
+	{ "debug.infection_test_place", _config_string, "\"\"", "HALO_INFECTION_TEST_PLACE", _environment_value,
+		_platform_all,
+		"Infection's tests: players (absolute indices) the host puts somewhere\n"
+		"once their first unit is in the game, \"<player>:<x>,<y>,<z>\" with\n"
+		"semicolons between (world units; \"client\" for the person on another\n"
+		"machine)." },
 	{ "debug.infection_first", _config_string,
  "\"\"", "HALO_INFECTION_FIRST", _environment_value, _platform_all,
 		"Infection's test: the players (absolute indices, with commas between)\n"
 		"who start infected, instead of a random choice; \"client\": the people on\n"
-		"other machines than the host." },
+		"other machines than the host; \"bots\": every bot." },
 	{ "debug.skate_test_under_floor", _config_real, "0.0", "HALO_SKATE_TEST_UNDER_FLOOR", _environment_value,
 		_platform_all,
 		"Skate 3 mode's test: that many seconds into a game, the host's first bot\n"

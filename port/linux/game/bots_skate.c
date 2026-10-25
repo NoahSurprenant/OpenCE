@@ -38,6 +38,7 @@ skate_bot_drive runs the skate engine for it):
 #include "../../skate/include/halo_skate.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 void platform_log(const char *format, ...);
@@ -53,7 +54,9 @@ enum
 	/* it never gets on one */
 	_bot_skate_never,
 	/* it stands still on foot (a target for one that rams) */
-	_bot_skate_stand
+	_bot_skate_stand,
+	/* ... and infected too (Infection's tests: neither side moves) */
+	_bot_skate_hold
 };
 
 /* how far along its path the way must roll for a bot to get on (world
@@ -103,6 +106,13 @@ scripted pad's timings) */
 /* ramming: a person on foot it sees within this (world units), and as high
 within this, is ridden at */
 #define BOT_SKATE_RAM_DISTANCE 15.0f
+/* ... and an infected one (Infection: it has nothing else to do) further,
+steering harder at them (the turn it pushes the stick fully for, radians) */
+#define BOT_SKATE_INFECTED_RAM_DISTANCE 25.0f
+#define BOT_SKATE_INFECTED_FULL_TURN 0.35f
+/* a survivor bot out of reach this long (Infection's anti-camping:
+infection.c) heads for the nearest ground a board reaches */
+#define BOT_SKATE_COME_DOWN_TICKS (3 * TICKS_PER_SECOND)
 #define BOT_SKATE_RAM_HEIGHT 1.2f
 /* grinds: the most rails and points read; a rail beside the way (within the
 reach and angle of bots_tricks.c's bot_tricks_grind_reach, by difficulty) no
@@ -154,6 +164,8 @@ static short bot_skate_mode(
 				return _bot_skate_never;
 			if (!strcmp(name, "stand"))
 				return _bot_skate_stand;
+			if (!strcmp(name, "hold"))
+				return _bot_skate_hold;
 			return _bot_skate_normal;
 		}
 	}
@@ -165,7 +177,7 @@ boolean bot_skate_possible(
 {
 	short mode = bot_skate_mode(bot);
 
-	return skate_bots_available() && mode != _bot_skate_never && mode != _bot_skate_stand;
+	return skate_bots_available() && mode != _bot_skate_never && mode != _bot_skate_stand && mode != _bot_skate_hold;
 }
 
 /* the bot's unit: alive, a biped on foot (none in a vehicle skates) */
@@ -292,8 +304,10 @@ static real bot_skate_angle(
 neither skating nor in a vehicle; NONE for none */
 static long bot_skate_ram_target(
 	struct bot const *bot,
-	real_point3d const *position)
+	real_point3d const *position,
+	boolean infected)
 {
+	real most = infected ? BOT_SKATE_INFECTED_RAM_DISTANCE : BOT_SKATE_RAM_DISTANCE;
 	struct player_datum *player;
 	struct object_datum *object;
 	real dx, dy;
@@ -312,7 +326,7 @@ static long bot_skate_ram_target(
 	object = object_get(player->unit_index);
 	dx = object->object.position.x - position->x;
 	dy = object->object.position.y - position->y;
-	if (dx * dx + dy * dy > BOT_SKATE_RAM_DISTANCE * BOT_SKATE_RAM_DISTANCE ||
+	if (dx * dx + dy * dy > most * most ||
 		fabs(object->object.position.z - position->z) > BOT_SKATE_RAM_HEIGHT)
 	{
 		return NONE;
@@ -370,6 +384,39 @@ static void bot_skate_ram_seek(
 	{
 		bot->brain.goal_node = node;
 		bot->brain.path_next = NONE;
+	}
+}
+
+/* (below) the node nearest the point that a board reaches, NONE for none */
+static long bots_board_nearest(
+	struct bots_nav *nav,
+	real x,
+	real y,
+	real z);
+
+/* (Infection) a survivor bot out of reach (infection.c) a while heads, every
+second, for the nearest node a board reaches */
+static void bot_skate_come_down(
+	struct bot *bot,
+	long player_index,
+	struct bots_nav *nav,
+	real_point3d const *position)
+{
+	long node;
+
+	if (!nav || infection_out_of_reach_ticks(player_index) < BOT_SKATE_COME_DOWN_TICKS ||
+		(game_time_get() + bot->slot) % TICKS_PER_SECOND != 0)
+	{
+		return;
+	}
+	node = bots_board_nearest(nav, position->x, position->y, position->z);
+	if (node != NONE && node != bot->brain.goal_node)
+	{
+		bot->brain.goal_node = node;
+		bot->brain.path_next = NONE;
+		platform_log("bots: player %ld comes down (out of reach) toward (%.2f %.2f %.2f) at tick %ld",
+			DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), nav->nodes[node].point.x, nav->nodes[node].point.y,
+			nav->nodes[node].point.z, game_time_get());
 	}
 }
 
@@ -510,7 +557,8 @@ static void bot_skate_pad(
 	real course = speed > 0.3f ? (real)atan2(view->velocity[1], view->velocity[0]) :
 		(real)atan2(view->forward[1], view->forward[0]);
 	real error = bot_skate_angle(heading - course);
-	real steer = PIN(error / BOT_SKATE_FULL_TURN, -1.0f, 1.0f);
+	real steer = PIN(error / (skate->infected && skate->ramming ? BOT_SKATE_INFECTED_FULL_TURN : BOT_SKATE_FULL_TURN),
+		-1.0f, 1.0f);
 
 	memset(pad, 0, sizeof(*pad));
 	/* (the left stick to the right turns right: clockwise, a yaw falling) */
@@ -594,10 +642,17 @@ void bot_skate_think(
 	purpose); a survivor stays on foot with its weapons, unless a test says */
 	boolean infected = infection_unit_restricted(unit_index);
 
-	if (infected)
+	/* (debug.bot_skate 'hold': a test's bot stands still, infected too) */
+	if (mode == _bot_skate_hold)
+		mode = _bot_skate_stand;
+	else if (infected)
 		mode = _bot_skate_ram;
 	else if (infection_active() && mode == _bot_skate_normal)
 		mode = _bot_skate_never;
+	skate->infected = infected;
+	/* (a survivor out of reach a while: down to where a board reaches) */
+	if (!infected && mode != _bot_skate_stand && infection_active())
+		bot_skate_come_down(bot, player_index, nav, &position);
 	if (mode == _bot_skate_stand)
 	{
 		bot_action_idle(action, brain->yaw, brain->pitch);
@@ -612,7 +667,7 @@ void bot_skate_think(
 	has_skater = skate_bot_frame(player_index, &view);
 	rolling = bot_skate_rolling_distance(brain, nav, &position, &to_goal);
 	fighting = brain->combat.target_player != NONE && brain->combat.target_visible;
-	ram_unit = view.skating ? bot_skate_ram_target(bot, &position) : NONE;
+	ram_unit = view.skating ? bot_skate_ram_target(bot, &position, infected) : NONE;
 	/* (a bot that rams fights from its board, gets on one for less, and
 	seeing nobody heads for the nearest person on foot) */
 	if (mode == _bot_skate_ram && bot->difficulty != _bot_difficulty_peaceful)
@@ -735,11 +790,12 @@ void bot_skate_think(
 			struct object_datum *target = object_get(ram_unit);
 			real dx = target->object.position.x - position.x, dy = target->object.position.y - position.y;
 			/* (near, straight at them; an infected bot, where they will be
-			when it gets there: Infection's hunt) */
+			when it gets there, near too - a survivor stepping aside: the
+			board has to hit them, Infection's hunt) */
 			real lead = dx * dx + dy * dy < 9.0f ? 0.0f : 6.0f;
 			real tx, ty;
 
-			if (infected && lead > 0.0f)
+			if (infected)
 				lead = MIN((real)sqrt(dx * dx + dy * dy) / MAX(moved, 2.0f), 1.5f) * TICKS_PER_SECOND;
 			tx = target->object.position.x + target->object.translational_velocity.i * lead;
 			ty = target->object.position.y + target->object.translational_velocity.j * lead;
@@ -858,4 +914,300 @@ void bot_skate_think(
 
 		bot_action_idle(action, yaw < 0.0f ? yaw + 2.0f * _pi : yaw, 0.0f);
 	}
+}
+
+/* ---------- where a board reaches (Infection's out of reach: infection.c) */
+
+/* the walking graph's nodes a board reaches: by the edges that roll up
+(bot_skate_edge_rolls' slope), down any slope, and off any drop; not by a
+jump, a ladder or a teleporter (a riding bot steps off for those). From the
+level's main ground - the largest part a board rides all round, going and
+coming back (strongly connected: not a roof, whose spawns a board only
+drops from) - to what that part rolls or drops onto. Worked out once for
+each graph */
+static struct
+{
+	struct bots_nav_node const *nodes;
+	long node_count;
+	long edge_count;
+	unsigned char *reached;
+	long reached_count;
+	long ground_count;
+	long near_count;
+} bot_board_reach;
+
+/* a node no board reaches less than this above one a board does within
+this (world units, level) is not out of reach */
+#define BOT_BOARD_CAMP_HEIGHT 1.0f
+#define BOT_BOARD_NEAR 3.0f
+
+static boolean bot_board_edge_reaches(
+	struct bots_nav const *nav,
+	struct bots_nav_edge const *edge,
+	struct bots_nav_point const *from)
+{
+	struct bots_nav_point const *to;
+
+	if (edge->target < 0 || edge->target >= nav->node_count)
+		return FALSE;
+	to = &nav->nodes[edge->target].point;
+	if (edge->type == _bots_nav_drop)
+		return TRUE;
+	if (edge->type != _bots_nav_walk)
+		return FALSE;
+	return to->z <= from->z || bot_skate_edge_rolls(nav, edge, from);
+}
+
+/* the graph's strongly connected parts by the edges a board takes
+(Tarjan's, without recursion): each node's part into part (numbered from
+0), the count returned; -1 without memory */
+static long bot_board_parts(
+	struct bots_nav const *nav,
+	long *part)
+{
+	long count = nav->node_count;
+	long *order = (long *)malloc((size_t)count * sizeof(long));
+	long *low = (long *)malloc((size_t)count * sizeof(long));
+	long *stack = (long *)malloc((size_t)count * sizeof(long));
+	long *calls = (long *)malloc((size_t)count * sizeof(long));
+	long *next_edge = (long *)malloc((size_t)count * sizeof(long));
+	long parts = 0, counter = 0, stacked = 0;
+	long root;
+
+	if (!order || !low || !stack || !calls || !next_edge)
+	{
+		parts = -1;
+		goto done;
+	}
+	for (root = 0; root < count; root++)
+	{
+		order[root] = -1;
+		part[root] = -1;
+	}
+	for (root = 0; root < count; root++)
+	{
+		long depth = 0;
+
+		if (order[root] != -1)
+			continue;
+		calls[depth++] = root;
+		order[root] = low[root] = counter++;
+		next_edge[root] = 0;
+		stack[stacked++] = root;
+		while (depth > 0)
+		{
+			long node = calls[depth - 1];
+			struct bots_nav_node const *from = &nav->nodes[node];
+
+			if (next_edge[node] < from->edge_count)
+			{
+				struct bots_nav_edge const *edge = &nav->edges[from->first_edge + next_edge[node]++];
+				long target = edge->target;
+
+				if (!bot_board_edge_reaches(nav, edge, &from->point))
+					continue;
+				if (order[target] == -1)
+				{
+					order[target] = low[target] = counter++;
+					next_edge[target] = 0;
+					stack[stacked++] = target;
+					calls[depth++] = target;
+				}
+				else if (part[target] == -1 && order[target] < low[node])
+					low[node] = order[target];
+				continue;
+			}
+			/* (done with it: a part's root takes its part off the stack) */
+			depth--;
+			if (low[node] == order[node])
+			{
+				long member;
+
+				do
+				{
+					member = stack[--stacked];
+					part[member] = parts;
+				} while (member != node);
+				parts++;
+			}
+			if (depth > 0 && low[node] < low[calls[depth - 1]])
+				low[calls[depth - 1]] = low[node];
+		}
+	}
+done:
+	if (order)
+		free(order);
+	if (low)
+		free(low);
+	if (stack)
+		free(stack);
+	if (calls)
+		free(calls);
+	if (next_edge)
+		free(next_edge);
+	return parts;
+}
+
+static boolean bot_board_reach_make(
+	struct bots_nav const *nav)
+{
+	long *part = NULL, *sizes = NULL, *queue = NULL;
+	long parts = 0, ground = -1, head = 0, tail = 0, index;
+	boolean made = FALSE;
+
+	if (bot_board_reach.reached && bot_board_reach.nodes == nav->nodes &&
+		bot_board_reach.node_count == nav->node_count && bot_board_reach.edge_count == nav->edge_count)
+	{
+		return TRUE;
+	}
+	/* (the game's free refuses NULL) */
+	if (bot_board_reach.reached)
+		free(bot_board_reach.reached);
+	memset(&bot_board_reach, 0, sizeof(bot_board_reach));
+	if (nav->node_count <= 0)
+		return FALSE;
+	part = (long *)malloc((size_t)nav->node_count * sizeof(long));
+	queue = (long *)malloc((size_t)nav->node_count * sizeof(long));
+	/* (malloc: the game's, which free takes - calloc is the C library's) */
+	bot_board_reach.reached = (unsigned char *)malloc((size_t)nav->node_count);
+	if (!part || !queue || !bot_board_reach.reached || (parts = bot_board_parts(nav, part)) <= 0 ||
+		!(sizes = (long *)malloc((size_t)parts * sizeof(long))))
+	{
+		goto done;
+	}
+	memset(bot_board_reach.reached, 0, (size_t)nav->node_count);
+	memset(sizes, 0, (size_t)parts * sizeof(long));
+	/* (the main ground: the largest part, of nodes walked to and from the
+	spawns' main part) */
+	for (index = 0; index < nav->node_count; index++)
+	{
+		if (nav->nodes[index].reach == (_bots_nav_reached_bit | _bots_nav_reaches_bit))
+			sizes[part[index]]++;
+	}
+	for (index = 0; index < parts; index++)
+	{
+		if (ground == -1 || sizes[index] > sizes[ground])
+			ground = index;
+	}
+	for (index = 0; index < nav->node_count; index++)
+	{
+		if (part[index] == ground)
+		{
+			bot_board_reach.reached[index] = 1;
+			queue[tail++] = index;
+		}
+	}
+	bot_board_reach.ground_count = tail;
+	while (head < tail)
+	{
+		long node = queue[head++];
+		struct bots_nav_node const *from = &nav->nodes[node];
+
+		for (index = 0; index < from->edge_count; index++)
+		{
+			struct bots_nav_edge const *edge = &nav->edges[from->first_edge + index];
+
+			if (!bot_board_edge_reaches(nav, edge, &from->point) || bot_board_reach.reached[edge->target])
+				continue;
+			bot_board_reach.reached[edge->target] = 1;
+			queue[tail++] = edge->target;
+		}
+	}
+	/* (a node no board reaches, but hardly above ground one does close by -
+	a sill, a crate, the foot of a ramp - is not out of reach: a camp is a
+	roof, a ledge, a tower top) */
+	for (index = 0; index < nav->node_count; index++)
+	{
+		struct bots_nav_point const *point = &nav->nodes[index].point;
+		long other;
+
+		if (bot_board_reach.reached[index] || nav->nodes[index].reach != (_bots_nav_reached_bit | _bots_nav_reaches_bit))
+			continue;
+		for (other = 0; other < nav->node_count; other++)
+		{
+			struct bots_nav_point const *near = &nav->nodes[other].point;
+			real dx = near->x - point->x, dy = near->y - point->y;
+
+			if (bot_board_reach.reached[other] == 1 && dx * dx + dy * dy <= BOT_BOARD_NEAR * BOT_BOARD_NEAR &&
+				point->z - near->z < BOT_BOARD_CAMP_HEIGHT)
+			{
+				bot_board_reach.reached[index] = 2;
+				bot_board_reach.near_count++;
+				break;
+			}
+		}
+	}
+	made = TRUE;
+	bot_board_reach.nodes = nav->nodes;
+	bot_board_reach.node_count = nav->node_count;
+	bot_board_reach.edge_count = nav->edge_count;
+	bot_board_reach.reached_count = tail;
+	platform_log("bots: a board reaches %ld of the walking graph's %ld nodes (its main ground %ld, of %ld parts), %ld more "
+		"hardly above it", tail, nav->node_count, bot_board_reach.ground_count, parts, bot_board_reach.near_count);
+done:
+	if (part)
+		free(part);
+	if (sizes)
+		free(sizes);
+	if (queue)
+		free(queue);
+	if (!made && bot_board_reach.reached)
+	{
+		free(bot_board_reach.reached);
+		bot_board_reach.reached = NULL;
+	}
+	return made;
+}
+
+long bots_board_reaches(
+	real x,
+	real y,
+	real z,
+	real *node_x,
+	real *node_y,
+	real *node_z)
+{
+	struct bots_nav *nav = bots_nav_current();
+	long node;
+
+	if (!nav || !bot_board_reach_make(nav))
+		return NONE;
+	node = bots_nav_locate(nav, x, y, z);
+	if (node < 0)
+		return NONE;
+	if (node_x)
+	{
+		*node_x = nav->nodes[node].point.x;
+		*node_y = nav->nodes[node].point.y;
+		*node_z = nav->nodes[node].point.z;
+	}
+	return bot_board_reach.reached[node] ? 1 : 0;
+}
+
+static long bots_board_nearest(
+	struct bots_nav *nav,
+	real x,
+	real y,
+	real z)
+{
+	long best = NONE;
+	real best_distance = 0.0f;
+	long index;
+
+	if (!bot_board_reach_make(nav))
+		return NONE;
+	for (index = 0; index < nav->node_count; index++)
+	{
+		struct bots_nav_point const *point = &nav->nodes[index].point;
+		real dx = point->x - x, dy = point->y - y, dz = point->z - z;
+		real distance = dx * dx + dy * dy + 4.0f * dz * dz;
+
+		if (bot_board_reach.reached[index] == 1 && nav->nodes[index].reach == (_bots_nav_reached_bit | _bots_nav_reaches_bit) &&
+			(best == NONE || distance < best_distance))
+		{
+			best = index;
+			best_distance = distance;
+		}
+	}
+	return best;
 }

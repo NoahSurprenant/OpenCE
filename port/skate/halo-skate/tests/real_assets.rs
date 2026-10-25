@@ -414,3 +414,52 @@ fn transitions(frames: &[Snapshot]) -> Vec<(u32, &str)> {
     }
     seen
 }
+
+/// 8. A sharper carve (`halo_skate_set_turn_scale`, Infection's "infected
+/// turning"): pushed up to speed on the open floor, then the left stick held
+/// hard right for a second and a half, the board turns further at 1.6 than
+/// at the engine's own 1 (about 135 degrees to 110) at much the same speed, stays on the board and
+/// finite; back at 1, it turns as it did.
+#[test]
+fn a_turn_scale_carves_a_tighter_line() {
+    let Some(assets) = assets("turn_scale") else { return };
+    let mut engine = Engine::start(&assets);
+    // (the heading turned through, radians, and the speed at the end)
+    let mut carve = |scale: f32| -> (f32, f32) {
+        assert_eq!(halo_skate_set_turn_scale(scale), 0, "halo_skate_set_turn_scale");
+        engine.activate([0.0, TestMap::OPEN, 0.0], 0.0);
+        for _ in 0..3 {
+            push(&mut engine, 15);
+        }
+        take_log();
+        let from = engine.history.len() - 1;
+        engine.hold(Pad::left(FULL, 0), 45);
+        let log = take_log();
+        let frames = engine.since(from);
+        assert_all_finite(frames, "the carve");
+        assert_no_failed_steps(frames, &log, "the carve");
+        assert!(frames.iter().all(|s| !s.off_board()), "the carve at {scale} stays on the board");
+        let heading = |s: &Snapshot| s.velocity[1].atan2(s.velocity[0]);
+        let turned: f32 = frames
+            .windows(2)
+            .map(|w| {
+                let d = heading(&w[1]) - heading(&w[0]);
+                (d + std::f32::consts::PI).rem_euclid(2.0 * std::f32::consts::PI) - std::f32::consts::PI
+            })
+            .sum();
+        (turned.abs(), frames.last().unwrap().ground_speed())
+    };
+    let (stock, stock_speed) = carve(1.0);
+    let (sharp, sharp_speed) = carve(1.6);
+    let (again, _) = carve(1.0);
+    eprintln!(
+        "carve: {:.0} degrees at {stock_speed:.2} m/s (scale 1), {:.0} at {sharp_speed:.2} (1.6), {:.0} (1 again)",
+        stock.to_degrees(),
+        sharp.to_degrees(),
+        again.to_degrees()
+    );
+    assert!(stock > 0.2, "the stock carve turned: {} degrees", stock.to_degrees());
+    assert!(sharp > 1.15 * stock, "1.6 turns further: {} then {} degrees", stock.to_degrees(), sharp.to_degrees());
+    assert!(sharp_speed > 0.5 * stock_speed, "and keeps its speed: {stock_speed} then {sharp_speed} m/s");
+    assert!((again - stock).abs() < 0.25 * stock, "back at 1 it turns as before: {stock} then {again}");
+}

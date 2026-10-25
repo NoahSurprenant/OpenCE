@@ -14,12 +14,18 @@ machine has from the host (a unit's owner_team_index: no wire change). */
 skater's; tuned with the bots: tools/test_infection.py) */
 #define INFECTION_DEFAULT_RUN_OVER 300
 /* ... and the damage the infected take (percent of anyone's) */
-#define INFECTION_DEFAULT_DAMAGE_TAKEN 50
+#define INFECTION_DEFAULT_DAMAGE_TAKEN 35
 /* ... and how much wider a survivor is to an infected's board (hundredths of
-a world unit) */
-#define INFECTION_DEFAULT_REACH 80
+a world unit): none, the board has to hit them */
+#define INFECTION_DEFAULT_REACH 0
 /* ... and their boards' speed (percent of any skater's) */
-#define INFECTION_DEFAULT_SPEED 115
+#define INFECTION_DEFAULT_SPEED 140
+/* ... and how sharply their boards turn (percent of any skater's) */
+#define INFECTION_DEFAULT_TURNING 175
+/* ... and the seconds a survivor may stay where no board reaches before it
+hurts them (INFECTION_OUT_OF_REACH_NEVER: never) */
+#define INFECTION_DEFAULT_OUT_OF_REACH 10
+#define INFECTION_OUT_OF_REACH_NEVER 255
 
 
 struct game_variant;
@@ -81,8 +87,19 @@ real infection_board_reach(long skater_unit_index, long biped_index);
 the variant's infection_speed for an infected skater (their board is that
 much quicker, pushing and at speed), else 1 */
 real infection_skate_time_scale(long unit_index);
+/* skate.c: how much more sharply the unit's board turns - the variant's
+infection_turning for an infected skater, else 1 */
+real infection_skate_turn_scale(long unit_index);
 
-
+/* out of reach (the anti-camping rule): a survivor standing where no board
+reaches (bots_board_reaches: a roof, a tower top) for the variant's
+infection_out_of_reach seconds is hurt each second until they come down.
+The host decides and deals it; every machine works the same out for its
+own players to warn them (infection_draw). Unknown (the map's graph still
+being built, no node there) holds the count. The ticks the player (a datum)
+has been out of reach, 0 for none (bots_skate.c: a survivor bot comes
+down) */
+long infection_out_of_reach_ticks(long player_index);
 
 /* game_engine.c: a team's change colour (the infected green) */
 real_rgb_color const *infection_change_color(long team_index);

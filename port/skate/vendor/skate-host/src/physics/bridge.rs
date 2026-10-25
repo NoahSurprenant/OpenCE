@@ -293,6 +293,13 @@ impl Session {
         self.physics.run_over_keep = if keep.is_finite() { keep.clamp(0.0, 1.0) } else { 1.0 };
         self.physics.run_over_speed
     }
+    /// halo-skate: the board turns `scale` times as sharply as the engine's
+    /// own (the trucks' steering angles scaled, `GamePhysics::turn_scale`),
+    /// within 1 and 2; anything else (not finite) is 1. Returns the scale kept.
+    pub fn set_turn_scale(&mut self, scale: f32) -> f32 {
+        self.physics.turn_scale = if scale.is_finite() { scale.clamp(1.0, 2.0) } else { 1.0 };
+        self.physics.turn_scale
+    }
     /// halo-skate: the riding board and skater slowed to `keep` of their
     /// speed (a person run over), as `teleport` sets their velocity: the
     /// board's and the body's alike, and the motion the animation reads.

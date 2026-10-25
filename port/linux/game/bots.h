@@ -67,6 +67,24 @@ void bots_note_damage(
 	struct damage_data const *damage,
 	real amount,
 	boolean killed);
+/* (infection.c) whether a skateboard reaches the point (world units) from
+the spawns' main part along the map's walking graph (bots_skate.c: rolling
+up a slope no steeper than a riding bot takes, down any, off any drop; no
+jumps, ladders or teleporters): 1 it does, 0 it does not, NONE unknown (no
+graph yet - bots_nav_game.c builds it aside - or no node there). The graph
+node found is written to node_x/y/z when not NULL */
+long bots_board_reaches(
+	real x,
+	real y,
+	real z,
+	real *node_x,
+	real *node_y,
+	real *node_z);
+/* (infection.c) the map's walking graph is wanted even with no bots (a
+host's, bots_update: built aside as for bots); a client builds its own here
+(it has no bots_update): call each tick while wanted */
+void bots_graph_wanted(
+	boolean wanted);
 /* whether the player is one of the host's bots */
 boolean bots_player_is_bot(
 	struct player_datum const *player);

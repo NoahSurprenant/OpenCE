@@ -121,9 +121,12 @@ struct slayer_variant
 	/* the infected's boards' speed, in percent of any skater's: their skate
 	sessions run that much faster (skate.c); 0: 100 */
 	byte infection_speed;
-
-
-
+	/* how much more sharply the infected's boards turn, in percent of any
+	skater's: their trucks steer that much further (skate.c); 0: 100 */
+	byte infection_turning;
+	/* the seconds a survivor may stay where no board reaches (a roof, a
+	tower) before it hurts them (infection.c); 0: 10, 255: never */
+	byte infection_out_of_reach;
 };
 
 struct king_variant

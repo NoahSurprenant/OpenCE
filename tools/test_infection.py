@@ -190,7 +190,7 @@ def test_infection_bots_balance(tmp_path):
 
 
 VARIANT = re.compile(r"infection: the variant: round (\d+) seconds, run-overs (\d+)%, speed (\d+)%, damage taken (\d+)%, "
-                     r"reach (\d+), one infected in (\d+)")
+                     r"reach (\d+), one infected in (\d+), turning (\d+)%, out of reach (\d+)")
 
 
 def test_infection_an_edited_gametype(tmp_path):
@@ -198,15 +198,18 @@ def test_infection_an_edited_gametype(tmp_path):
     editor's own spinners (debug.gametype_edit: menu_functions.c's options
     table, as a person sets the Infection Options screen) - a one-minute
     round, boards at 140%, run-overs at 500%, the infected taking 25%, a
-    reach of 0.4, one in 4 infected - with two peaceful bots and a client
-    whose player starts infected: both machines play by the edited values
-    (the client has them from the host's game), the client's board steps at
-    1.4 times, and the round ends after a minute, the survivors winning.
+    reach of 0.4, one in 4 infected, turning at 175%, out of reach after 20
+    seconds - with two peaceful bots and a client whose player starts
+    infected: both machines play by the edited values (the client has them
+    from the host's game), the client's board steps at 1.4 times and turns
+    1.75 times as sharply, and the round ends after a minute, the survivors
+    winning.
     About two minutes."""
     game, maps, assets = _needs_skate()
     host_address, join_address = _test_address(179), _test_address(180)
     edit = ("infection_minutes_spinner=1,infection_speed_spinner=140,infection_run_over_spinner=500,"
-            "infection_damage_taken_spinner=25,infection_reach_spinner=40,infection_ratio_spinner=4")
+            "infection_damage_taken_spinner=25,infection_reach_spinner=40,infection_ratio_spinner=4,"
+            "infection_turning_spinner=175,infection_out_of_reach_spinner=20")
     games = {"host": _start(tmp_path, "host", game, maps, {
         "HALO_NETWORK_TEST": "host:bloodgulch:infection", "HALO_NETWORK_TEST_START": "8", "HALO_SERVER_BOTS": "2",
         "HALO_BOT_DIFFICULTIES": "peaceful", "HALO_BOT_SEED": "4", "HALO_GAME_SEED": "4", "HALO_INFECTION_FIRST": "client",
@@ -222,10 +225,121 @@ def test_infection_an_edited_gametype(tmp_path):
         for cache in tmp_path.rglob("cache*.map"):
             cache.unlink()
     host, join = _log(tmp_path, "host"), _log(tmp_path, "join")
-    expected = ("60", "500", "140", "25", "40", "4")
+    expected = ("60", "500", "140", "25", "40", "4", "175", "20")
     over = OVER.search(host)
     print(f"host {VARIANT.findall(host)[:1]}, client {VARIANT.findall(join)[:1]}, over {over.groups()}")
     assert VARIANT.findall(host)[:1] == [expected], VARIANT.findall(host)
     assert VARIANT.findall(join)[:1] == [expected], f"the client did not have the edited values: {VARIANT.findall(join)}"
     assert "rides at 1.40 times the speed" in join, "the client's infected board did not go faster"
+    assert "turns 1.75 times as sharply" in join, "the client's infected board did not turn more sharply"
     assert over.group(2) == "survivors" and 55 * 30 <= int(over.group(1)) <= 70 * 30, over.groups()
+
+
+OUT_OF_REACH = re.compile(r"infection: player (\d+) is out of reach at \((\S+) (\S+) (\S+)\)")
+HURT = re.compile(r"infection: player (\d+) hurt out of reach \((\d+)\) at \(\S+ \S+ \S+\) at tick (\d+): shield (\S+) to "
+                  r"([\d.]+), body ([\d.]+) to ([\d.]+)(, killed)?")
+DIED_ALONE = re.compile(r"infection: player (\d+) dies a survivor \(killer -1\), infected at tick (\d+)")
+PLACED = re.compile(r"infection: the test puts player (\d+) at")
+TICK = re.compile(r"at tick (\d+)")
+# where survivors stand in test_infection_out_of_reach, each map's (world
+# units, on its walking graph's nodes): the spots no board reaches (the
+# bases' roofs, a ledge high on a cliff, Hang 'Em High's tower top), then
+# ground any board rides to (open ground, by the bases, Hang 'Em High's
+# floor and its upper walkway)
+CAMP_SPOTS = {
+    "bloodgulch": [(95.42, -160.89, 1.73), (39.12, -78.09, 1.73), (69.42, -55.59, 6.78)],
+    "hangemhigh": [(30.35, -13.97, -2.38)],
+    "sidewinder": [(30.25, -38.78, 0.57), (-32.75, -35.78, 0.57)],
+}
+GROUND_SPOTS = {
+    "bloodgulch": [(85.42, -149.49, 0.0), (65.42, -119.59, 0.12), (50.42, -89.59, 0.17)],
+    "hangemhigh": [(20.35, -0.37, -7.95), (25.35, 9.63, -7.97), (33.35, -5.37, -3.9)],
+    "sidewinder": [(25.25, -24.78, -3.58), (-24.75, -24.78, -3.83)],
+}
+
+
+def test_infection_out_of_reach(tmp_path):
+    """Out of reach (the anti-camping rule) with the game type's own ten
+    seconds, on Blood Gulch, Hang 'Em High and Sidewinder: peaceful
+    survivors standing still (debug.bot_skate 'hold'), each put on a spot
+    of the map (debug.infection_test_place) - where no board reaches (the
+    bases' roofs, a cliff ledge, the tower top) and on ground any board rides
+    to - and one infected standing still far off. Each on a roof or a ledge
+    is told out of reach, hurt from ten seconds on, each second, and
+    dies of it in a few (infected, nobody's kill); each on the ground is never out of reach nor
+    hurt, and is a survivor still forty seconds in. Then a client's player on
+    a roof is told out of reach on the client and hurt by the host. About
+    four minutes."""
+    _, maps, assets = _needs_skate()
+    results = {}
+    for index, name in enumerate(CAMP_SPOTS):
+        spots = CAMP_SPOTS[name] + GROUND_SPOTS[name]
+        camp = {str(1 + i) for i in range(len(CAMP_SPOTS[name]))}
+        ground = {str(1 + len(camp) + i) for i in range(len(GROUND_SPOTS[name]))}
+        place = ";".join(f"{1 + i}:{x},{y},{z + 0.05}" for i, (x, y, z) in enumerate(spots))
+
+        def done(log, camp=camp):
+            ticks = [int(t) for t in TICK.findall(log[-4000:])]
+            return ({p for p, _ in DIED_ALONE.findall(log)} >= camp and ticks and max(ticks) >= 40 * 30) or _over(log)
+
+        log = _bots_alone(tmp_path / name, "server", _server(), maps, assets, {
+            "HALO_SERVER_BOTS": str(1 + len(spots)), "HALO_BOT_DIFFICULTIES": "peaceful", "HALO_BOT_SKATE": "*hold",
+            "HALO_INFECTION_FIRST": "0", "HALO_INFECTION_TEST_PLACE": place, "HALO_BOT_SEED": "5",
+            "HALO_GAME_SEED": "5", "HALO_SERVER_MAPS": f"{name}:infection", "HALO_SERVER_TIME_LIMIT": "2"},
+            (_test_address(161 + 2 * index), _test_address(162 + 2 * index)), done=done)
+        out = {p for p, *_ in OUT_OF_REACH.findall(log)}
+        hurt = {p for p, *_ in HURT.findall(log)}
+        died = {p for p, _ in DIED_ALONE.findall(log)}
+        infected = {p for p, *_ in INFECTED.findall(log)}
+        results[name] = (sorted(out), sorted(hurt), sorted(died))
+        print(f"{name}: placed {PLACED.findall(log)}; out of reach {sorted(out)}, hurt {sorted(hurt)}, died of it "
+              f"{sorted(died)}; camp {sorted(camp)}, ground {sorted(ground)}; first hurts "
+              f"{[h for h in HURT.findall(log)][:4]}")
+        assert set(PLACED.findall(log)) >= camp | ground, f"{name}: not everyone was put on their spot"
+        assert camp <= out, f"{name}: on a roof or ledge and not out of reach: {sorted(camp - out)}"
+        assert camp <= hurt, f"{name}: out of reach and not hurt: {sorted(camp - hurt)}"
+        assert camp <= died, f"{name}: hurt out of reach and not dead of it: {sorted(camp - died)}"
+        assert not (ground & (out | hurt | died | infected)), \
+            f"{name}: on the ground, yet out of reach {sorted(ground & out)}, hurt {sorted(ground & hurt)}"
+        # (hurt over a few seconds, not killed at once)
+        for player in camp:
+            hurts = [h for h in HURT.findall(log) if h[0] == player]
+            assert len(hurts) >= 3 and not hurts[0][7], f"{name}: player {player} hurt {len(hurts)} times: {hurts}"
+        # (the hurt starts at ten seconds out of reach, not before)
+        for player, _, tick, *_ in HURT.findall(log):
+            first = int(re.search(rf"infection: player {player} is out of reach at .* at tick (\d+)", log).group(1))
+            assert int(tick) - first >= 10 * 30 - 1, f"{name}: player {player} hurt {int(tick) - first} ticks in"
+    # a client's own player out of reach: told on the client (its own graph
+    # of the map, its own count: what its warning shows), hurt by the host
+    game = _needs_skate()[0]
+    host_address, join_address = _test_address(167), _test_address(168)
+    folder = tmp_path / "client"
+    games = {"host": _start(folder, "host", game, maps, {
+        "HALO_NETWORK_TEST": "host:bloodgulch:infection", "HALO_NETWORK_TEST_START": "8", "HALO_SERVER_BOTS": "1",
+        "HALO_BOT_DIFFICULTIES": "peaceful", "HALO_BOT_SKATE": "*hold", "HALO_BOT_SEED": "5", "HALO_GAME_SEED": "5",
+        "HALO_INFECTION_FIRST": "bots", "HALO_INFECTION_TEST_PLACE": "client:39.12,-78.09,1.78",
+        "HALO_SKATE_ASSETS": assets, "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+        "HALO_NET_ADDRESS": host_address, "HALO_NET_BROADCAST": join_address})}
+    games["join"] = _start(folder, "join", game, maps, {
+        "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+        "HALO_SKATE_ASSETS": assets, "HALO_NET_ADDRESS": join_address, "HALO_NET_BROADCAST": host_address})
+
+    def client_player():
+        found = re.search(r"infection: the test puts player (\d+) at \(39\.12", _log(folder, "host"))
+        return found.group(1) if found else None
+
+    try:
+        _wait(lambda: client_player() and re.search(rf"infection: this machine's player {client_player()} is infected",
+                                                    _log(folder, "join")),
+              240, games, folder, "the client's player out of reach did not die of it")
+    finally:
+        _stop(games, folder, {"host": game, "join": game})
+        for cache in folder.rglob("cache*.map"):
+            cache.unlink()
+    host, join = _log(folder, "host"), _log(folder, "join")
+    player = client_player()
+    told = [o for o in OUT_OF_REACH.findall(join) if o[0] == player]
+    hurts = [h for h in HURT.findall(host) if h[0] == player]
+    print(f"client's player {player}: told out of reach on the client {told[:2]}, hurt by the host {hurts[:4]}")
+    assert told, "the client did not tell its own player out of reach"
+    assert len(hurts) >= 3, f"the host did not hurt the client's player out of reach: {hurts}"

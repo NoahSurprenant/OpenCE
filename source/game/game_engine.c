@@ -7235,7 +7235,17 @@ struct game_variant *game_engine_get_variant_by_name(
 			result.game_engine_variant.slayer.infection_damage_taken =
 				(byte)MIN(config_integer("server.infection_damage_taken"), 255);
 		}
-
+		/* (server.infection_turning: likewise) */
+		if (config_integer("server.infection_turning") > 0)
+			result.game_engine_variant.slayer.infection_turning = (byte)MIN(config_integer("server.infection_turning"), 200);
+		/* (debug.infection_out_of_reach: the tests' - seconds, below 0 never) */
+		if (config_integer("debug.infection_out_of_reach") > 0)
+		{
+			result.game_engine_variant.slayer.infection_out_of_reach =
+				(byte)MIN(config_integer("debug.infection_out_of_reach"), 254);
+		}
+		else if (config_integer("debug.infection_out_of_reach") < 0)
+			result.game_engine_variant.slayer.infection_out_of_reach = 255;
 	}
 
 

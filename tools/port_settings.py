@@ -1486,7 +1486,10 @@ INFECTION_EDIT = "main_menu/settings_select/multiplayer_setup/playlist_edit/infe
 INFECTION_SPEEDS = (100, 105, 110, 115, 120, 125, 130, 140, 150)
 INFECTION_TAKEN = (25, 35, 50, 65, 75, 90, 100)
 INFECTION_RUN_OVERS = (100, 150, 200, 300, 400, 500, 1000)
-INFECTION_REACHES = (20, 40, 60, 80, 100, 120)
+INFECTION_REACHES = (0, 20, 40, 60, 80, 100, 120)
+INFECTION_TURNINGS = (100, 125, 150, 175, 200)
+# (255: never)
+INFECTION_OUT_OF_REACH = (255, 5, 10, 15, 20, 30)
 INFECTION_RATIOS = (4, 6, 8, 10, 12, 16)
 INFECTION_MINUTES = (1, 2, 3, 4, 5, 6, 8, 10)
 INFECTION_ROWS = [
@@ -1500,12 +1503,18 @@ INFECTION_ROWS = [
      [f"The infected take {n}% of the damage anyone takes." for n in INFECTION_TAKEN]),
     ("infection_run_over", "RUN-OVER DAMAGE:", [f"{n}%" for n in INFECTION_RUN_OVERS],
      [f"An infected's run-over deals {n}% of any\\nskater's." for n in INFECTION_RUN_OVERS]),
+    ("infection_turning", "INFECTED TURNING:", [f"{n}%" for n in INFECTION_TURNINGS],
+     [f"The infected's boards turn {n}% as sharply as\\nanyone's." for n in INFECTION_TURNINGS]),
     ("infection_reach", "BOARD REACH:", [f"{n / 100:.1f} WU" for n in INFECTION_REACHES],
-     [f"A survivor is {n / 100:.1f} world units wider to an\\ninfected's board." for n in INFECTION_REACHES]),
+     ["An infected's board has to hit a survivor." if not n else
+      f"A survivor is {n / 100:.1f} world units wider to an\\ninfected's board." for n in INFECTION_REACHES]),
     ("infection_ratio", "FIRST INFECTED:", [f"1 IN {n}" for n in INFECTION_RATIOS],
      [f"One player in {n} starts infected (at least one)." for n in INFECTION_RATIOS]),
     ("infection_minutes", "ROUND TIME:", [f"{n} MIN" for n in INFECTION_MINUTES],
      [f"The survivors win if any is left after {n}\\nminute{'s' if n > 1 else ''}." for n in INFECTION_MINUTES]),
+    ("infection_out_of_reach", "OUT OF REACH:", ["OFF" if n == 255 else f"{n} SEC" for n in INFECTION_OUT_OF_REACH],
+     ["A survivor may stay anywhere." if n == 255 else
+      f"A survivor where no board reaches is hurt after\\n{n} seconds, until they come down." for n in INFECTION_OUT_OF_REACH]),
 ]
 
 
@@ -1520,7 +1529,7 @@ def _infection_options() -> list:
                     ['<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/game_type_select/'
                      'header_rules"/>', f'<child widget="{base}/infection_options_menu"/>'])
     lines += _widget(f"{base}/infection_options_help", [("type", "text"), ("controller", 1), ("left", 68),
-                                                        ("top", 321), ("width", 482), ("height", 79),
+                                                        ("top", 345), ("width", 482), ("height", 66),
                                                         ("string_list", f"{base}/cap_infection_options"),
                                                         ("font", "ui\\large_ui"), ("color", "#FFFFFFFF")], [])
     children = ['<data input="game settings lists text update"/>',
