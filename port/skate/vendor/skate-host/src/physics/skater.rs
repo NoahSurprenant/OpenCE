@@ -101,6 +101,9 @@ impl SkaterRuntime {
     pub(crate) fn travel_to(&mut self, transform: [[f32; 4]; 4]) -> Result<(), String> {
         self.player_input.request_teleport(transform)?;
         self.teleport_state.request_manual(transform, true);
+        // (halo-skate: a bail's checkpoints are where it rode since)
+        let stance = self.animation.checkpoint_stance();
+        self.respawn.restart(transform, stance);
         Ok(())
     }
     pub fn load(

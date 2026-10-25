@@ -385,3 +385,39 @@ fn hold(engine: &mut Engine, pad: Pad, ticks: usize) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// 7. Skate 3's own reset never throws the skater back to where it rode
+/// before it was put on the board somewhere else (a get-on, a fall put back,
+/// a teleporter, a session kept from another map): its checkpoints are
+/// forgotten when the skater is put down. Ridden about one spot for twelve
+/// seconds, then put outside the level (where a bot's skater was thrown on a
+/// test server: a checkpoint of Sidewinder, the map before, in a session kept
+/// from it), it falls and the engine's reset teleports it: to where it was
+/// put, never back to the first spot (it went straight there, 45 world units).
+#[test]
+fn a_bail_resets_about_where_the_skater_was_put_on_hangemhigh() {
+    let Some((mut engine, _)) = engine("bail_resets_where_put") else { return };
+    let first = [24.17, -21.08, -7.92];
+    let second = [-18.89, -7.94, -3.0];
+    let ride = |engine: &mut Engine, seconds: usize| -> Result<(), String> {
+        for k in 0..seconds {
+            hold(engine, Pad::buttons(A), 14)?;
+            hold(engine, Pad::right(if k % 2 == 0 { FULL } else { -FULL }, 0), 16)?;
+        }
+        Ok(())
+    };
+    activate(&mut engine, first, 0.0).unwrap();
+    ride(&mut engine, 12).unwrap();
+    let rode = engine.history.len();
+    // (activate clears the frames kept)
+    activate(&mut engine, second, std::f32::consts::PI).unwrap();
+    for _ in 0..4 {
+        ride(&mut engine, 6).unwrap();
+    }
+    let states: std::collections::BTreeSet<&str> = engine.history.iter().map(|s| s.state.as_str()).collect();
+    let farthest = engine.history.iter().map(|s| length(sub(s.position, second))).fold(0.0_f32, f32::max);
+    let nearest_first = engine.history.iter().map(|s| length(sub(s.position, first))).fold(f32::MAX, f32::min);
+    eprintln!("states {states:?}; farthest from the second spot {farthest:.1} world units, nearest the first \
+        {nearest_first:.1} (rode {rode} frames about the first)");
+    assert!(nearest_first > 8.0, "a bail threw the skater back near where it rode before: {nearest_first:.1} world units");
+}

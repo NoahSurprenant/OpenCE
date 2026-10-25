@@ -51,6 +51,20 @@ impl Runtime {
     pub fn reset_measurements(&mut self) {
         self.measurements = 0;
     }
+    /// halo-skate: the checkpoints forgotten, the skater put at `transform`
+    /// the only one: a session put on the board elsewhere - a get-on, a fall
+    /// out of the level put back, a teleporter, a session copied from the
+    /// first or kept from another map - must not be thrown back after a bail
+    /// to where it rode before (another map's level, out of this one).
+    pub fn restart(&mut self, transform: Matrix, stance: u32) {
+        self.history = History::new(Candidate {
+            transform,
+            stance,
+            offboard: false,
+            score: 0.,
+        });
+        self.measurements = 0;
+    }
 }
 
 ///Actor82592518 saves stance then queues the ordinary deferred reply825926F8.

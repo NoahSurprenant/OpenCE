@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.test_bots import REPORT, SCORE, _log, _start, _stop, _wait
+from tools.test_bots import BOT_JOINED, REPORT, SCORE, _console, _log, _start, _stop, _wait
 from tools.test_linux_port import _test_address
 
 BOARDED = re.compile(r"bots: player (\d+) gets on a board at tick (\d+)")
@@ -449,3 +449,104 @@ def test_skating_bots_get_on_in_the_floor(tmp_path):
     print(found and found.group(0))
     assert found, "no skater got on the board from in the floor"
     assert abs(float(found.group(5))) < 0.1, f"the board was not on the floor: {found.group(0)}"
+
+
+
+SPOT_ON = re.compile(r"skate test spot: a bot's skater got on its board at .*")
+SPOT_AT = re.compile(r"skate test spot: (\d+) ticks after, the skater at \(([-0-9.]+) ([-0-9.]+) ([-0-9.]+)\)")
+FELL_AGAIN = re.compile(r"skate: .*fell out of the level (?:again|with nowhere|and could not).*")
+
+
+def test_skating_bots_a_board_on_the_level_it_rides(tmp_path):
+    """Every bot's skate session rides the level being played: on a dedicated
+    server playing Infection on Sidewinder then on Hang 'Em High (seeded, as
+    the live server does), with two infected bots on their boards (always) and
+    a survivor standing, one infected bot is removed in the first game (its
+    session given up, Sidewinder's level in it) and a bot added in the second
+    (infected, as a late joiner) takes that session, while the other's, riding
+    as the game began, was sent the new level: it is sent Hang 'Em High's level (a new map's scenario has the old one's tag index:
+    the session counted as loaded kept Sidewinder's, and the bot fell through
+    Hang 'Em High's floors and out of the level hundreds of times a game, put
+    back where it fell again, as on the live server). Put on its board where
+    it fell there (debug.skate_test_spot), it rides; no skater falls out of
+    the level. About three minutes."""
+    import os
+    import time
+    _, maps, assets = _needs_skate()
+    port = 23230 + (os.getpid() + 7) % 500
+    name = "server"
+    games = {name: _start(tmp_path, name, _server(), maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SKATE_ASSETS": assets,
+        "HALO_SERVER_BOT_VEHICLES": "-1", "HALO_SERVER_BOTS": "3", "HALO_BOT_DIFFICULTIES": "peaceful,peaceful,peaceful",
+        "HALO_BOT_SKATE": "stand,ram,ram", "HALO_BOT_SEED": "9", "HALO_GAME_SEED": "9", "HALO_INFECTION_FIRST": "1,2",
+        "HALO_SERVER_MAPS": "sidewinder:infection,hangemhigh:infection", "HALO_SERVER_TIME_LIMIT": "1", "HALO_SERVER_SCORE_LIMIT": "999",
+        "HALO_SKATE_TEST_SPOT": "hangemhigh 30 31.11 -2.43 -9.25 0 2",
+        "HALO_TELNET_CONSOLE": "1", "HALO_TELNET_CONSOLE_PORT": str(port),
+        "HALO_NET_ADDRESS": _test_address(171), "HALO_NET_BROADCAST": _test_address(172)})}
+    try:
+        # (the two infected bots skate, on sessions 1 and 2: the one on 2 removed)
+        on_two = re.compile(r"skate: bot skater 2 on \(player (\d+)\)")
+        _wait(lambda: "skate: bot skater 1 on (player" in _log(tmp_path, name) and on_two.search(_log(tmp_path, name)),
+              240, games, tmp_path, "the skating bots did not get on their boards on Sidewinder")
+        bots = [bot for bot, *_ in BOT_JOINED.findall(_log(tmp_path, name))]
+        rider = bots[int(on_two.search(_log(tmp_path, name)).group(1))]
+        _console(port, f"bot remove {rider[6:]}")
+        _wait(lambda: "skate: bot skater 2 given up" in _log(tmp_path, name), 30, games, tmp_path,
+              "the removed bot's skater was not given up")
+        _wait(lambda: "the game starts: slayer (teams) on hangemhigh" in _log(tmp_path, name), 150, games, tmp_path,
+              "the server did not go on to Hang 'Em High")
+        # (once the game takes bots: it holds its start until their graphs of the map are built)
+        for _ in range(12):
+            if "0 of 1 added" not in _console(port, "bot add 1 peaceful"):
+                break
+            time.sleep(5)
+        _wait(lambda: SPOT_ON.search(_log(tmp_path, name)) or len(FELL_OUT.findall(_log(tmp_path, name))) >= 5, 150,
+              games, tmp_path,
+              "no bot's skater was put on its board on Hang 'Em High")
+        time.sleep(8)
+    finally:
+        _stop(games, tmp_path, {name: _server()})
+        for cache in tmp_path.rglob("cache*.map"):
+            cache.unlink()
+    log = _log(tmp_path, name)
+    second = log[log.index("the game starts: slayer (teams) on hangemhigh"):]
+    level = re.search(r"skate: the level's collision: (\d+) triangles", second)
+    second = second[:second.find("network test: the next game")] if "network test: the next game" in second else second
+    sent = re.findall(r"halo-skate \(session 2\): map \d+ sent(?: to rebuild)?, (\d+) triangles", second)
+    spot = SPOT_AT.findall(second)
+    fell = FELL_OUT.findall(second)
+    print(f"Hang 'Em High's level {level and level.group(1)} triangles; sent to session 2: {sent}; fell out "
+          f"{len(fell)}; the skater put on the spot: {spot[:3]} ... {spot[-3:]}")
+    for line in fell[:4]:
+        print("  ", line)
+    assert level and sent and sent[-1] == level.group(1), \
+        f"the session given up on Sidewinder was not sent Hang 'Em High's level: {sent}"
+    assert not fell, f"{len(fell)} falls out of the level on Hang 'Em High: {fell[:3]}"
+    assert spot and min(float(z) for *_, z in spot) > -9.5, f"the skater put on the spot fell: {spot}"
+
+
+def test_skating_bots_never_fall_again(tmp_path):
+    """A skater fallen out of the level is never put back where it falls on
+    and on: on Blood Gulch's dedicated server (seeded), a bot's skater is put
+    on its board under the level, under where the live server's fell out
+    (debug.skate_test_spot): it falls out at once, with nowhere in the level
+    to be put back, so it is put off the board at the spawn nearest and its
+    session sent the level again (it was put back under the level, and fell
+    out again, every tick); the bot gets on its board again and rides, and no
+    other fall follows. About a minute and a half."""
+    _, maps, assets = _needs_skate()
+    log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
+        "HALO_SERVER_BOTS": "2", "HALO_BOT_DIFFICULTIES": "peaceful,peaceful", "HALO_BOT_SKATE": "*ram", "HALO_BOT_SEED": "7",
+        "HALO_GAME_SEED": "7", "HALO_SERVER_MAPS": "bloodgulch", "HALO_SERVER_TIME_LIMIT": "2",
+        "HALO_SKATE_TEST_SPOT": "bloodgulch 20 97.70 -169.71 -4.00 0"}, (_test_address(173), _test_address(174)),
+        done=lambda log: SPOT_ON.search(log) and re.search(r"skate: bot skater \d+ on \(player", log[SPOT_ON.search(log).end():]))
+    found = SPOT_ON.search(log)
+    assert found, "no bot's skater was put on its board under Blood Gulch"
+    after = log[found.start():]
+    fell, again = FELL_OUT.findall(after), FELL_AGAIN.findall(after)
+    print(f"{found.group(0)}\nfell out {len(fell)} times, of them off the board {len(again)}")
+    for line in fell[:4]:
+        print("  ", line)
+    assert len(fell) == 1 and len(again) == 1, f"the skater fell out {len(fell)} times: {fell[:3]}"
+    assert re.search(r"skate: bot skater \d+ on \(player", after[after.index(again[0]):]), \
+        "the bot did not get on its board again"
