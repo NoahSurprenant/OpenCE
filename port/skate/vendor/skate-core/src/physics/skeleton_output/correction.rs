@@ -1,4 +1,5 @@
 //! PostWipeoutCheck82BD83E0's error correction before wobble and physical IK.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::{
     native_arithmetic::{dot3, vector_min},
     skeleton_body::SkeletonBody,
@@ -65,7 +66,7 @@ pub fn apply(
         let allowed = vector_min(0.0, distance);
         let offset: [f32; 4] = core::array::from_fn(|i| {
             let tangent = error[i] - ground_normal[i] * distance;
-            ground_normal[i].mul_add(allowed, tangent)
+            ground_normal[i].fused_mul_add(allowed, tangent)
         });
         //82BEC2C0 starts at record part1 and translates through23. It leaves
         //the observed board, solver states, COM and velocity history alone.

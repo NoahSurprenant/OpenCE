@@ -1,5 +1,6 @@
 //! Surface segment construction82D83438 and candidate insertion82D82380.
 //! Input records must already have passed the earlier native classifiers.
+use crate::fused::FusedMulAdd as _;
 use super::{
     contact_queries::{Input, V},
     contact_records::Record,
@@ -35,24 +36,24 @@ fn scale(a: V, s: f32) -> V {
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 pub(super) fn length_inverse(v: V) -> (f32, f32) {
     let sq = dot3(v, v);
     let mut inverse = crate::physics::reciprocal_sqrt::estimate(sq);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-sq).mul_add(inverse * inverse, 1.), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-sq).fused_mul_add(inverse * inverse, 1.), inverse);
     }
     (if sq == 0. { 0. } else { sq * inverse }, inverse)
 }
 pub(super) fn reciprocal(v: f32) -> f32 {
     let mut r = reciprocal_estimate(v);
     for _ in 0..2 {
-        r = r.mul_add((-r).mul_add(v, 1.), r);
+        r = r.fused_mul_add((-r).fused_mul_add(v, 1.), r);
     }
     r
 }

@@ -1,4 +1,5 @@
 //! Scaled Jacobian and restitution target publication, `82AE1590..82AE15F4`.
+use crate::fused::FusedMulAdd as _;
 use super::ContactPreparation;
 use crate::math::Vector3;
 
@@ -33,7 +34,7 @@ pub(super) fn compile(prepared: &ContactPreparation, inverse_response: [f32; 3])
     ];
     for component in 0..3 {
         let column = core::array::from_fn::<_, 3, _>(|axis| {
-            axes[axis][component].mul_add(inverse_response[axis], 0.0)
+            axes[axis][component].fused_mul_add(inverse_response[axis], 0.0)
         });
         vector_row(
             &mut words,
@@ -43,10 +44,10 @@ pub(super) fn compile(prepared: &ContactPreparation, inverse_response: [f32; 3])
         );
     }
     // Row 5 is the newly cleared accumulated impulse, including its carry.
-    let separation = prepared.separation_projection[0].mul_add(inverse_response[0], 0.0);
-    let restitution = prepared.restitution_projection[0].mul_add(inverse_response[0], 0.0);
+    let separation = prepared.separation_projection[0].fused_mul_add(inverse_response[0], 0.0);
+    let restitution = prepared.restitution_projection[0].fused_mul_add(inverse_response[0], 0.0);
     let predicted = core::array::from_fn::<_, 3, _>(|axis| {
-        prepared.predicted_separation_projection[axis].mul_add(inverse_response[axis], 0.0)
+        prepared.predicted_separation_projection[axis].fused_mul_add(inverse_response[axis], 0.0)
     });
     let mut normal_adjustment = if restitution >= 0.0 {
         0.0

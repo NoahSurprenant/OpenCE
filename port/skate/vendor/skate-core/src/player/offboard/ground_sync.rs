@@ -1,6 +1,7 @@
 //! TU3 BipedGround Sync82D31DC0, air decision82D32338 and board update82D324B0.
 //! Call only after the Biped job completes. Geometry submitted here is consumed
 //! by the next PreUpdate; this function never fabricates collision observations.
+use crate::fused::FusedMulAdd as _;
 mod math;
 use math::*;
 use super::{ground_entry::{Frame, State, Vector}, ground_query};
@@ -175,7 +176,7 @@ pub fn sync<S: Services>(state: &mut State, motion: &CompletedMotion,
             state.duration_180 = 0.0; state.flags_144_to_150[6] = false;
         }
         state.angle_172 *= f32::from_bits(0x3f66_6666);
-        let angle = (-state.angular_velocity_176).mul_add(state.duration_180, state.angle_172);
+        let angle = (-state.angular_velocity_176).fused_mul_add(state.duration_180, state.angle_172);
         let (sin,cos) = crate::trigonometry::sin_cos(angle);
         let forward = madd([sin,0.0,cos,sin], animation[2][2],
             madd([0.0,1.0,0.0,0.0], animation[2][1],

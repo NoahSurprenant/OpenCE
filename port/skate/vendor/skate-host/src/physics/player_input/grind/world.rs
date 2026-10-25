@@ -1,6 +1,7 @@
 //! Static host for original S3 82C20728 and 82E0AAD0 line batches.
 //! Both use scene mask7, matching ID2952, side flags3, rejection mask0 and
 //! a null surface-exclusion table. Metadata is mandatory, never render tags.
+use skate_core::fused::FusedMulAdd as _;
 use skate_core::{
     air::trajectory::grind_surface::{Probe, ProbeHit},
     math::Vector3,
@@ -172,14 +173,14 @@ fn face([a, b, c]: [Vector3; 3]) -> Vector3 {
     let u = sub(b, a);
     let v = sub(c, a);
     let n = Vector3::new(
-        (-u.z).mul_add(v.y, u.y * v.z),
-        (-u.x).mul_add(v.z, u.z * v.x),
-        (-u.y).mul_add(v.x, u.x * v.y),
+        (-u.z).fused_mul_add(v.y, u.y * v.z),
+        (-u.x).fused_mul_add(v.z, u.z * v.x),
+        (-u.y).fused_mul_add(v.x, u.x * v.y),
     );
-    let q = n.z.mul_add(n.z, n.y.mul_add(n.y, n.x * n.x));
+    let q = n.z.fused_mul_add(n.z, n.y.fused_mul_add(n.y, n.x * n.x));
     let mut r = q.sqrt().recip();
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-q).mul_add(r * r, 1.), r);
+        r = (r * 0.5).fused_mul_add((-q).fused_mul_add(r * r, 1.), r);
     }
     Vector3::new(n.x * r, n.y * r, n.z * r)
 }

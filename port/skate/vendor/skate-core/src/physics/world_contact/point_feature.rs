@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::{FeaturePrism, MaximumFeature, arithmetic::dot};
 
 fn load(words: &[u32], offset: usize) -> [f32; 4] {
@@ -23,7 +24,7 @@ pub fn closest_feature_segment(segment: &[u32; 16], point: &mut [u32; 4]) -> u32
     let after = length.iter().all(|&v| along > v);
     *point = std::array::from_fn(|i| {
         direction[i]
-            .mul_add(if after { length[i] } else { along }, origin[i])
+            .fused_mul_add(if after { length[i] } else { along }, origin[i])
             .to_bits()
     });
     if after { 3 } else { 2 }
@@ -44,7 +45,7 @@ pub fn intersect_point_face(
     let normal = normal.map(f32::from_bits);
     let origin = load(face, 4);
     let distance = dot3(normal, std::array::from_fn(|i| origin[i] - p[i]));
-    let mut projected = std::array::from_fn(|i| normal[i].mul_add(distance, p[i]));
+    let mut projected = std::array::from_fn(|i| normal[i].fused_mul_add(distance, p[i]));
     if (face[140] as i32) > 0 {
         let count = face[140] as usize;
         assert!(count <= 8, "native maximum-feature storage exceeded");

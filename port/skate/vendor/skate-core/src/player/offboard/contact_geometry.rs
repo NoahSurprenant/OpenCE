@@ -1,4 +1,5 @@
 //! Native classifier math82D85360/85488/855A8/85C48.
+use crate::fused::FusedMulAdd as _;
 use super::{
     contact_queries::{Input, V},
     contact_segments::{length_inverse, reciprocal},
@@ -16,7 +17,7 @@ pub fn slope_limit(input: Input, height: f32, rising: bool) -> f32 {
     // Scalar fsel clamp order retains native unordered behavior.
     let lower = if 2. - speed >= 0. { 2. } else { speed };
     let clamped = if 6. - lower >= 0. { lower } else { 6. };
-    let degrees = ((clamped - 2.) * (end - start)).mul_add(0.25, start);
+    let degrees = ((clamped - 2.) * (end - start)).fused_mul_add(0.25, start);
     crate::animation::foot_ik::post_contact::tangent(degrees * f32::from_bits(0x3c8e_fa35))
 }
 pub fn slope_between(input: Input, start: V, end: V) -> f32 {

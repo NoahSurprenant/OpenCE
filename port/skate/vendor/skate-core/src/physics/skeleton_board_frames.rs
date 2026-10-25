@@ -1,6 +1,7 @@
 //! Ground skeleton frame publication82BDF530 and COM lift82BDE310.
 //! The authored board11728, world target15952 and physical board12496 have
 //! different producers. Keep them separate through the animation/physics tick.
+use crate::fused::FusedMulAdd as _;
 use super::{
     native_arithmetic::reciprocal_estimate,
     skeleton_animation_record::{
@@ -70,7 +71,7 @@ impl SkeletonBoardFrames {
         self.centre_of_mass = com;
         let mut inverse = reciprocal_estimate(dt);
         for _ in 0..2 {
-            inverse = inverse.mul_add((-inverse).mul_add(dt, 1.0), inverse);
+            inverse = inverse.fused_mul_add((-inverse).fused_mul_add(dt, 1.0), inverse);
         }
         self.com_velocity =
             std::array::from_fn(|i| (com[i] - self.previous_centre_of_mass[i]) * inverse);
@@ -148,6 +149,6 @@ impl SkeletonBoardFrames {
         self.lifted_com_frame = self.com_frame;
         let height = self.lift_height + f32::from_bits(0x3E99_999A); //820D06C0 .3
         self.lifted_com_frame[3] =
-            std::array::from_fn(|i| self.com_frame[1][i].mul_add(height, self.com_frame[3][i]));
+            std::array::from_fn(|i| self.com_frame[1][i].fused_mul_add(height, self.com_frame[3][i]));
     }
 }

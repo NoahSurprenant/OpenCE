@@ -1,4 +1,5 @@
 //! Original Reckoning ResetBodyFlip82D8E9E0 / BeginBodyFlip82D8EAB0.
+use skate_core::fused::FusedMulAdd as _;
 use super::{math::*, runtime::Runtime};
 use skate_core::physics::skeleton_animation_record::IDENTITY;
 impl Runtime<'_> {
@@ -33,9 +34,9 @@ impl Runtime<'_> {
         let blend = if 1.0 - lo >= 0.0 { lo } else { 1.0 };
         let adjustment = scale(self.skater.known_air.flip_axis_adjustment, blend);
         let axis = std::array::from_fn(|i| {
-            basis[2][i].mul_add(
+            basis[2][i].fused_mul_add(
                 adjustment[2],
-                basis[1][i].mul_add(adjustment[1], basis[0][i]),
+                basis[1][i].fused_mul_add(adjustment[1], basis[0][i]),
             )
         });
         state.flip_axis = normalized(axis).0;

@@ -1,4 +1,5 @@
 //! Original TU3 PhysicsConditioner::CalcLandingQuality, 0x82DE61D0.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     physics::{board_motion_output::inverse_length_squared, native_arithmetic},
     point_graph::PointGraph,
@@ -125,9 +126,9 @@ fn planar(a: [f32; 4], normal: [f32; 4]) -> [f32; 4] {
 }
 fn cross(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.0,
     ]
 }
@@ -139,7 +140,7 @@ fn length(a: [f32; 4]) -> f32 {
 fn reciprocal(value: f32) -> f32 {
     let mut estimate = native_arithmetic::reciprocal_estimate(value);
     for _ in 0..2 {
-        estimate = estimate.mul_add((-estimate).mul_add(value, 1.0), estimate);
+        estimate = estimate.fused_mul_add((-estimate).fused_mul_add(value, 1.0), estimate);
     }
     estimate
 }

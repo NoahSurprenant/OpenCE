@@ -1606,6 +1606,7 @@ dependencies = [
  "gltf",
  "png",
  "serde_json",
+ "skate-core",
  "skate-host",
 ]
 

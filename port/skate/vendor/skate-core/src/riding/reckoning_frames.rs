@@ -1,6 +1,7 @@
 //! Reckoning transform, dynamic lean and lateral tilt, TU3
 //!82D8D688/82D8D930/82D8C4F8. State scheduling and frame producers are separate.
 //! Numerical primitives retain their documented hardware-validation boundary.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     math::Vector3,
     physics::{
@@ -136,10 +137,10 @@ fn normalize(value: [f32; 4]) -> [f32; 4] {
 }
 fn cross(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 fn inverse(frame: &AnimationPartTransform) -> AnimationPartTransform {
@@ -147,8 +148,8 @@ fn inverse(frame: &AnimationPartTransform) -> AnimationPartTransform {
     let p = frame[3].map(|v| 0.0 - v);
     let position = std::array::from_fn(|i| {
         let z = axes[2][i] * p[2];
-        let y = axes[1][i].mul_add(p[1], z);
-        axes[0][i].mul_add(p[0], y)
+        let y = axes[1][i].fused_mul_add(p[1], z);
+        axes[0][i].fused_mul_add(p[0], y)
     });
     [axes[0], axes[1], axes[2], position]
 }

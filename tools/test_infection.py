@@ -343,3 +343,37 @@ def test_infection_out_of_reach(tmp_path):
     print(f"client's player {player}: told out of reach on the client {told[:2]}, hurt by the host {hurts[:4]}")
     assert told, "the client did not tell its own player out of reach"
     assert len(hurts) >= 3, f"the host did not hurt the client's player out of reach: {hurts}"
+
+
+STILL = re.compile(r"skate: the bots' skaters: (\d+) skating on average.*a riding skater stood still between its steps (\d+) times")
+PERIODS = re.compile(r"skate: the bots' skaters: (\d+) near people step every (\d+) ticks?, (\d+) further away every (\d+)")
+
+
+def test_infection_skaters_stepping_in_turn(tmp_path):
+    """The run-over game of test_infection_a_run_over_infects with every
+    bot's skater stepping only every other tick (debug.skate_bot_period 2),
+    as a host short of processors has its skaters far from people do
+    (skate.c, "many bots on boards"): between its steps each glides on, so
+    no riding skater's biped ever stands still a tick, and the game plays
+    on - the infected still rides at the survivors, the host decides its
+    run-overs and they infect (a skater stepped every other tick rides half
+    as fast, so the round need not end the same way). About three minutes."""
+    _, maps, assets = _needs_skate()
+    log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
+        "HALO_SERVER_BOTS": "5", "HALO_BOT_DIFFICULTIES": "hard,peaceful,peaceful,peaceful,peaceful",
+        "HALO_BOT_SKATE": "ram,stand,stand,stand,stand", "HALO_INFECTION_FIRST": "0", "HALO_BOT_SEED": "1", "HALO_GAME_SEED": "1",
+        "HALO_SKATE_BOT_PERIOD": "2", "HALO_SERVER_MAPS": "bloodgulch:infection", "HALO_SERVER_TIME_LIMIT": "3"},
+        (_test_address(169), _test_address(170)), done=_over)
+    infected = INFECTED.findall(log)
+    over = OVER.search(log)
+    periods = PERIODS.findall(log)
+    still = STILL.findall(log)
+    print(f"periods {periods}; still {still}; infected {infected}; run-over kills by {RUN_OVER_KILLED.findall(log)}; "
+          f"over {over and over.groups()}")
+    assert periods and all(p[1] == "2" and p[3] == "2" for p in periods), f"the skaters did not step every other tick: {periods}"
+    assert still and any(int(s[0]) >= 1 for s in still), f"no report of the skaters riding: {still}"
+    assert all(s[1] == "0" for s in still), f"a riding skater stood still between its steps: {still}"
+    assert len(infected) >= 2 and infected[0][1] == "0", f"the infected infected too few: {infected}"
+    assert "0" in RUN_OVER_KILLED.findall(log), "the infected's kill was no run-over"
+    assert over, "the round did not end"
+    assert not re.search(r"NOT FINITE|EXCEPTION|fatal error", log), "a pose not finite, or a fatal error"

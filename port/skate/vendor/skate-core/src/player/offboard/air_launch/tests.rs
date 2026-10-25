@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::*;
 fn processed() -> Processed {
     Processed {
@@ -146,8 +147,8 @@ fn riding_launch_boost_is_not_a_clamp_and_advances_all_lanes() {
         assert_eq!(packet.secondary_velocity_16, p.velocity_608);
         assert_eq!(packet.board_position_80, p.board_position_112);
         assert!(packet.has_board_position_116);
-        near(packet.position_32[1], want.mul_add(DT, 20.));
-        near(packet.position_32[3], 6.0f32.mul_add(DT, 1.));
+        near(packet.position_32[1], want.fused_mul_add(DT, 20.));
+        near(packet.position_32[3], 6.0f32.fused_mul_add(DT, 1.));
     }
 }
 #[test]

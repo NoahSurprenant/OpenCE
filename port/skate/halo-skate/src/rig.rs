@@ -226,6 +226,11 @@ impl Rig {
         }
     }
 
+    /// How many nodes the skeleton has (what `pose` writes at most).
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn mapped(&self) -> usize {
         self.nodes.iter().filter(|n| n.follow.is_some()).count()
     }

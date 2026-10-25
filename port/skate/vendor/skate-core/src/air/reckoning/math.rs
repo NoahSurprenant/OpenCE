@@ -1,5 +1,6 @@
 //! Original TU3 angle limiter82BD3E78 and Air heading rotation82D8DFD4.
 //! Basic arithmetic runs on the host; this is not bit-exact Xenon emulation.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     math::Vector3,
     physics::{
@@ -46,10 +47,10 @@ pub(super) fn normalize_safe(v: V, fallback: V) -> V {
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 
@@ -65,8 +66,8 @@ pub fn limit_angle(target: V, from: V, maximum: f32) -> V {
     );
     let angle = trigonometry::acos(cosine);
     //The limiter uses floor(angle/tau + .5), unlike its caller's fraction wrap.
-    let turns = angle.mul_add(INV_TAU, 0.5).floor();
-    let closest_angle = (-turns).mul_add(TAU, angle);
+    let turns = angle.fused_mul_add(INV_TAU, 0.5).floor();
+    let closest_angle = (-turns).fused_mul_add(TAU, angle);
     if closest_angle.abs() < maximum || dot3(axis, axis) < f32::from_bits(0x3780_0000) {
         return target;
     }
@@ -74,9 +75,9 @@ pub fn limit_angle(target: V, from: V, maximum: f32) -> V {
     let (sin, cos) = trigonometry::sin_cos(-maximum * 0.5);
     let q = axis.map(|v| v * sin);
     let first = cross(q, from);
-    let intermediate = std::array::from_fn(|i| cos.mul_add(from[i], first[i]));
+    let intermediate = std::array::from_fn(|i| cos.fused_mul_add(from[i], first[i]));
     let second = cross(q, intermediate);
-    let rotated: V = std::array::from_fn(|i| second[i].mul_add(2.0, from[i]));
+    let rotated: V = std::array::from_fn(|i| second[i].fused_mul_add(2.0, from[i]));
     let magnitude = length(target);
     rotated.map(|v| v * magnitude)
 }
@@ -89,17 +90,17 @@ pub(super) fn rotate_heading(heading: V, up: V, angle: f32) -> V {
     let t = 1.0 - c;
     let (tx, ty, tz) = (t * x, t * y, t * z);
     let (sx, sy, sz) = (s * x, s * y, s * z);
-    let xx = tx.mul_add(x, c);
+    let xx = tx.fused_mul_add(x, c);
     let yx = ty * x - sz;
-    let zx = tz.mul_add(x, sy);
+    let zx = tz.fused_mul_add(x, sy);
     let columns = [
-        [xx, tx.mul_add(y, sz), tx * z - sy, xx],
-        [yx, ty.mul_add(y, c), ty.mul_add(z, sx), yx],
-        [zx, tz * y - sx, tz.mul_add(z, c), zx],
+        [xx, tx.fused_mul_add(y, sz), tx * z - sy, xx],
+        [yx, ty.fused_mul_add(y, c), ty.fused_mul_add(z, sx), yx],
+        [zx, tz * y - sx, tz.fused_mul_add(z, c), zx],
     ];
     std::array::from_fn(|i| {
         let first = columns[0][i] * heading[0];
-        let second = columns[1][i].mul_add(heading[1], first);
-        columns[2][i].mul_add(heading[2], second)
+        let second = columns[1][i].fused_mul_add(heading[1], first);
+        columns[2][i].fused_mul_add(heading[2], second)
     })
 }

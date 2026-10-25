@@ -57,6 +57,11 @@ objects (render.c). */
 #include <xtl.h>
 
 #include "../../skate/include/halo_skate.h"
+#include "profile_sections.h"
+
+PROFILE_SECTION(skate_bots_begin_section, "skate.bots_begin")
+PROFILE_SECTION(skate_bots_obstacles_section, "skate.bots_obstacles")
+PROFILE_SECTION(skate_bots_await_section, "skate.bots_await")
 #include "infection.h"
 
 /* the platform layer's (sdl_platform.c, xinput_sdl.c, d3d8_gl.c) */
@@ -153,6 +158,20 @@ struct skate_skater
 	(skate_bots_begin_steps) */
 	struct halo_skate_pad pad;
 	boolean stepping;
+	/* (a bot's) where its biped was drawn last tick, when it rode */
+	real_point3d drawn;
+	boolean has_drawn;
+	/* (a bot's) near a person playing (skate_bots_near_people): always
+	stepped every tick; the ticks since its last step was taken, the
+	period it steps at, and where it was and how fast it went then: between
+	steps it glides on from there (skate_bots_glide) */
+	boolean near_people;
+	long taken_time;
+	short ticks_since_step;
+	short step_period;
+	real_point3d stepped_position;
+	real_vector3d stepped_velocity;
+	real_vector3d glided;
 	/* (a bot's) its board where it was the last two ticks (drawn between
 	them, as another machine's skater's: skate_render_board), and the light
 	there */
@@ -2028,6 +2047,11 @@ tick at any board speed is under 3 m) */
 9 m: a tick at any board speed, the skater's height and a vehicle's tick at
 speed, with room) */
 #define SKATE_TRIANGLE_REACH 3.f
+/* how near the skater another person (on foot or on a board) is sent (world
+units, 12 m: a tick of both at any speed, and their sizes, with room); a
+crowd of skaters each sent every other within the radius made each step
+cost as much as the crowd was large */
+#define SKATE_BIPED_REACH 4.f
 #define SKATE_OBSTACLE_SEARCH 128
 /* a biped's velocity is taken up to this (world units a second: 10 m/s,
 past any run): another machine's unit jumps where the host says after a
@@ -2633,6 +2657,11 @@ static void skate_send_obstacles(struct skate_skater *rider, long unit_index)
 			continue;
 		if (object->object.type == _object_type_biped)
 		{
+			real_point3d at;
+
+			object_get_origin(object_index, &at);
+			if (distance_squared3d(&at, &skater) > SKATE_BIPED_REACH * SKATE_BIPED_REACH)
+				continue;
 			/* (another skater, another machine's or another of this
 			machine's, as their body and board, else as Halo's pill) */
 			if (!(object->object.damage_flags & FLAG(_object_dead_bit)) &&
@@ -2735,65 +2764,296 @@ static short skate_bots_allowed(void)
 
 /* ---------- many bots on boards
 The bots' skaters step on the skate engine's pool (as many threads as the
-machine has processors), beside this machine's player's. When their steps
-take longer than SKATE_BOTS_BUDGET_MS a tick (more skating bots than the
-machine has processors for), each bot's skater steps every few ticks instead
-of every tick - they skate slower, the game does not (unless even that is too
-much: then the game's ticks take longer too); as the load eases they step
-every tick again. The log says so each time. Nobody is refused a board. */
-#define SKATE_BOTS_BUDGET_MS 20
-#define SKATE_BOTS_MOST_EVERY 16
+machine's processors, or its share of them: lib.rs's pool.rs). Each step is
+begun before the objects update and taken at the next tick's
+(skate_bots_take_steps), so that the pool works while the game plays the
+rest of the tick; the game waits only for steps the pool has not finished.
+
+The pool's time for a step is measured (halo_skate_pool_load). When the
+skaters on boards would need more of it than the pool has in a tick, the
+ones far from everyone playing - more than SKATE_BOTS_NEAR from any living
+person's unit - step every other tick instead, half of them each tick, and
+in between glide on at the speed their last step had, slowed as their steps
+are (skate_bots_glide): nobody near sees it, and nobody far sees a skater
+stop and jump (they do ride half as fast meanwhile). Those near people step
+every tick whatever it costs, unless even they are too many for the pool (a
+last resort: then they too step every other tick, gliding between); past
+that the game's ticks take longer. Nobody is refused a board; the log says
+each time the periods change. With processors enough (port/skate/README.md,
+"Several skaters") none of this happens. */
+#define SKATE_BOTS_NEAR 25.f
+/* (every other tick at most: a bot's skater slower still is too slow for its
+brain, which takes it for stuck; past that the game itself slows) */
+#define SKATE_BOTS_MOST_PERIOD 2
 static struct
 {
-	/* each bot's skater steps every this many ticks */
-	short every;
-	/* the time the bots' steps took a tick, averaged (milliseconds, 1/16ths) */
-	long average_ms16;
-	long started_ms;
-	short stepped;
+	/* the periods the far and the near skaters step at */
+	short far_period;
+	short near_period;
+	/* the pool's time for a step (microseconds, averaged) and the share of
+	its threads' time a tick the bots' steps may take (1/1000ths): lowered
+	while the game waits for the pool (the game's own thread shares the
+	processors), raised while it does not */
+	long step_micros;
+	long share;
+	unsigned long long steps;
+	unsigned long long micros;
+	long waited_ms;
+	long average_waited16;
 	long changed_time;
-} skate_bots_load = { 1, 0, 0, 0, NONE };
+	long share_time;
+} skate_bots_load = { 1, 1, 0, 700, 0, 0, 0, 0, NONE, NONE };
 
 unsigned long system_milliseconds(void);
 static short skate_bots_skating(void);
 
-/* the bots' steps of this tick, begun (started_ms) and taken: the load
-noted, and the stepping slowed down or sped up */
-static void skate_bots_note_load(void)
+/* what the log tells of the bots' skaters every SKATE_BOTS_REPORT_SECONDS:
+how many skate, what their steps took, and how many ticks the game played a
+second (30 when it keeps up) */
+#define SKATE_BOTS_REPORT_SECONDS 30
+static struct
 {
-	long took = (long)(system_milliseconds() - (unsigned long)skate_bots_load.started_ms);
+	long started_ms;
+	long started_tick;
+	long last_ms;
+	long ticks;
+	long skating;
+	long total_ms;
+	long most_ms;
+	long longest_gap_ms;
+	/* the ticks a riding skater's biped stood still between two of its
+	steps (none: they glide on between) */
+	long still;
+} skate_bots_report = { 0, NONE, 0, 0, 0, 0, 0, 0, 0 };
+
+static void skate_bots_note_report(long took, short skating)
+{
+	long now_ms = (long)system_milliseconds();
 	long now = game_time_get();
 
-	/* (no bot stepped: nothing to wait for, the load falls) */
-	if (!skate_bots_load.stepped || took < 0)
-		took = 0;
-	skate_bots_load.average_ms16 += (took * 16 - skate_bots_load.average_ms16) / 16;
-	if (skate_bots_load.changed_time != NONE && now - skate_bots_load.changed_time < 2 * TICKS_PER_SECOND &&
-		now >= skate_bots_load.changed_time)
+	/* (from the first tick anyone skates: not the game's loading before) */
+	if (skate_bots_report.started_tick == NONE || now < skate_bots_report.started_tick ||
+		(!skating && !skate_bots_report.skating))
 	{
+		memset(&skate_bots_report, 0, sizeof(skate_bots_report));
+		skate_bots_report.started_ms = now_ms;
+		skate_bots_report.started_tick = now;
+		skate_bots_report.last_ms = now_ms;
 		return;
 	}
-	if (skate_bots_load.average_ms16 > SKATE_BOTS_BUDGET_MS * 16 && skate_bots_load.every < SKATE_BOTS_MOST_EVERY)
+	if (now_ms - skate_bots_report.last_ms > skate_bots_report.longest_gap_ms)
+		skate_bots_report.longest_gap_ms = now_ms - skate_bots_report.last_ms;
+	skate_bots_report.last_ms = now_ms;
+	skate_bots_report.ticks++;
+	skate_bots_report.skating += skating;
+	skate_bots_report.total_ms += took;
+	if (took > skate_bots_report.most_ms)
+		skate_bots_report.most_ms = took;
+	if (now - skate_bots_report.started_tick >= SKATE_BOTS_REPORT_SECONDS * TICKS_PER_SECOND &&
+		now_ms > skate_bots_report.started_ms)
 	{
-		skate_bots_load.every++;
-		skate_bots_load.changed_time = now;
-		platform_log("skate: the bots' skaters take %ld ms a tick (more than %d, %d skating): each steps every %d ticks "
-			"now, slower (more skating bots than this machine has processors for)", skate_bots_load.average_ms16 / 16,
-			SKATE_BOTS_BUDGET_MS, skate_bots_skating(), skate_bots_load.every);
+		long ticks = skate_bots_report.ticks;
+
+		if (skate_bots_report.skating)
+		{
+			long rate10 = (now - skate_bots_report.started_tick) * 10000 / (now_ms - skate_bots_report.started_ms);
+
+			platform_log("skate: the bots' skaters: %ld skating on average, the game waited %ld.%ld ms a tick for their steps on "
+				"average (at most %ld); the game played %ld.%ld ticks a second (the longest between two %ld ms); "
+				"a riding skater stood still between its steps %ld times",
+				skate_bots_report.skating / ticks, skate_bots_report.total_ms / ticks,
+				skate_bots_report.total_ms * 10 / ticks % 10, skate_bots_report.most_ms, rate10 / 10, rate10 % 10,
+				skate_bots_report.longest_gap_ms, skate_bots_report.still);
+		}
+		skate_bots_report.started_tick = NONE;
 	}
-	else if (skate_bots_load.every > 1 && skate_bots_load.average_ms16 * skate_bots_load.every <
-		SKATE_BOTS_BUDGET_MS * 16 * (skate_bots_load.every - 1) / 2)
+}
+
+
+/* (once a tick, after the steps were taken) the load noted, and the periods
+the far and the near skaters step at sized to the pool */
+static void skate_bots_note_load(void)
+{
+	unsigned long long steps = 0;
+	unsigned long long micros = 0;
+	long now = game_time_get();
+	long took = skate_bots_load.waited_ms < 0 ? 0 : skate_bots_load.waited_ms;
+	int threads = halo_skate_pool_load(&steps, &micros);
+	short near = 0;
+	short far = 0;
+	short far_period = 1;
+	short near_period = 1;
+	short index;
+
+	skate_bots_note_report(took, skate_bots_skating());
+	skate_bots_load.average_waited16 += (took * 16 - skate_bots_load.average_waited16) / 16;
+	if (steps > skate_bots_load.steps && micros >= skate_bots_load.micros)
 	{
-		skate_bots_load.every--;
-		skate_bots_load.changed_time = now;
-		platform_log("skate: the bots' skaters take %ld ms a tick: each steps every %d ticks now",
-			skate_bots_load.average_ms16 / 16, skate_bots_load.every);
+		long step = (long)((micros - skate_bots_load.micros) / (steps - skate_bots_load.steps));
+
+		skate_bots_load.step_micros = skate_bots_load.step_micros ?
+			skate_bots_load.step_micros + (step - skate_bots_load.step_micros) / 16 : step;
 	}
+	skate_bots_load.steps = steps;
+	skate_bots_load.micros = micros;
+	/* (the share: down while the game waits, up while it does not) */
+	if (skate_bots_load.share_time == NONE || now < skate_bots_load.share_time ||
+		now - skate_bots_load.share_time >= TICKS_PER_SECOND)
+	{
+		skate_bots_load.share_time = now;
+		if (skate_bots_load.average_waited16 > 3 * 16 && skate_bots_load.share > 200)
+			skate_bots_load.share -= 50;
+		else if (skate_bots_load.average_waited16 < 16 && skate_bots_load.share < 900)
+			skate_bots_load.share += 10;
+	}
+	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
+	{
+		if (skate_skaters[index].player_index != NONE && skate_skaters[index].skating)
+		{
+			if (skate_skaters[index].near_people)
+				near++;
+			else
+				far++;
+		}
+	}
+	/* the steps the pool has time for in a tick, and the periods that fit
+	them: the near ones' first */
+	if (threads > 0 && skate_bots_load.step_micros > 0 && near + far > 0)
+	{
+		long room = (long)threads * (1000000L / TICKS_PER_SECOND) / 1000 * skate_bots_load.share /
+			skate_bots_load.step_micros;
+
+		/* (quicker again only with a quarter to spare: a step takes longer
+		with more of them side by side) */
+		if (skate_bots_load.far_period > 1 || skate_bots_load.near_period > 1)
+			room = room * 3 / 4;
+		if (room < 1)
+			room = 1;
+		if (near > room)
+		{
+			near_period = (short)((near + room - 1) / room);
+			far_period = near_period;
+		}
+		else if (near + far > room)
+		{
+			long left = room - near > 0 ? room - near : 1;
+
+			far_period = (short)((far + left - 1) / left);
+		}
+	}
+	/* (debug.skate_bot_period: the tests' own) */
+	if (config_integer("debug.skate_bot_period") > 0)
+	{
+		near_period = (short)config_integer("debug.skate_bot_period");
+		far_period = near_period;
+	}
+	if (near_period > SKATE_BOTS_MOST_PERIOD)
+		near_period = SKATE_BOTS_MOST_PERIOD;
+	if (far_period > SKATE_BOTS_MOST_PERIOD)
+		far_period = SKATE_BOTS_MOST_PERIOD;
+	if (far_period < near_period)
+		far_period = near_period;
+	if (far_period == skate_bots_load.far_period && near_period == skate_bots_load.near_period)
+		return;
+	/* (slower only while the game does wait for the pool; quicker again
+	only after 10 seconds, and while it does not wait at all: no to and fro
+	at the edge) */
+	if (config_integer("debug.skate_bot_period") <= 0)
+	{
+		boolean slower = far_period > skate_bots_load.far_period || near_period > skate_bots_load.near_period;
+		boolean recent = skate_bots_load.changed_time != NONE && now >= skate_bots_load.changed_time &&
+			now - skate_bots_load.changed_time < 10 * TICKS_PER_SECOND;
+
+		if (slower && skate_bots_load.average_waited16 <= 2 * 16)
+			return;
+		if (!slower && (recent || skate_bots_load.average_waited16 >= 16))
+			return;
+		/* (never quicker for one, slower for the other at once) */
+		if (slower)
+		{
+			far_period = far_period > skate_bots_load.far_period ? far_period : skate_bots_load.far_period;
+			near_period = near_period > skate_bots_load.near_period ? near_period : skate_bots_load.near_period;
+		}
+	}
+	skate_bots_load.changed_time = now;
+	skate_bots_load.far_period = far_period;
+	skate_bots_load.near_period = near_period;
+	platform_log("skate: the bots' skaters: %d near people step every %d tick%s, %d further away every %d "
+		"(a step %ld.%ld ms on the pool's %d threads, %ld%% of their time for them; the game waited %ld ms a tick)",
+		near, near_period, near_period == 1 ? "" : "s", far, far_period, skate_bots_load.step_micros / 1000,
+		skate_bots_load.step_micros / 100 % 10, threads, skate_bots_load.share / 10,
+		skate_bots_load.average_waited16 / 16);
 }
 
 boolean skate_bots_busy(void)
 {
-	return skate_bots_load.every > 1;
+	return skate_bots_load.far_period > 1;
+}
+
+/* where the people playing are: each living unit of a player who is no bot
+(SKATE_BOTS_NEAR of one is near them); how many */
+static short skate_bots_people(real_point3d *origins, short capacity)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	short count = 0;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = data_iterator_next(&iterator)) != NULL && count < capacity)
+	{
+		if (bots_player_is_bot(player) || player->unit_index == NONE || !object_try_and_get(player->unit_index))
+			continue;
+		object_get_origin(player->unit_index, &origins[count++]);
+	}
+	return count;
+}
+
+/* whether the bot's skater steps this tick: near people at their period,
+the others at theirs, each in its turn */
+static boolean skate_bots_steps_now(struct skate_skater const *skater)
+{
+	short period = skater->near_people ? skate_bots_load.near_period : skate_bots_load.far_period;
+
+	return period <= 1 || (game_time_get() + (long)(skater - skate_skaters)) % period == 0;
+}
+
+/* a skater not stepped this tick glides on from its last step at the speed
+it had, as slowed as its steps are (a step every period ticks moves it a
+tick's way), to where its next step will about have it: its biped placed
+there (and posed there, skate_bots_after_objects, its nodes moved by as much) */
+static void skate_bots_glide(struct skate_skater *skater)
+{
+	real ticks = (real)skater->ticks_since_step;
+	real period = (real)(skater->step_period > 1 ? skater->step_period : 1);
+	real scale = ticks / (period * TICKS_PER_SECOND);
+
+	/* (no further than its next step would take it) */
+	if (ticks > period)
+		scale = 1.f / TICKS_PER_SECOND;
+	skater->glided.i = skater->stepped_velocity.i * scale;
+	skater->glided.j = skater->stepped_velocity.j * scale;
+	skater->glided.k = skater->stepped_velocity.k * scale;
+	skater->frame.position[0] = skater->stepped_position.x + skater->glided.i;
+	skater->frame.position[1] = skater->stepped_position.y + skater->glided.j;
+	skater->frame.position[2] = skater->stepped_position.z + skater->glided.k;
+	skate_apply_frame(skater, skater->unit_index, FALSE);
+}
+
+/* the skater where its frame has it now (a step taken, or put somewhere):
+what it glides on from */
+static void skate_bots_stepped(struct skate_skater *skater)
+{
+	float const *velocity = skater->frame.off_board ? skater->frame.skater_velocity : skater->frame.velocity;
+
+	skater->ticks_since_step = 0;
+	skater->taken_time = game_time_get();
+	skater->stepped_position.x = skater->frame.position[0];
+	skater->stepped_position.y = skater->frame.position[1];
+	skater->stepped_position.z = skater->frame.position[2];
+	skater->stepped_velocity.i = velocity[0];
+	skater->stepped_velocity.j = velocity[1];
+	skater->stepped_velocity.k = velocity[2];
+	skater->glided.i = skater->glided.j = skater->glided.k = 0.f;
 }
 
 /* how many bots' skaters are on a board */
@@ -2975,8 +3235,7 @@ boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
 	view->bailing = !strncmp(skater->frame.state, "Wipeout", 7);
 	view->grinding = !strncmp(skater->frame.state, "Grind", 5);
 	view->airborne = strstr(skater->frame.state, "Air") != NULL;
-	view->steps_now = skate_bots_load.every <= 1 ||
-		(game_time_get() + (long)(skater - skate_skaters)) % skate_bots_load.every == 0;
+	view->steps_now = skate_bots_steps_now(skater);
 	velocity = skater->frame.off_board ? skater->frame.skater_velocity : skater->frame.velocity;
 	view->position[0] = skater->frame.position[0];
 	view->position[1] = skater->frame.position[1];
@@ -2991,16 +3250,24 @@ boolean skate_bot_frame(long player_index, struct skate_bot_view *view)
 	return TRUE;
 }
 
-/* (before the objects update) each bot's skater: given up when its bot is
-gone, on the board when its session is ready, off it when its biped left it;
-each riding one's step begun (the sessions step side by side with this
-machine's player's skater; skate_bots_finish_steps takes the poses) */
+static void skate_bots_take_steps(void);
+
+/* (before the objects update) each bot's skater: the step begun last tick
+taken (skate_bots_take_steps); then given up when its bot is gone, on the
+board when its session is ready, off it when its biped left it; and each
+riding one's step begun, which the skate engine's pool runs while the game
+plays the rest of this tick - beside this machine's player's skater, the
+objects, the bots' brains, the network - for the next tick to take: the game
+waits for them only when the pool has not kept up */
 static void skate_bots_begin_steps(void)
 {
 	short index;
 
-	skate_bots_load.started_ms = (long)system_milliseconds();
-	skate_bots_load.stepped = 0;
+	real_point3d people[SKATE_NETWORK_PLAYERS];
+	short people_count;
+
+	skate_bots_take_steps();
+	people_count = skate_bots_people(people, NUMBEROF(people));
 	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
 	{
 		struct skate_skater *skater = &skate_skaters[index];
@@ -3052,21 +3319,51 @@ static void skate_bots_begin_steps(void)
 		skate_test_under_floor(skater);
 		/* (debug.skate_test_spot) */
 		skate_test_spot(skater);
-		/* (moved by a teleporter or a script: the skater goes there) */
-		skate_follow_teleport(skater, skater->unit_index);
-		/* (a blast pushed them) */
-		skate_apply_blast(skater);
+		{
+			real_point3d was;
+			short person;
 
-		/* (the machine short of processors: every few ticks, slower) */
-		if (skate_bots_load.every > 1 && (game_time_get() + index) % skate_bots_load.every != 0)
+			was.x = skater->frame.position[0];
+			was.y = skater->frame.position[1];
+			was.z = skater->frame.position[2];
+			/* (moved by a teleporter or a script: the skater goes there) */
+			skate_follow_teleport(skater, skater->unit_index);
+			/* (a blast pushed them) */
+			skate_apply_blast(skater);
+			/* (put somewhere: it glides on from there, not from its last step) */
+			if (was.x != skater->frame.position[0] || was.y != skater->frame.position[1] ||
+				was.z != skater->frame.position[2])
+			{
+				skate_bots_stepped(skater);
+			}
+			skater->near_people = FALSE;
+			for (person = 0; person < people_count && !skater->near_people; person++)
+			{
+				real dx = skater->frame.position[0] - people[person].x;
+				real dy = skater->frame.position[1] - people[person].y;
+				real dz = skater->frame.position[2] - people[person].z;
+
+				skater->near_people = dx * dx + dy * dy + dz * dz < SKATE_BOTS_NEAR * SKATE_BOTS_NEAR;
+			}
+		}
+		/* (more skaters than the pool has time for: this one steps every few
+		ticks, gliding on in between - each tick but the one its last step
+		was taken, the tick a step begins too, since it is taken only at the
+		next) */
+		if (skater->step_period > 1 && skater->taken_time != game_time_get())
+		{
+			skater->ticks_since_step++;
+			skate_bots_glide(skater);
+		}
+		if (!skate_bots_steps_now(skater))
 			continue;
-		skate_send_obstacles(skater, skater->unit_index);
+		skater->step_period = skater->near_people ? skate_bots_load.near_period : skate_bots_load.far_period;
+		profile_scope(skate_bots_obstacles_section, skate_send_obstacles(skater, skater->unit_index);)
 		/* (Infection: an infected's board quicker, its session faster, and
 		turning more sharply) */
 		halo_skate_set_turn_scale_in(index, infection_skate_turn_scale(skater->unit_index));
 		skater->stepping = halo_skate_step_begin_in(index, &skater->pad,
 			infection_skate_time_scale(skater->unit_index) / TICKS_PER_SECOND) == 0;
-		skate_bots_load.stepped += skater->stepping;
 		if (!skater->stepping && halo_skate_state_in(index) == -1)
 		{
 			skate_engine_failed(skater);
@@ -3075,10 +3372,12 @@ static void skate_bots_begin_steps(void)
 	}
 }
 
-/* ... and their poses taken, each placed (as this machine's player's skater
-is in skate_update_before_objects) */
-static void skate_bots_finish_steps(void)
+/* the steps begun last tick taken, each skater placed with its pose (as this
+machine's player's skater is in skate_update_before_objects); the time the
+game waited for them noted (skate_bots_note_load) */
+static void skate_bots_take_steps(void)
 {
+	long started_ms = (long)system_milliseconds();
 	short index;
 
 	for (index = 1; index < SKATE_MAXIMUM_SKATERS; index++)
@@ -3090,7 +3389,11 @@ static void skate_bots_finish_steps(void)
 			continue;
 		skater->stepping = FALSE;
 		/* (as the game waits for this machine's player's skater's step) */
-		stepped = halo_skate_await_step_in(index, SKATE_BOT_STEP_WAIT_MS, &skater->frame);
+		profile_scope(skate_bots_await_section,
+			stepped = halo_skate_await_step_in(index, SKATE_BOT_STEP_WAIT_MS, &skater->frame);)
+		/* (off the board since, or given up: its last step is not shown) */
+		if (!skater->skating || skater->player_index == NONE)
+			continue;
 		if (stepped == 2)
 		{
 			platform_log("skate: bot skater %d thrown, back on the board", index);
@@ -3109,7 +3412,9 @@ static void skate_bots_finish_steps(void)
 		}
 		if (skater->skating)
 			skate_take_held_hit(skater);
+		skate_bots_stepped(skater);
 	}
+	skate_bots_load.waited_ms = (long)(system_milliseconds() - (unsigned long)started_ms);
 }
 
 /* this machine's player's skater, before the objects update (the bots'
@@ -3178,7 +3483,7 @@ static void skate_local_update(void)
 			skate_watch_scenery();
 	}
 	/* (the bots' skaters step beside this one) */
-	skate_bots_begin_steps();
+	profile_scope(skate_bots_begin_section, skate_bots_begin_steps();)
 
 	if (skater->skating && (unit_index != skater->unit_index ||
 		!skate_unit_can_skate(unit_index) || !skate_map_loaded(skater)))
@@ -3304,7 +3609,6 @@ static void skate_local_update(void)
 void skate_update_before_objects(void)
 {
 	skate_local_update();
-	skate_bots_finish_steps();
 	skate_bots_note_load();
 }
 
@@ -3586,6 +3890,13 @@ static float const *skate_skater_board_note(struct skate_skater *skater, float *
 		skater->board_has_previous = FALSE;
 		return NULL;
 	}
+	/* (a bot's skater gliding between its steps: its board with it) */
+	if (skater->ticks_since_step > 0)
+	{
+		placement[4] += skater->glided.i;
+		placement[5] += skater->glided.j;
+		placement[6] += skater->glided.k;
+	}
 	next = skater->board_has_latest ? (short)(skater->board_latest ^ 1) : skater->board_latest;
 	memcpy(skater->boards[next], placement, sizeof(skater->boards[next]));
 	skater->board_has_previous = skater->board_has_latest;
@@ -3624,6 +3935,7 @@ static void skate_bots_after_objects(void)
 			continue;
 		if (!skater->skating || !skate_unit_can_skate(skater->unit_index))
 		{
+			skater->has_drawn = FALSE;
 			skate_network_note_local(skater->player_index, NONE, FALSE, FALSE, NULL, index);
 			skate_skater_board_forget(skater);
 			continue;
@@ -3644,8 +3956,35 @@ static void skate_bots_after_objects(void)
 			written = halo_skate_pose_nodes_in(index, &matrices[0].scale, node_count);
 		}
 		if (written == node_count)
+		{
+			short node;
+
+			/* (gliding between its steps: its pose moved with it) */
+			for (node = 0; node < node_count && skater->ticks_since_step > 0; node++)
+			{
+				matrices[node].position.x += skater->glided.i;
+				matrices[node].position.y += skater->glided.j;
+				matrices[node].position.z += skater->glided.k;
+			}
 			memcpy(node_matrices, matrices, sizeof(real_matrix4x3) * node_count);
+		}
 		skate_holster_weapon(skater->unit_index, node_matrices, node_count);
+		/* (a skater going on between its steps whose biped stood still: told
+		in the report) */
+		{
+			real_point3d at;
+			real speed2 = skater->stepped_velocity.i * skater->stepped_velocity.i +
+				skater->stepped_velocity.j * skater->stepped_velocity.j;
+
+			object_get_origin(skater->unit_index, &at);
+			if (skater->has_drawn && skater->ticks_since_step > 0 && speed2 > 1.f &&
+				at.x == skater->drawn.x && at.y == skater->drawn.y && at.z == skater->drawn.z)
+			{
+				skate_bots_report.still++;
+			}
+			skater->drawn = at;
+			skater->has_drawn = TRUE;
+		}
 		board = skate_skater_board_note(skater, placement);
 		if (board)
 			skate_board_light(skater->unit_index, skater->board_lights);

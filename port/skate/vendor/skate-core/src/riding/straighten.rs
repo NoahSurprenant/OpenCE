@@ -1,4 +1,5 @@
 //! Complete TU3 Toolkit_CalcStraightenOutTorque 82D92B60.
+use crate::fused::FusedMulAdd as _;
 use super::vector::{clamp, cross, dot3};
 use crate::point_graph::PointGraph;
 #[derive(Clone)]
@@ -18,7 +19,7 @@ pub struct StraightenInput {
     pub normal: [f32; 4],   // +464
 }
 pub fn calculate(s: &StraightenSettings, i: &StraightenInput) -> [f32; 4] {
-    let limit = (1.0 - s.time_scalar).mul_add(i.scalar_2764, s.time_scalar) * s.heading_time_limit;
+    let limit = (1.0 - s.time_scalar).fused_mul_add(i.scalar_2764, s.time_scalar) * s.heading_time_limit;
     let strength = s
         .time_response
         .evaluate(clamp(i.heading_time, 0.0, limit) / limit)

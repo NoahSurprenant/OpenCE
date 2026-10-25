@@ -1,5 +1,6 @@
 //! BipedToolkit contact insertion82D81F80. Records are classified in the
 //! surface forward/up plane; this is not the later obstacle classifier.
+use crate::fused::FusedMulAdd as _;
 use super::contact_queries::{Input, V};
 use crate::physics::native_arithmetic::dot3;
 
@@ -50,7 +51,7 @@ impl Records {
         let square = dot3(*normal, *normal);
         let mut inverse = crate::physics::reciprocal_sqrt::estimate(square);
         for _ in 0..2 {
-            inverse = (inverse * 0.5).mul_add((-square).mul_add(inverse * inverse, 1.), inverse);
+            inverse = (inverse * 0.5).fused_mul_add((-square).fused_mul_add(inverse * inverse, 1.), inverse);
         }
         let length = if square == 0. { 0. } else { square * inverse };
         if !(length >= f32::from_bits(0x3a83_126f)) {
@@ -60,7 +61,7 @@ impl Records {
         } else {
             let mut reciprocal = crate::physics::native_arithmetic::reciprocal_estimate(length);
             for _ in 0..2 {
-                reciprocal = reciprocal.mul_add((-reciprocal).mul_add(length, 1.), reciprocal);
+                reciprocal = reciprocal.fused_mul_add((-reciprocal).fused_mul_add(length, 1.), reciprocal);
             }
             *normal = normal.map(|x| x * reciprocal);
         }

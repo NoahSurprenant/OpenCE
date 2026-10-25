@@ -1,4 +1,5 @@
 //! Exit nudge82D3F850 / S2 82D85330. Family dispatch remains separate.
+use crate::fused::FusedMulAdd as _;
 use super::{V, dot3, scale, sub};
 
 #[derive(Clone, Copy, Debug)]
@@ -29,5 +30,5 @@ pub fn force(input: Input) -> Option<V> {
     let lateral = scale(outward, input.strength);
     if !input.enable_lift { return Some(lateral); }
     let upward = input.normal[1].max(0.0) * input.lift;
-    Some(core::array::from_fn(|i| input.normal[i].mul_add(upward, lateral[i])))
+    Some(core::array::from_fn(|i| input.normal[i].fused_mul_add(upward, lateral[i])))
 }

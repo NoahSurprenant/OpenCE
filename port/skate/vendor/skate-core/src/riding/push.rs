@@ -1,6 +1,7 @@
 //! TU3 Toolkit_CalcPushAcceleration (`0x82D948B8`). Despite the native name,
 //! the returned vector includes total body mass and is a force-queue payload.
 //! It is queued with tag 3; deck inverse mass is applied by `0x82C03718`.
+use crate::fused::FusedMulAdd as _;
 use crate::math::Vector3;
 use crate::physics::force_queue::{BoardForceQueue, QueuedPointForce, total_body_mass};
 
@@ -61,7 +62,7 @@ pub fn calculate_acceleration(input: PushInput, limits: PushLimits) -> PushAccel
     };
     // Skate 3 blends two limits here. Skate 2 uses a single limit.
     let limit =
-        (1.0 - fraction).mul_add(limits.low_speed_change, fraction * limits.high_speed_change);
+        (1.0 - fraction).fused_mul_add(limits.low_speed_change, fraction * limits.high_speed_change);
     let below_lower = speed_change < -limit;
     if speed_change > limit {
         speed_change = limit;

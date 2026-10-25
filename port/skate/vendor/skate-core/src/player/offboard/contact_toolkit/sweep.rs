@@ -1,6 +1,7 @@
 //! The toolkit's zero-acceleration, duration-one subset of82770910/8276C558.
 //! The query remains a swept sphere. A returned point is a surface contact,
 //! not the sphere centre or an unadjusted ray intersection.
+use crate::fused::FusedMulAdd as _;
 use super::{LineHit, LineProbe, UP, Vector, ZERO, cross, dot, length, scale, sub};
 use crate::air::trajectory::QueryResult;
 
@@ -47,14 +48,14 @@ pub fn query_sweep<E>(
 fn reciprocal(value: f32) -> f32 {
     let mut r = crate::physics::native_arithmetic::reciprocal_estimate(value);
     for _ in 0..2 {
-        r = r.mul_add((-r).mul_add(value, 1.), r);
+        r = r.fused_mul_add((-r).fused_mul_add(value, 1.), r);
     }
     r
 }
 fn inverse_length(square: f32) -> f32 {
     let mut r = crate::physics::reciprocal_sqrt::estimate(square);
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-square).mul_add(r * r, 1.), r);
+        r = (r * 0.5).fused_mul_add((-square).fused_mul_add(r * r, 1.), r);
     }
     r
 }

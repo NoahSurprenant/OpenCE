@@ -1,5 +1,6 @@
 //! Skeleton::UpdateRootTransforms82BE0318: actual board prediction and the
 //! retained animation-to-board/world frames. Full Reckoning is an input owner.
+use crate::fused::FusedMulAdd as _;
 use super::{
     board_ground::angle_between,
     board_motion_output::inverse_length_squared,
@@ -73,7 +74,7 @@ impl SkeletonRootFrames {
         self.board = board;
         self.inverse_board = inverse_rigid(&board);
         self.predicted_board_position = self.supplied_prediction.take().unwrap_or_else(|| {
-            std::array::from_fn(|i| board_velocity[i].mul_add(time_step, board[3][i]))
+            std::array::from_fn(|i| board_velocity[i].fused_mul_add(time_step, board[3][i]))
         });
         if self.initialize_heading {
             //8296EC98 uses one rsqrt refinement, angle in[0,2pi], not atan2.
@@ -138,8 +139,8 @@ pub(crate) fn inverse_rigid(source: &AnimationPartTransform) -> AnimationPartTra
     let translation = source[3].map(|v| 0.0 - v);
     result[3] = std::array::from_fn(|i| {
         let z = translation[2] * result[2][i];
-        let y = translation[1].mul_add(result[1][i], z);
-        translation[0].mul_add(result[0][i], y)
+        let y = translation[1].fused_mul_add(result[1][i], z);
+        translation[0].fused_mul_add(result[0][i], y)
     });
     result
 }

@@ -2,6 +2,7 @@
 //! Points are supplied in PAT authoring order. Native 82696B18 pushes them
 //! to the front of a ring buffer, then the matcher walks that buffer backwards.
 
+use crate::fused::FusedMulAdd as _;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pattern {
     pub name: String,
@@ -173,7 +174,7 @@ impl Recognizer {
             0.0
         } else {
             let slope = 1.0 / (low - high);
-            slope.mul_add(ratio, -(slope * high))
+            slope.fused_mul_add(ratio, -(slope * high))
         };
         self.refractory = true;
         self.held = Some(pattern);

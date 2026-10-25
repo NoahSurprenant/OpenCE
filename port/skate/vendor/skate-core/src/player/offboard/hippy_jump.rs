@@ -3,6 +3,7 @@
 //! The helper constructs the rider trajectory velocity used by
 //! `PhysState_LandingOnDeck::InitTraj`; it does not write board-body velocity.
 
+use crate::fused::FusedMulAdd as _;
 pub type Vector = [f32; 4];
 
 #[derive(Clone, Copy, Debug)]
@@ -25,7 +26,7 @@ pub fn calculate(input: Input) -> Vector {
 }
 
 fn dot3(a: Vector, b: Vector) -> f32 {
-    a[0].mul_add(b[0], a[1].mul_add(b[1], a[2] * b[2]))
+    a[0].fused_mul_add(b[0], a[1].fused_mul_add(b[1], a[2] * b[2]))
 }
 fn add(a: Vector, b: Vector) -> Vector {
     core::array::from_fn(|i| a[i] + b[i])

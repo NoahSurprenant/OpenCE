@@ -1,6 +1,7 @@
 //! Named view of the compiled contact and shared reaction records.
 //! Fourth components retain the native packed layout, including inverse mass
 //! alongside each body's first angular response.
+use crate::fused::FusedMulAdd as _;
 type Components = [f32; 4];
 
 pub(super) struct ContactRows {
@@ -66,28 +67,28 @@ impl Reaction {
         };
         let inverse_mass = response[0][3];
         for lane in 0..4 {
-            let mut linear_impulse = rows.axes[0][lane].mul_add(change[0], 0.0);
-            linear_impulse = rows.axes[1][lane].mul_add(change[1], linear_impulse);
-            linear_impulse = rows.axes[2][lane].mul_add(change[2], linear_impulse);
-            let position_impulse = rows.axes[0][lane].mul_add(change[3], 0.0);
+            let mut linear_impulse = rows.axes[0][lane].fused_mul_add(change[0], 0.0);
+            linear_impulse = rows.axes[1][lane].fused_mul_add(change[1], linear_impulse);
+            linear_impulse = rows.axes[2][lane].fused_mul_add(change[2], linear_impulse);
+            let position_impulse = rows.axes[0][lane].fused_mul_add(change[3], 0.0);
             if body_a {
                 for (axis, &impulse) in change[..3].iter().enumerate() {
-                    self.angular[lane] = response[axis][lane].mul_add(impulse, self.angular[lane]);
+                    self.angular[lane] = response[axis][lane].fused_mul_add(impulse, self.angular[lane]);
                 }
                 self.orientation[lane] =
-                    response[0][lane].mul_add(change[3], self.orientation[lane]);
-                self.linear[lane] = linear_impulse.mul_add(inverse_mass, self.linear[lane]);
-                self.position[lane] = position_impulse.mul_add(inverse_mass, self.position[lane]);
+                    response[0][lane].fused_mul_add(change[3], self.orientation[lane]);
+                self.linear[lane] = linear_impulse.fused_mul_add(inverse_mass, self.linear[lane]);
+                self.position[lane] = position_impulse.fused_mul_add(inverse_mass, self.position[lane]);
             } else {
                 for (axis, &impulse) in change[..3].iter().enumerate() {
                     self.angular[lane] =
-                        (-response[axis][lane]).mul_add(impulse, self.angular[lane]);
+                        (-response[axis][lane]).fused_mul_add(impulse, self.angular[lane]);
                 }
                 self.orientation[lane] =
-                    (-response[0][lane]).mul_add(change[3], self.orientation[lane]);
-                self.linear[lane] = (-linear_impulse).mul_add(inverse_mass, self.linear[lane]);
+                    (-response[0][lane]).fused_mul_add(change[3], self.orientation[lane]);
+                self.linear[lane] = (-linear_impulse).fused_mul_add(inverse_mass, self.linear[lane]);
                 self.position[lane] =
-                    (-position_impulse).mul_add(inverse_mass, self.position[lane]);
+                    (-position_impulse).fused_mul_add(inverse_mass, self.position[lane]);
             }
         }
     }
@@ -107,8 +108,8 @@ fn point_correction(arm: Components, linear: Components, angular: Components) ->
     core::array::from_fn(|lane| {
         let next = if lane == 3 { 3 } else { (lane + 1) % 3 };
         let previous = if lane == 3 { 3 } else { (lane + 2) % 3 };
-        let first = angular[next].mul_add(arm[previous], linear[lane]);
-        (-angular[previous]).mul_add(arm[next], first)
+        let first = angular[next].fused_mul_add(arm[previous], linear[lane]);
+        (-angular[previous]).fused_mul_add(arm[next], first)
     })
 }
 fn read(words: &[u32], row: usize) -> Components {

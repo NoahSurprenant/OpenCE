@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use crate::physics::board_pose::{PartPose, PoseMatrix};
 
 type V = [f32; 4];
@@ -7,17 +8,17 @@ fn matrix(words: PoseMatrix) -> M {
     std::array::from_fn(|i| std::array::from_fn(|j| f32::from_bits(words[i * 4 + j])))
 }
 fn madd(a: V, s: f32, b: V) -> V {
-    std::array::from_fn(|i| a[i].mul_add(s, b[i]))
+    std::array::from_fn(|i| a[i].fused_mul_add(s, b[i]))
 }
 fn scale(a: V, s: f32) -> V {
     a.map(|v| v * s)
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 fn dot(a: V, b: V) -> f32 {
@@ -82,7 +83,7 @@ pub fn average_wheel_compressions(deck: M, wheel_positions: [V; 4], rest_height:
     // Native reciprocal estimate and two refinements.
     let mut inverse = reciprocal_estimate(determinant);
     for _ in 0..2 {
-        inverse = inverse.mul_add((-inverse).mul_add(determinant, 1.0), inverse);
+        inverse = inverse.fused_mul_add((-inverse).fused_mul_add(determinant, 1.0), inverse);
     }
     let basis: [V; 3] = std::array::from_fn(|i| scale([c0[i], c1[i], c2[i], c1[i]], inverse));
     let neg = deck[3].map(|v| f32::from_bits(v.to_bits() ^ 0x8000_0000));

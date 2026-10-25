@@ -1,4 +1,5 @@
 //! PostWipeoutCheck's feet82BF0680, hands82BF0C28 and external82BEDC10.
+use crate::fused::FusedMulAdd as _;
 use super::{
     drive::Geometry,
     physical_solve,
@@ -97,8 +98,8 @@ fn feet(
     }
     let up = effective_board[1];
     let up_y = up[0] * input.world_to_animation[0][1];
-    let up_y = up[1].mul_add(input.world_to_animation[1][1], up_y);
-    let up_y = up[2].mul_add(input.world_to_animation[2][1], up_y);
+    let up_y = up[1].fused_mul_add(input.world_to_animation[1][1], up_y);
+    let up_y = up[2].fused_mul_add(input.world_to_animation[2][1], up_y);
     let constrained = input.flags_2468 & (1 << 18) != 0;
     if input.flags_2484 & (1 << 20) != 0
         || post.minimum_board_up > up_y

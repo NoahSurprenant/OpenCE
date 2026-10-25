@@ -1,4 +1,5 @@
 //! Native common82D3F4E8 and Nonspecific82D42DF0 Update order.
+use skate_core::fused::FusedMulAdd as _;
 use super::super::{GamePhysics, SkaterRuntime};
 use super::Family;
 use super::arithmetic::dot3;
@@ -95,7 +96,7 @@ pub(crate) fn advance(physics: &mut GamePhysics, skater: &mut SkaterRuntime) -> 
     );
     let velocity = p.vectors_400_416[0].map(f32::from_bits);
     skater.skeleton_input.head_tracking_history[5] = core::array::from_fn(|i| {
-        velocity[i].mul_add(
+        velocity[i].fused_mul_add(
             skater.grind.settings.look_ahead,
             manager.geometry.point_1120[i],
         )
@@ -128,9 +129,9 @@ fn reckon(
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.,
     ]
 }

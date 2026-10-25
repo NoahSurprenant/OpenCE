@@ -1,4 +1,5 @@
 //! Five-step vertex/edge region walk82ADF008..82ADF5BC.
+use crate::fused::FusedMulAdd as _;
 use super::{
     native_arithmetic,
     triangle_closest::ClosestTrianglePoint,
@@ -119,12 +120,12 @@ fn replaces(hit: Option<Fraction>, candidate: Fraction) -> bool {
         && hit.is_none_or(|hit| !hit.before(candidate))
 }
 fn advance_fraction(result: &mut TriangleLineHit, fraction: f32) {
-    result.fraction = (1.0 - result.fraction).mul_add(fraction, result.fraction);
+    result.fraction = (1.0 - result.fraction).fused_mul_add(fraction, result.fraction);
 }
 fn inverse_radius(radius: f32) -> f32 {
     let mut inverse = native_arithmetic::reciprocal_estimate(radius);
     for _ in 0..2 {
-        inverse = inverse.mul_add((-inverse).mul_add(radius, 1.0), inverse);
+        inverse = inverse.fused_mul_add((-inverse).fused_mul_add(radius, 1.0), inverse);
     }
     inverse
 }

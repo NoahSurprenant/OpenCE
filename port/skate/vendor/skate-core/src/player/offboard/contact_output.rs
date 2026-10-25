@@ -1,4 +1,5 @@
 //! Contact publication82D84060 and slope history82D848D0.
+use crate::fused::FusedMulAdd as _;
 use super::{
     contact_packet::Packet,
     contact_queries::{Input, V},
@@ -141,7 +142,7 @@ fn edge_output(
         remaining -= s.length;
         if remaining <= 0. {
             packet.edge_position =
-                std::array::from_fn(|i| s.direction[i].mul_add(remaining, s.end[i]));
+                std::array::from_fn(|i| s.direction[i].fused_mul_add(remaining, s.end[i]));
             break;
         }
     }
@@ -149,10 +150,10 @@ fn edge_output(
 
 fn publish_slope(packet: &mut Packet, tangent: V, history: &mut History) {
     // The native scalar path fuses x*x + z*z and clamps its horizontal length.
-    let sq = tangent[0].mul_add(tangent[0], tangent[2] * tangent[2]);
+    let sq = tangent[0].fused_mul_add(tangent[0], tangent[2] * tangent[2]);
     let mut inverse = crate::physics::reciprocal_sqrt::estimate(sq);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-sq).mul_add(inverse * inverse, 1.), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-sq).fused_mul_add(inverse * inverse, 1.), inverse);
     }
     let length = if sq == 0. { 0. } else { sq * inverse };
     let minimum = f32::from_bits(0x3a83_126f);

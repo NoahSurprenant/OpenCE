@@ -81,6 +81,13 @@ parser.add_argument(
     "(the web build's with a pinned nightly Rust: port/web/README.md)",
 )
 parser.add_argument(
+    "--skate-cpu",
+    type=str,
+    help="with --skate on Linux: the processor the skate engine is compiled for (Rust's -C target-cpu; by default "
+    "the 32-bit target's baseline, SSE2), e.g. x86-64-v3 (AVX2 and FMA: a skater's step several times quicker), "
+    "as the server image builds it for the machines it runs on. Its results are the same bit for bit either way",
+)
+parser.add_argument(
     "--android-ndk",
     type=str,
     help="Android NDK for `ninja android` (default: ANDROID_NDK_HOME, or the newest under the Android SDK)",
@@ -121,6 +128,7 @@ sln = SimpleNamespace(
     android_ndk=args.android_ndk,
     android_guest_cc=args.android_guest_cc,
     port_skate=args.skate,
+    skate_cpu=args.skate_cpu,
     web_emcc=args.web_emcc,
     web_rust_toolchain=args.web_rust_toolchain,
 )

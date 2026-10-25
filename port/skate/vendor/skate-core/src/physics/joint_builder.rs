@@ -11,6 +11,7 @@
 //! - **Derived**: scalar algebra preserving the observed VMX data flow.
 //! - **Inferred**: source-level naming where the executable has no type name.
 
+use crate::fused::FusedMulAdd as _;
 use super::{
     constraint_frames,
     joint_records::{RetailJointFramesRaw, RetailJointParametersRaw},
@@ -168,9 +169,9 @@ pub fn build_retail_joint_jacobian(input: RetailJointBuildInput) -> RetailJointJ
         let ib = constraint_frames::multiply_inertia_from_zero(inertia_b, b);
         // 82AE4814..4990 combines the two bodies component-wise, then uses
         // (Z + Y) + (X + inverse_mass_A + inverse_mass_B), not two dot sums.
-        let x = b.x.mul_add(ib.x, a.x.mul_add(ia.x, 0.0));
-        let y = b.y.mul_add(ib.y, a.y.mul_add(ia.y, 0.0));
-        let z = b.z.mul_add(ib.z, a.z.mul_add(ia.z, 0.0));
+        let x = b.x.fused_mul_add(ib.x, a.x.fused_mul_add(ia.x, 0.0));
+        let y = b.y.fused_mul_add(ib.y, a.y.fused_mul_add(ia.y, 0.0));
+        let z = b.z.fused_mul_add(ib.z, a.z.fused_mul_add(ia.z, 0.0));
         let denominator = (z + y) + (x + (inverse_mass_a + inverse_mass_b));
         native_arithmetic::reciprocal_estimate(denominator)
     });
@@ -180,9 +181,9 @@ pub fn build_retail_joint_jacobian(input: RetailJointBuildInput) -> RetailJointJ
             constraint_frames::multiply_inertia_from_zero(inertia_a, axis),
             constraint_frames::multiply_inertia_from_zero(inertia_b, axis),
         );
-        let x = axis.x.mul_add(response.x, 0.0);
-        let y = axis.y.mul_add(response.y, 0.0);
-        let z = axis.z.mul_add(response.z, 0.0);
+        let x = axis.x.fused_mul_add(response.x, 0.0);
+        let y = axis.y.fused_mul_add(response.y, 0.0);
+        let z = axis.z.fused_mul_add(response.z, 0.0);
         // 82AE496C..49A0: Z + (X + Y), one estimate, then the RQD factor 1/2.
         0.5 * native_arithmetic::reciprocal_estimate(z + (x + y))
     });
@@ -273,7 +274,7 @@ pub fn build_retail_joint_jacobian(input: RetailJointBuildInput) -> RetailJointJ
         let velocity_low =
             local_angular_displacement[lane] - angular_velocity_allowance[lane] * input.time_step;
         let velocity_high = angular_velocity_allowance[lane]
-            .mul_add(input.time_step, local_angular_displacement[lane]);
+            .fused_mul_add(input.time_step, local_angular_displacement[lane]);
         let raw_low = vmx_max(predicted_low, vmx_min(velocity_low, predicted_high));
         let raw_high = vmx_min(predicted_high, vmx_max(velocity_high, predicted_low));
         angular_low[lane] = raw_low * angular_inverse_effective_mass[lane];

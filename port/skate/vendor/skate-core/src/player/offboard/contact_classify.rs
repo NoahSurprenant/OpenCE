@@ -1,5 +1,6 @@
 //! Candidate generation82D837C8. Uses the recovered sorted/reduced segments;
 //! final candidate selection and contact packet publication happen afterward.
+use crate::fused::FusedMulAdd as _;
 use super::{
     contact_candidates,
     contact_geometry::{slope_between, slope_limit},
@@ -33,10 +34,10 @@ pub fn candidates(
             let a = input.surface_right;
             let b = packet.normal;
             let tangent = [
-                (-a[2]).mul_add(b[1], a[1] * b[2]),
-                (-a[0]).mul_add(b[2], a[2] * b[0]),
-                (-a[1]).mul_add(b[0], a[0] * b[1]),
-                (-a[3]).mul_add(b[3], a[3] * b[3]),
+                (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+                (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+                (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+                (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
             ];
             out.push(Candidate::new(
                 input,

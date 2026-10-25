@@ -1,4 +1,5 @@
 //! Original KnownAir VMX geometry; independent PC estimate seeds.
+use skate_core::fused::FusedMulAdd as _;
 use super::runtime::Runtime;
 use skate_core::{
     air::known::{AffineTransform, KnownAirMath, RestoreVelocityGeometry},
@@ -16,17 +17,17 @@ pub(super) fn scale(a: V, s: f32) -> V {
 }
 pub(super) fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 pub(super) fn normalized(v: V) -> (V, f32) {
     let s = dot(v, v);
     let mut r = s.sqrt().recip();
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-s).mul_add(r * r, 1.0), r);
+        r = (r * 0.5).fused_mul_add((-s).fused_mul_add(r * r, 1.0), r);
     }
     let l = if s == 0.0 { 0.0 } else { s * r };
     (
@@ -41,15 +42,15 @@ pub(super) fn normalized(v: V) -> (V, f32) {
 pub(super) fn rotate(m: &[V; 4], v: V) -> V {
     std::array::from_fn(|i| {
         let x = m[0][i] * v[0];
-        let y = m[1][i].mul_add(v[1], x);
-        m[2][i].mul_add(v[2], y)
+        let y = m[1][i].fused_mul_add(v[1], x);
+        m[2][i].fused_mul_add(v[2], y)
     })
 }
 pub(super) fn point(m: &[V; 4], v: V) -> V {
     std::array::from_fn(|i| {
-        let x = m[0][i].mul_add(v[0], m[3][i]);
-        let y = m[1][i].mul_add(v[1], x);
-        m[2][i].mul_add(v[2], y)
+        let x = m[0][i].fused_mul_add(v[0], m[3][i]);
+        let y = m[1][i].fused_mul_add(v[1], x);
+        m[2][i].fused_mul_add(v[2], y)
     })
 }
 pub(super) fn xyz(v: V) -> Vector3 {
@@ -62,7 +63,7 @@ impl KnownAirMath for Runtime<'_> {
     fn divide_vector_by_scalar(&mut self, v: V, s: f32) -> V {
         let mut r = s.recip();
         for _ in 0..2 {
-            r = (-s).mul_add(r, 1.0).mul_add(r, r);
+            r = (-s).fused_mul_add(r, 1.0).fused_mul_add(r, r);
         }
         scale(v, r)
     }
@@ -82,7 +83,7 @@ impl KnownAirMath for Runtime<'_> {
         let tau = f32::from_bits(0x40c90fdb);
         if a < -pi || !(a < pi) {
             let n = (a * f32::from_bits(0x3e22f983)) as i32;
-            a = (-(n as f32)).mul_add(tau, a);
+            a = (-(n as f32)).fused_mul_add(tau, a);
             if !(a < pi) {
                 a -= tau;
             } else if a < -pi {

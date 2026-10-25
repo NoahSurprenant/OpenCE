@@ -3,6 +3,7 @@
 //! source-derived. Mass uses the actual primitive/triangle-AABB dispatch in
 //! 82AE7058, including children whose collision-enable bit is clear.
 
+use crate::fused::FusedMulAdd as _;
 use super::{MassMoments, MassShape, primitive_mass};
 use crate::{
     math::Vector3,
@@ -262,7 +263,7 @@ fn fan_triangle(
         Vector3::new(
             arc.1 * width,
             slope.0 * elevation,
-            along_end.mul_add(slope.1, center_z),
+            along_end.fused_mul_add(slope.1, center_z),
         )
     };
     DeckChild {
@@ -287,8 +288,8 @@ fn vector_length_z(z: f32) -> f32 {
     let squared = native_arithmetic::dot3([0.0, 0.0, z, 0.0], [0.0, 0.0, z, 0.0]);
     let mut inverse = native_arithmetic::reciprocal_square_root_estimate(squared);
     for _ in 0..2 {
-        let residual = (-squared).mul_add(inverse * inverse, 1.0);
-        inverse = (inverse * 0.5).mul_add(residual, inverse);
+        let residual = (-squared).fused_mul_add(inverse * inverse, 1.0);
+        inverse = (inverse * 0.5).fused_mul_add(residual, inverse);
     }
     if squared == 0.0 {
         0.0
@@ -300,7 +301,7 @@ fn vector_length_z(z: f32) -> f32 {
 /// Standalone cosine 82473930. Its even-power tree differs from SinCos.
 fn cosine(angle: f32) -> f32 {
     let turns = (angle * f32::from_bits(0x3E22_F983)).round_ties_even();
-    let x = (-f32::from_bits(0x40C9_0FDB)).mul_add(turns, angle);
+    let x = (-f32::from_bits(0x40C9_0FDB)).fused_mul_add(turns, angle);
     let x2 = x * x;
     let x4 = x2 * x2;
     let x6 = x4 * x2;
@@ -312,7 +313,7 @@ fn cosine(angle: f32) -> f32 {
     let x18 = x10 * x8;
     let x20 = x10 * x10;
     let x22 = x12 * x10;
-    let mut result = (-0.5_f32).mul_add(x2, 1.0);
+    let mut result = (-0.5_f32).fused_mul_add(x2, 1.0);
     for (power, coefficient) in [
         (x4, 0x3D2A_AAAB),
         (x6, 0xBAB6_0B61),
@@ -325,7 +326,7 @@ fn cosine(angle: f32) -> f32 {
         (x20, 0x20F2_A15D),
         (x22, 0x9C86_71CB),
     ] {
-        result = f32::from_bits(coefficient).mul_add(power, result);
+        result = f32::from_bits(coefficient).fused_mul_add(power, result);
     }
     result
 }

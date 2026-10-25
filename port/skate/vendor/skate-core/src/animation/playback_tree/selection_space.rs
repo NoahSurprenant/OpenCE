@@ -1,6 +1,7 @@
 //! Type11's authored metric and first-update selection: 82D26CC0/82D26FF8.
 //! Native construction clears transition/reselect bits. No exposed operation
 //! on this tree enables them; ordinary playback therefore latches one child.
+use crate::fused::FusedMulAdd as _;
 use super::super::{output::attributes::AttributeName, playback_parameters::SettableAttribute};
 use super::PlaybackTree;
 
@@ -122,9 +123,9 @@ pub fn distance(parameters: &[Parameter], values: &[f32], candidate: &[f32]) -> 
     let pairs = parameters.len() / 2 * 2;
     for i in (0..pairs).step_by(2) {
         let d = delta(&parameters[i], values[i], candidate[i]);
-        even = (parameters[i].weight * d).mul_add(d, even);
+        even = (parameters[i].weight * d).fused_mul_add(d, even);
         let d = delta(&parameters[i + 1], values[i + 1], candidate[i + 1]);
-        odd = (parameters[i + 1].weight * d).mul_add(d, odd);
+        odd = (parameters[i + 1].weight * d).fused_mul_add(d, odd);
     }
     let sum = odd + even;
     if pairs < parameters.len() {

@@ -1,5 +1,6 @@
 //! S3 82D886B8, paired with S2 IsEntryAngleAcuteEnough 82DDA748.
 //! Test each family/contact before arbitration, retaining its entry kind.
+use crate::fused::FusedMulAdd as _;
 use super::{arithmetic, dot3, scale, sub, within_approach_angle, V};
 use crate::point_graph::PointGraph;
 
@@ -72,7 +73,7 @@ impl Admission<'_> {
                 };
                 let slope = approach_slope_sine(tangent, self.velocity);
                 let multiplier = self.threshold_vs_slope.evaluate(slope);
-                let limit = (1.0 - ratio).mul_add(2.4, 2.8) * multiplier;
+                let limit = (1.0 - ratio).fused_mul_add(2.4, 2.8) * multiplier;
                 square_transverse < limit * limit
             }
         };

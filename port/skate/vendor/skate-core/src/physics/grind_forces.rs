@@ -1,5 +1,6 @@
 //! TU3 grind force leaves. Their inputs belong to the retained grind manager;
 //! contact admission and lifecycle are separate from these force calculations.
+use crate::fused::FusedMulAdd as _;
 use super::native_arithmetic::dot3;
 pub type V = [f32; 4];
 #[path = "grind_forces/slide.rs"]
@@ -41,7 +42,7 @@ pub fn lateral_pin(
         scale(board[2], -1.0)
     };
     let reference = core::array::from_fn(|i| {
-        direction[i].mul_add(forward_offset, board[3][i]) - board[1][i] * up_offset
+        direction[i].fused_mul_add(forward_offset, board[3][i]) - board[1][i] * up_offset
     });
     let force = scale(across, dot3(sub(point, reference), across) * strength);
     let length = length(force);
@@ -111,8 +112,8 @@ fn length(v: V) -> f32 {
 fn reciprocal(value: f32) -> f32 {
     let mut inverse = value.recip();
     for _ in 0..2 {
-        let correction = (-inverse).mul_add(value, 1.0);
-        inverse = inverse.mul_add(correction, inverse);
+        let correction = (-inverse).fused_mul_add(value, 1.0);
+        inverse = inverse.fused_mul_add(correction, inverse);
     }
     inverse
 }

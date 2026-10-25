@@ -3395,6 +3395,7 @@ static void main_game_render(
 PROFILE_SECTION(main_input_section, "input")
 PROFILE_SECTION(main_platform_events_section, "platform_events")
 PROFILE_SECTION(main_network_start_frame_section, "network_start_frame")
+PROFILE_SECTION(main_bots_section, "bots")
 PROFILE_SECTION(main_update_time_section, "main_update_time")
 PROFILE_SECTION(main_ui_update_section, "ui_update")
 PROFILE_SECTION(main_network_end_frame_section, "network_end_frame")
@@ -3576,7 +3577,7 @@ static boolean main_loop_iteration(
 			/* port: map sharing, in the lobby and in game (port/linux/game/map_share.c) */
 			map_share_update();
 			/* port: the host's bots (port/linux/game/bots.c) */
-			bots_update();
+			profile_scope(main_bots_section, bots_update();)
 			profile_scope_enter(main_network_start_frame_section)
 			connection = main_globals.connection;
 			if (connection==_game_connection_network_client)

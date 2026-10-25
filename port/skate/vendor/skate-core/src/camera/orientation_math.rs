@@ -1,5 +1,6 @@
 //! Native camera Euler conversions. These preserve the products and fused sums
 //! from TU3 82E06CB8 and 82E045E0 rather than passing through renderer math.
+use crate::fused::FusedMulAdd as _;
 use crate::{math::Basis3, trigonometry::sin_cos};
 
 pub(super) fn quaternion_from_angles(pitch: f32, yaw: f32, roll: f32) -> [f32; 4] {
@@ -12,9 +13,9 @@ pub(super) fn quaternion_from_angles(pitch: f32, yaw: f32, roll: f32) -> [f32; 4
     let cp_sr = cp * sr;
     [
         cy * sp_cr - sy * cp_sr,
-        cy.mul_add(sp_sr, sy * cp_cr),
+        cy.fused_mul_add(sp_sr, sy * cp_cr),
         cy * cp_sr - sy * sp_cr,
-        cy.mul_add(cp_cr, sy * sp_sr),
+        cy.fused_mul_add(cp_cr, sy * sp_sr),
     ]
 }
 
@@ -31,8 +32,8 @@ pub(super) fn basis_from_angles(pitch: f32, yaw: f32, roll: f32) -> Basis3 {
     Basis3 {
         columns: [
             [cy * cr, cy * sr, -sy],
-            [sy * sp_cr - cp_sr, sy.mul_add(sp_sr, cp_cr), cy * sp],
-            [sy.mul_add(cp_cr, sp_sr), sy * cp_sr - sp_cr, cy * cp],
+            [sy * sp_cr - cp_sr, sy.fused_mul_add(sp_sr, cp_cr), cy * sp],
+            [sy.fused_mul_add(cp_cr, sp_sr), sy * cp_sr - sp_cr, cy * cp],
         ],
     }
 }
@@ -51,16 +52,16 @@ pub(super) fn rotate_about_axis(basis: Basis3, axis: [f32; 3], angle: f32) -> Ba
     let ty = one_minus_cosine * y;
     let tz = one_minus_cosine * z;
     let rotation = [
-        [x.mul_add(tx, cosine), tx.mul_add(y, sz), tx * z - sy],
-        [ty * x - sz, ty.mul_add(y, cosine), ty.mul_add(z, sx)],
-        [tz.mul_add(x, sy), tz * y - sx, z.mul_add(tz, cosine)],
+        [x.fused_mul_add(tx, cosine), tx.fused_mul_add(y, sz), tx * z - sy],
+        [ty * x - sz, ty.fused_mul_add(y, cosine), ty.fused_mul_add(z, sx)],
+        [tz.fused_mul_add(x, sy), tz * y - sx, z.fused_mul_add(tz, cosine)],
     ];
     Basis3 {
         columns: basis.columns.map(|column| {
             core::array::from_fn(|i| {
-                rotation[2][i].mul_add(
+                rotation[2][i].fused_mul_add(
                     column[2],
-                    rotation[1][i].mul_add(column[1], rotation[0][i] * column[0]),
+                    rotation[1][i].fused_mul_add(column[1], rotation[0][i] * column[0]),
                 )
             })
         }),
@@ -79,9 +80,9 @@ pub(super) fn look_basis(at: [f32; 3]) -> Basis3 {
 
 fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
     ]
 }
 
@@ -90,7 +91,7 @@ pub(super) fn normalize<const N: usize>(v: [f32; N]) -> [f32; N] {
         crate::physics::native_arithmetic::dot3([v[0], v[1], v[2], 0.0], [v[0], v[1], v[2], 0.0]);
     let mut inverse = crate::physics::reciprocal_sqrt::estimate(square);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-square).mul_add(inverse * inverse, 1.0), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-square).fused_mul_add(inverse * inverse, 1.0), inverse);
     }
     v.map(|lane| lane * inverse)
 }

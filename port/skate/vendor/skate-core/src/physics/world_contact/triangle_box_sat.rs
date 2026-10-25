@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use crate::physics::{reciprocal_sqrt::estimate, world_contact::prism_math::*};
 
 /// TU3 82ACF950. Triangle normal first, then box Z/Y/X and all nine edge
@@ -17,7 +18,7 @@ pub(in super::super) fn triangle_box(triangle: &[u32; 48], box_shape: &[u32; 48]
             );
             let squared = dot(axis, axis);
             let seed = estimate(squared);
-            let inverse = (seed * 0.5).mul_add((-squared).mul_add(seed * seed, 1.0), seed);
+            let inverse = (seed * 0.5).fused_mul_add((-squared).fused_mul_add(seed * seed, 1.0), seed);
             axes[4 + edge * 3 + box_edge] = scale(axis, inverse);
         }
     }

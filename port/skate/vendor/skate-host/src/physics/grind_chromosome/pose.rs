@@ -1,3 +1,4 @@
+use skate_core::fused::FusedMulAdd as _;
 use super::Family;
 pub(super) type V = [f32; 4];
 pub(super) use skate_core::riding::ground_correction_math::dot_product as dot;
@@ -51,8 +52,8 @@ pub(super) fn straight(input: Input) -> bool {
     }
     let mut inverse = length.recip();
     for _ in 0..2 {
-        let correction = (-inverse).mul_add(length, 1.0);
-        inverse = inverse.mul_add(correction, inverse);
+        let correction = (-inverse).fused_mul_add(length, 1.0);
+        inverse = inverse.fused_mul_add(correction, inverse);
     }
     let along = dot(projected.map(|v| v * inverse), input.direction);
     along.abs() > 0.9397

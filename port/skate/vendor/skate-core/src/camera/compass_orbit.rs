@@ -1,5 +1,6 @@
 //! Free-look compass82DF4100. Retains native orbit position, angular dead-zone,
 //! thirty-degree limit relative to the last camera, and two-unit arm length.
+use crate::fused::FusedMulAdd as _;
 use super::{Compass, CompassInputs};
 use super::compass::{heading, horizontal, sub, wrap};
 use super::vector_tracker::{dot, length, refined_reciprocal};
@@ -21,7 +22,7 @@ impl Compass {
             step = ((stick - if stick >= 0.0 { 0.3 } else { -0.3 }) * dt)
                 * f32::from_bits(0x408f9d9c);
         }
-        self.orbit_delta = wrap((1.0 - retained).mul_add(step, self.orbit_delta * retained));
+        self.orbit_delta = wrap((1.0 - retained).fused_mul_add(step, self.orbit_delta * retained));
         let half = self.orbit_delta * 0.5;
         let axis = [0.0, crate::trigonometry::sin(half), 0.0, crate::trigonometry::cos(half)];
         self.orbit_position = add(position, rotate(axis, sub(self.orbit_position, position)));
@@ -55,12 +56,12 @@ fn normalize_safe(v: [f32; 4]) -> [f32; 4] {
 }
 fn add(a: [f32; 4], b: [f32; 4]) -> [f32; 4] { core::array::from_fn(|i| a[i] + b[i]) }
 fn cross(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
-    [(-a[2]).mul_add(b[1], a[1] * b[2]), (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]), 0.0]
+    [(-a[2]).fused_mul_add(b[1], a[1] * b[2]), (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]), 0.0]
 }
 fn rotate(q: [f32; 4], v: [f32; 4]) -> [f32; 4] {
     let first = cross(q, v);
-    let intermediate = core::array::from_fn(|i| q[3].mul_add(v[i], first[i]));
+    let intermediate = core::array::from_fn(|i| q[3].fused_mul_add(v[i], first[i]));
     let second = cross(q, intermediate);
-    core::array::from_fn(|i| 2.0_f32.mul_add(second[i], v[i]))
+    core::array::from_fn(|i| 2.0_f32.fused_mul_add(second[i], v[i]))
 }

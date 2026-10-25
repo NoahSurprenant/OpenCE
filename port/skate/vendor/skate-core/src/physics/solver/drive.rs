@@ -2,6 +2,7 @@
 //! Finite compiled coefficients are required; exceptional SIMD arithmetic is
 //! not claimed to match hardware. Linear/angular softness lanes are retained.
 
+use crate::fused::FusedMulAdd as _;
 use super::joint::data::{
     ConstraintGeometry, ReactionState, project_correction, publish_reactions, read_column,
     write_column, xyz,
@@ -34,9 +35,9 @@ pub(super) fn solve(record: &mut [u32], a: &mut [u32], b: &mut [u32]) {
     let mut linear_impulse = old_linear;
     let mut angular_impulse = old_angular;
     for axis in 0..3 {
-        let linear_candidate = linear_response[axis].mul_add(old_linear[3], linear_target[axis]);
+        let linear_candidate = linear_response[axis].fused_mul_add(old_linear[3], linear_target[axis]);
         let angular_candidate =
-            angular_response[axis].mul_add(old_angular[3], angular_target[axis]);
+            angular_response[axis].fused_mul_add(old_angular[3], angular_target[axis]);
         linear_impulse[axis] = symmetric_impulse_limit(linear_candidate, linear_limits[axis]);
         angular_impulse[axis] = symmetric_impulse_limit(angular_candidate, angular_limits[axis]);
     }

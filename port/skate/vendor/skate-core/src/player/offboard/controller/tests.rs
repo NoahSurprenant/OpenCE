@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::state::{IDENTITY, UP, ZERO};
 use super::*;
 fn metrics() -> [Option<ClipMetric>; 3] {
@@ -316,7 +317,7 @@ fn a_jump_from_walking_makes_a_finite_launch_packet() {
     let frame = r.animation_frame;
     let point = [0.0, 0.95, 0.1, 1.0];
     packet.position_32 = std::array::from_fn(|i| {
-        frame[2][i].mul_add(point[2], frame[1][i].mul_add(point[1], frame[0][i].mul_add(point[0], frame[3][i])))
+        frame[2][i].fused_mul_add(point[2], frame[1][i].fused_mul_add(point[1], frame[0][i].fused_mul_add(point[0], frame[3][i])))
     });
     assert_eq!((packet.kind_108, packet.kind_112), (6, 3));
     for v in [packet.velocity_0, packet.secondary_velocity_16, packet.position_32, packet.up_48, packet.forward_64] {

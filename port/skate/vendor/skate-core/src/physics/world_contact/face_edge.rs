@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::{FeaturePrism, MaximumFeature, prism_math::*};
 
 fn store(output: &mut FeaturePrism, offset: usize, point: V) {
@@ -8,7 +9,7 @@ fn end(feature: &MaximumFeature, edge: usize) -> V {
     let origin = load(feature, 4 + edge * 16);
     let direction = load(feature, 8 + edge * 16);
     let length = load(feature, 16 + edge * 16);
-    std::array::from_fn(|i| direction[i].mul_add(length[i], origin[i]))
+    std::array::from_fn(|i| direction[i].fused_mul_add(length[i], origin[i]))
 }
 
 /// Complete TU3 82ACCA28 corner/edge fallback. Returns one or two point pairs;

@@ -1,4 +1,5 @@
 //! Stock mode endpoints and constructor-vtable-resolved jump getters.
+use skate_core::fused::FusedMulAdd as _;
 use super::super::Family;
 use skate_core::{point_graph::PointGraph, riding::collision_response::CollisionResponseSettings};
 use skate_data::collections::Collections;
@@ -69,7 +70,7 @@ impl Settings {
             _ => 0,
         };
         let [low, high] = modes[group];
-        Ok((1. - strength).mul_add(low, high * strength))
+        Ok((1. - strength).fused_mul_add(low, high * strength))
     }
 }
 

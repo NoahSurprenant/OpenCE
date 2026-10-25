@@ -4,6 +4,7 @@
 //! update their fourth lanes. Physical vectors/impulses have three components;
 //! the fourth values are packed carry fields, not extra spatial dimensions.
 
+use crate::fused::FusedMulAdd as _;
 use crate::math::Vector3;
 
 pub(in crate::physics::solver) fn read_column(words: &[u32], byte_offset: usize) -> [f32; 4] {
@@ -96,16 +97,16 @@ impl ConstraintGeometry {
         let inverse_mass_b = self.inverse_inertia_b[0][3];
         // Native publication order: linear A, linear B, angular A, angular B.
         for (component, impulse) in linear_impulse.into_iter().enumerate() {
-            a.linear[component] = impulse.mul_add(inverse_mass_a, a.linear[component]);
-            b.linear[component] = (-impulse).mul_add(inverse_mass_b, b.linear[component]);
+            a.linear[component] = impulse.fused_mul_add(inverse_mass_a, a.linear[component]);
+            b.linear[component] = (-impulse).fused_mul_add(inverse_mass_b, b.linear[component]);
         }
         a.angular = project_correction(&self.inverse_inertia_a, torque_a, a.angular);
         for component in 0..4 {
             let after_x =
-                (-self.inverse_inertia_b[0][component]).mul_add(torque_b.x, b.angular[component]);
-            let after_y = (-self.inverse_inertia_b[1][component]).mul_add(torque_b.y, after_x);
+                (-self.inverse_inertia_b[0][component]).fused_mul_add(torque_b.x, b.angular[component]);
+            let after_y = (-self.inverse_inertia_b[1][component]).fused_mul_add(torque_b.y, after_x);
             b.angular[component] =
-                (-self.inverse_inertia_b[2][component]).mul_add(torque_b.z, after_y);
+                (-self.inverse_inertia_b[2][component]).fused_mul_add(torque_b.z, after_y);
         }
     }
 }
@@ -147,25 +148,25 @@ pub(in crate::physics::solver) fn project_correction(
     initial: [f32; 4],
 ) -> [f32; 4] {
     core::array::from_fn(|component| {
-        let after_x = columns[0][component].mul_add(correction.x, initial[component]);
-        let after_y = columns[1][component].mul_add(correction.y, after_x);
-        columns[2][component].mul_add(correction.z, after_y)
+        let after_x = columns[0][component].fused_mul_add(correction.x, initial[component]);
+        let after_y = columns[1][component].fused_mul_add(correction.y, after_x);
+        columns[2][component].fused_mul_add(correction.z, after_y)
     })
 }
 
 fn point_correction(reaction: &ReactionState, arm: Vector3) -> Vector3 {
     let [x, y, z, _] = reaction.angular;
     Vector3::new(
-        (-z).mul_add(arm.y, y.mul_add(arm.z, reaction.linear[0])),
-        (-x).mul_add(arm.z, z.mul_add(arm.x, reaction.linear[1])),
-        (-y).mul_add(arm.x, x.mul_add(arm.y, reaction.linear[2])),
+        (-z).fused_mul_add(arm.y, y.fused_mul_add(arm.z, reaction.linear[0])),
+        (-x).fused_mul_add(arm.z, z.fused_mul_add(arm.x, reaction.linear[1])),
+        (-y).fused_mul_add(arm.x, x.fused_mul_add(arm.y, reaction.linear[2])),
     )
 }
 
 fn torque_at_offset(arm: Vector3, impulse: Vector3, angular_impulse: Vector3) -> Vector3 {
     Vector3::new(
-        (-arm.z).mul_add(impulse.y, arm.y.mul_add(impulse.z, angular_impulse.x)),
-        (-arm.x).mul_add(impulse.z, arm.z.mul_add(impulse.x, angular_impulse.y)),
-        (-arm.y).mul_add(impulse.x, arm.x.mul_add(impulse.y, angular_impulse.z)),
+        (-arm.z).fused_mul_add(impulse.y, arm.y.fused_mul_add(impulse.z, angular_impulse.x)),
+        (-arm.x).fused_mul_add(impulse.z, arm.z.fused_mul_add(impulse.x, angular_impulse.y)),
+        (-arm.y).fused_mul_add(impulse.x, arm.x.fused_mul_add(impulse.y, angular_impulse.z)),
     )
 }

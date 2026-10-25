@@ -1,4 +1,5 @@
 //! Complete TU3 Toolkit_CalcSlideFriction 82D92970; Ground force tag 1.
+use crate::fused::FusedMulAdd as _;
 use super::vector::{clamp, dot3};
 use crate::{point_graph::PointGraph, trigonometry::acos};
 
@@ -33,7 +34,7 @@ pub fn calculate(s: &SlideFrictionSettings, i: &SlideFrictionInput) -> [f32; 8] 
     let time = s
         .time_response
         .evaluate(clamp(i.heading_time, 0.0, s.heading_time_limit) / s.heading_time_limit);
-    let blend = (1.0 - s.scalar_516).mul_add(i.scalar_2764, s.scalar_516);
+    let blend = (1.0 - s.scalar_516).fused_mul_add(i.scalar_2764, s.scalar_516);
     let response = if angle - speed >= 0.0 { angle } else { speed };
     let scalar = -(((time * blend) * response) * s.friction);
     let normal_speed = dot3(i.velocity, i.normal);

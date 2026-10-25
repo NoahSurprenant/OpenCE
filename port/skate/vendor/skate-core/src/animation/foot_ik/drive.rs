@@ -1,4 +1,5 @@
 //! SkeletonIK::UpdateDriveFrames82BF0198 and its solve/mapping chain.
+use crate::fused::FusedMulAdd as _;
 use super::{
     math::{Vector, cross, length, normalize},
     status::{LimbStatus, Mode},
@@ -177,7 +178,7 @@ fn clamp_point(point: Vector, origin: Vector, maximum: f32) -> Vector {
         point
     } else {
         let scale = maximum / distance;
-        core::array::from_fn(|i| delta[i].mul_add(scale, origin[i]))
+        core::array::from_fn(|i| delta[i].fused_mul_add(scale, origin[i]))
     }
 }
 

@@ -1,5 +1,6 @@
 //! Native normal-camera rig update82E03300. The rig owns one copy of each
 //! shared field; operation adapters below cannot retain inconsistent snapshots.
+use crate::fused::FusedMulAdd as _;
 use super::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -188,7 +189,7 @@ impl Rig {
         let square = super::vector_tracker::dot(f.velocity, f.velocity);
         let mut inverse = crate::physics::reciprocal_sqrt::estimate(square);
         for _ in 0..2 {
-            inverse = (inverse * 0.5).mul_add((-square).mul_add(inverse * inverse, 1.0), inverse);
+            inverse = (inverse * 0.5).fused_mul_add((-square).fused_mul_add(inverse * inverse, 1.0), inverse);
         }
         let magnitude = if square == 0.0 { 0.0 } else { square * inverse };
         // Mapped TU3 read-only constant82139A30.

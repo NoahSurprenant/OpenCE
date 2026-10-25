@@ -1,5 +1,6 @@
 //! Complete PowerSliding update82BB28E8 at resolved graph/component boundaries.
 //! Registration82F89300; factory82BC9060; vtable82320328.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 #[derive(Clone, Copy, Debug)]
@@ -53,7 +54,7 @@ pub fn alignment(input: Option<([f32; 4], [f32; 4], u8)>) -> f32 {
     let length = super::controller::magnitude(squared);
     let mut reciprocal = super::angle::reciprocal_estimate(length);
     for _ in 0..2 {
-        reciprocal = reciprocal.mul_add((-reciprocal).mul_add(length, 1.0), reciprocal);
+        reciprocal = reciprocal.fused_mul_add((-reciprocal).fused_mul_add(length, 1.0), reciprocal);
     }
     let velocity = velocity.map(|v| reciprocal * v);
     let basis = if flipped != 0 {

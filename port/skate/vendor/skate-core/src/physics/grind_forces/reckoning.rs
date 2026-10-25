@@ -1,6 +1,7 @@
 //! UpdateGrindStates82D8E3E0, compared with S2 named82DDD2A8.
 //! Maintains CURRENT's shared filters/frames and BodySpin history; no second
 //! reckoning owner and no ground/air-state substitute.
+use crate::fused::FusedMulAdd as _;
 use super::{V, length};
 use crate::{air::{body_spin::{self, BodySpinState}, reckoning::AirState}, math::Vector3,
     physics::{board_motion_output::inverse_length_squared, native_arithmetic::dot3},
@@ -28,7 +29,7 @@ pub fn update(orientation: &mut GroundOrientation, frames: &mut ReckoningFrames,
     let ground = orientation.ground_filter.update(settings.ground_normal_smoothing, normal);
     orientation.ground_normal = xyz(ground);
     frames.heading = heading;
-    let candidate: V = core::array::from_fn(|i| old_up[i].mul_add(smoothing, normal[i] * (1. - smoothing)));
+    let candidate: V = core::array::from_fn(|i| old_up[i].fused_mul_add(smoothing, normal[i] * (1. - smoothing)));
     // Native NormalizeSafe threshold is the original830BD350 splat1e-6;
     // zero/short candidates retain the preceding up, not world-up.
     let up = if length(candidate) > f32::from_bits(0x3586_37bd) {

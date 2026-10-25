@@ -1,4 +1,5 @@
 //! Dynamic truck frames, TU3 `SkateboardBody::SetTruckDriveFrames` (0x82C0B9C0).
+use crate::fused::FusedMulAdd as _;
 use super::drive_frames::{RetailAffineTransform, RetailDriveFrames, set_drive_frames_2};
 use crate::{math::Basis3, trigonometry};
 
@@ -31,8 +32,8 @@ fn rotate_truck(base: RetailAffineTransform, angle: f32) -> RetailAffineTransfor
     let columns = rotation.map(|column| {
         core::array::from_fn(|lane| {
             let first = column[0] * base.basis.columns[0][lane];
-            let second = column[1].mul_add(base.basis.columns[1][lane], first);
-            column[2].mul_add(base.basis.columns[2][lane], second)
+            let second = column[1].fused_mul_add(base.basis.columns[1][lane], first);
+            column[2].fused_mul_add(base.basis.columns[2][lane], second)
         })
     });
     RetailAffineTransform {

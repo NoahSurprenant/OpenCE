@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 pub mod air;
 pub mod animation;
+pub mod fused;
 pub mod camera;
 pub mod graph;
 pub mod input;

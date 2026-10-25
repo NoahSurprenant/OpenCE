@@ -1,5 +1,6 @@
 //! PhysicsAir200 production lifecycle82D34388/82D346C0/82D346A0.
 //! Uses the live player, board, skeleton and selector; no alternate air solver.
+use skate_core::fused::FusedMulAdd as _;
 mod board;
 mod input;
 mod skeleton;
@@ -105,7 +106,7 @@ pub(super) fn advance(physics: &mut GamePhysics, skater: &mut SkaterRuntime) -> 
             //narrows the cone. Caller clears player_jumped again before Launch.
             let velocity = skater.air_state.centre_of_mass_trajectory.velocity;
             info.start_velocity = std::array::from_fn(|i| {
-                COM_ACCELERATION[i].mul_add(f32::from_bits(0x3c88_8889), velocity[i])
+                COM_ACCELERATION[i].fused_mul_add(f32::from_bits(0x3c88_8889), velocity[i])
             });
             info.start_position_override = info.animation_com_position;
             info.start_position_override[1] += f32::from_bits(0xbf26_6666);

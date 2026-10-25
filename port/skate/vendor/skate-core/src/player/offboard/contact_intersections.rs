@@ -1,4 +1,5 @@
 //! Normal constraints82D82940/82E0A258 and obstacle intersections82D82AF0.
+use crate::fused::FusedMulAdd as _;
 use super::{
     contact_queries::{Input, V},
     contact_records::{Direction, Record, Records, Source},
@@ -10,10 +11,10 @@ fn sub(a: V, b: V) -> V {
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 fn unit(a: V) -> V {
@@ -56,7 +57,7 @@ pub fn plane_segment(origin: V, normal: V, start: V, end: V) -> Option<V> {
     let total = b.abs() + a.abs();
     let wa = b.abs() / total;
     let wb = a.abs() / total;
-    Some(std::array::from_fn(|i| start[i].mul_add(wa, end[i] * wb)))
+    Some(std::array::from_fn(|i| start[i].fused_mul_add(wa, end[i] * wb)))
 }
 pub fn constrain(input: Input, records: &mut Records) {
     let mut previous = input.position;
@@ -119,7 +120,7 @@ fn insert_intersections(input: Input, records: &mut Records, a: Record, b: Recor
     let second_dot = dot3(b.normal, delta);
     let extent = f32::from_bits(0x3f8c_cccd);
     let extended_first = std::array::from_fn(|i| {
-        (delta[i] - a.normal[i] * first_dot).mul_add(extent, a.position[i])
+        (delta[i] - a.normal[i] * first_dot).fused_mul_add(extent, a.position[i])
     });
     let extended_second =
         std::array::from_fn(|i| b.position[i] - (delta[i] - b.normal[i] * second_dot) * extent);
@@ -150,7 +151,7 @@ fn insert_intersections(input: Input, records: &mut Records, a: Record, b: Recor
             continue;
         }
         let fraction = length_inverse(sub(point, a.position)).0 / length;
-        let distance = fraction.mul_add(b.distance - a.distance, a.distance);
+        let distance = fraction.fused_mul_add(b.distance - a.distance, a.distance);
         let mut n = normal;
         records.insert(
             input,

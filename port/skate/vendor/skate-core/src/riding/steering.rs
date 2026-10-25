@@ -1,4 +1,5 @@
 //! TU3 steering tilt (`0x82D92440`) and truck targets (`0x82C040F0`).
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 #[derive(Clone, Copy, Debug)]
@@ -42,13 +43,13 @@ pub fn calculate_tilt(
     let hard_scalar = input
         .hard_turn
         .abs()
-        .mul_add(settings.hard_turn_increase, 1.0);
+        .fused_mul_add(settings.hard_turn_increase, 1.0);
     let mut turn = input.turn;
     if input.hard_turn != 0.0 {
         turn = if turn >= 0.0 { 1.0 } else { -1.0 };
     }
     if let Some(previous) = damped_turn {
-        turn = (1.0 - settings.damping).mul_add(*previous, settings.damping * turn);
+        turn = (1.0 - settings.damping).fused_mul_add(*previous, settings.damping * turn);
         *previous = turn;
     }
     let speed_scalar = settings
@@ -73,7 +74,7 @@ pub fn calculate_tilt(
     };
     let tightness = settings
         .tight_trucks_scalar
-        .mul_add(input.truck_tightness, 1.0)
+        .fused_mul_add(input.truck_tightness, 1.0)
         - input.truck_tightness;
     input.flipped_controls_scalar
         * settings.general_scalar
@@ -98,7 +99,7 @@ impl TruckSteeringState {
     /// Flags are retained in their native words to make stance-dependent
     /// contact ownership explicit (`+2468` bit 20, `+2472` bits 26 and 27).
     pub fn update(&mut self, target: f32, blend: f32, flags_2468: u32, flags_2472: u32) {
-        self.deck_tilt = (1.0 - blend).mul_add(self.deck_tilt, blend * target);
+        self.deck_tilt = (1.0 - blend).fused_mul_add(self.deck_tilt, blend * target);
         let mut active = [flags_2472 & (1 << 27) != 0, flags_2472 & (1 << 26) != 0];
         if flags_2468 & (1 << 20) != 0 {
             active.swap(0, 1);
@@ -110,7 +111,7 @@ impl TruckSteeringState {
                 if *timer <= 0.16500001 {
                     *timer += f32::from_bits(0x3C88_8889);
                     let fraction = (*timer * 6.060606).clamp(0.0, 1.0);
-                    *angle = (1.0 - fraction).mul_add(*angle, fraction * self.deck_tilt);
+                    *angle = (1.0 - fraction).fused_mul_add(*angle, fraction * self.deck_tilt);
                 } else {
                     *angle = self.deck_tilt;
                 }

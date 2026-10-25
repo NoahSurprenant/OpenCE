@@ -1,5 +1,6 @@
 //! Pose publication82DF80D8 and82DF7558..82DF76B4. Physical outputs remain
 //! authoritative; this owns only the camera's proven one-frame pose history.
+use crate::fused::FusedMulAdd as _;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SubjectPoseInputs {
     pub physical_transform: [[f32; 4]; 4],
@@ -44,7 +45,7 @@ impl SubjectPosePublisher {
         let maximum = f32::from_bits(0x3e147ae1);
         if distance > maximum {
             let inverse = super::vector_tracker::refined_reciprocal(distance);
-            damped = core::array::from_fn(|i| (inverse * delta[i]).mul_add(maximum, input.center_of_mass[i]));
+            damped = core::array::from_fn(|i| (inverse * delta[i]).fused_mul_add(maximum, input.center_of_mass[i]));
         }
         PublishedSubjectPose { transform, damped_center_of_mass: damped }
     }

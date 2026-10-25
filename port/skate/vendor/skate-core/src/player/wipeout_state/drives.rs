@@ -1,4 +1,5 @@
 //! Original SkeletonDrives::UpdateRagdoll82BEB0C8 and root softness82BEB790.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     animation::foot_ik::inverse_affine,
     physics::{
@@ -57,14 +58,14 @@ pub fn update(
             bone.dynamics.mode = 4;
             let [start, normal, controlled, end, _] = coefficients;
             //82BEB424..444 preserves two distinct FMA accumulation orders.
-            let local = controlled.mul_add(weights.controlled,
-                start.mul_add(weights.start, normal.mul_add(residual, end * weights.end)));
+            let local = controlled.fused_mul_add(weights.controlled,
+                start.fused_mul_add(weights.start, normal.fused_mul_add(residual, end * weights.end)));
             let root_start = settings.root[0] * start;
             let root_normal = settings.root[1] * normal;
             let root_controlled = settings.root[2] * controlled;
             let root_end = settings.root[3] * end;
-            let root = root_controlled.mul_add(weights.controlled,
-                root_start.mul_add(weights.start, root_end.mul_add(weights.end,
+            let root = root_controlled.fused_mul_add(weights.controlled,
+                root_start.fused_mul_add(weights.start, root_end.fused_mul_add(weights.end,
                     root_normal * residual)));
             [local * settings.strength[0], root * settings.strength[1]]
         };

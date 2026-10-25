@@ -1,4 +1,5 @@
 //! TU3 queued point-force application, 0x82C037DC..0x82C03908.
+use crate::fused::FusedMulAdd as _;
 use crate::math::{Basis3, Vector3};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,9 +28,9 @@ pub fn accumulate_point_force(
     // 0x82C0387C / 0x82C038B0 / 0x82C038B4: multiply, fused negative
     // multiply-add, permutation. Fusing the positive term instead differs.
     let torque = Vector3::new(
-        (-arm.z).mul_add(force_world.y, arm.y * force_world.z),
-        (-arm.x).mul_add(force_world.z, arm.z * force_world.x),
-        (-arm.y).mul_add(force_world.x, arm.x * force_world.y),
+        (-arm.z).fused_mul_add(force_world.y, arm.y * force_world.z),
+        (-arm.x).fused_mul_add(force_world.z, arm.z * force_world.x),
+        (-arm.y).fused_mul_add(force_world.x, arm.x * force_world.y),
     );
     let angular = multiply_basis(world_inverse_inertia, torque);
     accumulator.torque_acceleration.x += angular.x;
@@ -42,9 +43,9 @@ pub fn accumulate_point_force(
 fn multiply_basis(basis: Basis3, v: Vector3) -> Vector3 {
     // Native multiplies column 0, then fuses column 1, then column 2.
     let lane = |i: usize| {
-        basis.columns[2][i].mul_add(
+        basis.columns[2][i].fused_mul_add(
             v.z,
-            basis.columns[1][i].mul_add(v.y, basis.columns[0][i] * v.x),
+            basis.columns[1][i].fused_mul_add(v.y, basis.columns[0][i] * v.x),
         )
     };
     Vector3::new(lane(0), lane(1), lane(2))

@@ -1,12 +1,13 @@
 //! Scalar lane of native SIMD atan 82473B98 and intention left-stick angle.
+use crate::fused::FusedMulAdd as _;
 pub(super) fn reciprocal_estimate(value: f32) -> f32 {
     crate::physics::native_arithmetic::reciprocal_estimate(value)
 }
 
 fn refined_reciprocal(value: f32) -> f32 {
     let initial = reciprocal_estimate(value);
-    let first = initial.mul_add((-value).mul_add(initial, 1.0), initial);
-    let second = first.mul_add((-value).mul_add(first, 1.0), first);
+    let first = initial.fused_mul_add((-value).fused_mul_add(initial, 1.0), initial);
+    let second = first.fused_mul_add((-value).fused_mul_add(first, 1.0), first);
     if first.is_nan() { initial } else { second }
 }
 pub fn atan(value: f32) -> f32 {
@@ -29,20 +30,20 @@ pub fn atan(value: f32) -> f32 {
     } else {
         0.0
     };
-    let transformed = (reduced.mul_add(f32::from_bits(0x3f3b67af), reduced) - 1.0)
+    let transformed = (reduced.fused_mul_add(f32::from_bits(0x3f3b67af), reduced) - 1.0)
         * refined_reciprocal(reduced + f32::from_bits(0x3fddb3d7));
     let t = if transform { transformed } else { reduced };
     let square = t * t;
-    let numerator = square.mul_add(f32::from_bits(0xbf566bd7), f32::from_bits(0xc107e9fb));
-    let numerator = square.mul_add(numerator, f32::from_bits(0xc1a40bfe));
-    let numerator = square.mul_add(numerator, f32::from_bits(0xc15b0533));
-    let denominator = square.mul_add(
+    let numerator = square.fused_mul_add(f32::from_bits(0xbf566bd7), f32::from_bits(0xc107e9fb));
+    let numerator = square.fused_mul_add(numerator, f32::from_bits(0xc1a40bfe));
+    let numerator = square.fused_mul_add(numerator, f32::from_bits(0xc15b0533));
+    let denominator = square.fused_mul_add(
         square + f32::from_bits(0x4170624f),
         f32::from_bits(0x426e5052),
     );
-    let denominator = square.mul_add(denominator, f32::from_bits(0x42ac5090));
-    let denominator = square.mul_add(denominator, f32::from_bits(0x422443e6));
-    let polynomial = t.mul_add((numerator * square) * refined_reciprocal(denominator), t);
+    let denominator = square.fused_mul_add(denominator, f32::from_bits(0x42ac5090));
+    let denominator = square.fused_mul_add(denominator, f32::from_bits(0x422443e6));
+    let polynomial = t.fused_mul_add((numerator * square) * refined_reciprocal(denominator), t);
     let result = if f32::from_bits(0x39800000) > t.abs() {
         t
     } else {
@@ -68,8 +69,8 @@ pub(super) fn left_stick_angle(x: f32, y: f32) -> f32 {
     }
     let vertical = -y;
     let reciprocal = reciprocal_estimate(vertical);
-    let refined = reciprocal.mul_add((-reciprocal).mul_add(vertical, 1.0), reciprocal);
-    let basic = atan(x.mul_add(refined, 0.0));
+    let refined = reciprocal.fused_mul_add((-reciprocal).fused_mul_add(vertical, 1.0), reciprocal);
+    let basic = atan(x.fused_mul_add(refined, 0.0));
     let sign = x.to_bits() & 0x80000000;
     let pi = f32::from_bits(0x40490fdb | sign);
     let half_pi = f32::from_bits(0x3fc90fdb | sign);

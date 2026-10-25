@@ -1,4 +1,5 @@
 //! Original vector arithmetic used by82BD4A30 and82BD5A00.
+use crate::fused::FusedMulAdd as _;
 use super::collision_feedback::V;
 use crate::physics::{
     native_arithmetic::dot3, reciprocal_sqrt::estimate,
@@ -19,7 +20,7 @@ pub(super) fn add(a: V, b: V) -> V {
 pub(super) fn inverse_length(square: f32) -> f32 {
     let mut inverse = estimate(square);
     for _ in 0..2 {
-        inverse = (inverse * 0.5).mul_add((-square).mul_add(inverse * inverse, 1.0), inverse);
+        inverse = (inverse * 0.5).fused_mul_add((-square).fused_mul_add(inverse * inverse, 1.0), inverse);
     }
     inverse
 }
@@ -47,20 +48,20 @@ pub(super) fn clamp_length(v: V, maximum: f32) -> V {
     let bounded = if maximum - size >= 0.0 { size } else { maximum };
     let mut inverse = crate::physics::native_arithmetic::reciprocal_estimate(size);
     for _ in 0..2 {
-        inverse = inverse.mul_add((-inverse).mul_add(size, 1.0), inverse);
+        inverse = inverse.fused_mul_add((-inverse).fused_mul_add(size, 1.0), inverse);
     }
     scale(scale(v, bounded), inverse)
 }
 pub(super) fn transform(m: AnimationPartTransform, v: V) -> V {
     std::array::from_fn(|i| {
-        m[2][i].mul_add(v[2], m[1][i].mul_add(v[1], m[0][i].mul_add(v[0], m[3][i])))
+        m[2][i].fused_mul_add(v[2], m[1][i].fused_mul_add(v[1], m[0][i].fused_mul_add(v[0], m[3][i])))
     })
 }
 pub(super) fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }

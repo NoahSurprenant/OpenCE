@@ -1,4 +1,5 @@
 //! Trajectory and board-orientation publications inside ProcessData82BD8918.
+use crate::fused::FusedMulAdd as _;
 use super::{
     native_arithmetic::reciprocal_estimate,
     skeleton_animation_record::{AnimationPartTransform, IDENTITY, compose_affine},
@@ -47,14 +48,14 @@ impl SkeletonMotion {
         self.next_trajectory = self.trajectory;
         let mut reciprocal = reciprocal_estimate(dt);
         for _ in 0..2 {
-            let error = (-reciprocal).mul_add(dt, 1.0);
-            reciprocal = reciprocal.mul_add(error, reciprocal);
+            let error = (-reciprocal).fused_mul_add(dt, 1.0);
+            reciprocal = reciprocal.fused_mul_add(error, reciprocal);
         }
         let velocity = self.trajectory[3].map(|v| v * reciprocal);
         self.velocity_world = std::array::from_fn(|lane| {
             let x = animation_to_world[0][lane] * velocity[0];
-            let y = animation_to_world[1][lane].mul_add(velocity[1], x);
-            animation_to_world[2][lane].mul_add(velocity[2], y)
+            let y = animation_to_world[1][lane].fused_mul_add(velocity[1], x);
+            animation_to_world[2][lane].fused_mul_add(velocity[2], y)
         });
         let source = self.trajectory;
         self.inverse_trajectory = std::array::from_fn(|axis| {
@@ -66,8 +67,8 @@ impl SkeletonMotion {
         });
         self.inverse_trajectory[3] = std::array::from_fn(|lane| {
             let z = (0.0 - source[3][2]) * self.inverse_trajectory[2][lane];
-            let y = (0.0 - source[3][1]).mul_add(self.inverse_trajectory[1][lane], z);
-            (0.0 - source[3][0]).mul_add(self.inverse_trajectory[0][lane], y)
+            let y = (0.0 - source[3][1]).fused_mul_add(self.inverse_trajectory[1][lane], z);
+            (0.0 - source[3][0]).fused_mul_add(self.inverse_trajectory[0][lane], y)
         });
     }
 

@@ -1,4 +1,5 @@
 //! Recovered drive parameter layout and TU3 truck/wheel construction branches.
+use crate::fused::FusedMulAdd as _;
 const fn retail_f32(bits: u32) -> f32 {
     f32::from_bits(bits)
 }
@@ -154,8 +155,8 @@ fn soft_linear_damping() -> f32 {
     for _ in 0..2 {
         let squared = reciprocal_root * reciprocal_root;
         let half = reciprocal_root * 0.5;
-        let residual = (-spring).mul_add(squared, 1.0);
-        reciprocal_root = half.mul_add(residual, reciprocal_root);
+        let residual = (-spring).fused_mul_add(squared, 1.0);
+        reciprocal_root = half.fused_mul_add(residual, reciprocal_root);
     }
     let root = if spring == 0.0 {
         0.0

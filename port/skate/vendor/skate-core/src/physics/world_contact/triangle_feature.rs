@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::MaximumFeature;
 use crate::physics::reciprocal_sqrt::estimate;
 
@@ -99,7 +100,7 @@ pub fn build_feature_edge_planes(feature: &mut MaximumFeature, mode: u32, direct
         let plane = cross(edge, normal);
         let squared = dot(plane, plane);
         let mut r = estimate(squared);
-        r = (r * 0.5).mul_add((-squared).mul_add(r * r, 1.0), r);
+        r = (r * 0.5).fused_mul_add((-squared).fused_mul_add(r * r, 1.0), r);
         let scale = if squared > f32::from_bits(0x3400_0000) {
             r
         } else {
@@ -126,9 +127,9 @@ fn dot(a: V, b: V) -> f32 {
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }

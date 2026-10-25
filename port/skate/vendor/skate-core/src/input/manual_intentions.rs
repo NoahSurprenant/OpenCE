@@ -1,4 +1,5 @@
 //! TU3 Fill825999F0 -> manual producer8259BA28, after Derived input.
+use crate::fused::FusedMulAdd as _;
 use super::{controller::{DerivedControllerInput, magnitude}, riding_intentions::RidingIntent};
 
 /// Continuous Manual/ManualBrake belong to the input listener. The authored
@@ -11,7 +12,7 @@ pub fn produce(controller: &DerivedControllerInput, actor_flags: u32) -> Vec<Rid
     let words = controller.words();
     let [x, y] = [words[9], words[10]].map(f32::from_bits);
     // Fill82599BC8..9C40: x*x + rounded(y*y), then two rsqrt refinements.
-    let length = magnitude(x.mul_add(x, y * y));
+    let length = magnitude(x.fused_mul_add(x, y * y));
     if y != 0.0 {
         let value = if y > 0.0 { length } else { -length };
         intents.push(RidingIntent { name: "Manual", value });

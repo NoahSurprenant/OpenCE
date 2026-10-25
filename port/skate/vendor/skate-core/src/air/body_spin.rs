@@ -1,5 +1,6 @@
 //! Complete TU3 BodySpin::Update (82D8BF58) and history scan (82D8C2D8).
 //! Cached curves are explicit inputs, not reconstructed from Skate 2 settings.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 /// Native bytes +0..176. Preserves the unused +136 word and mode-byte padding.
@@ -80,7 +81,7 @@ pub fn update_ground(state: &mut BodySpinState, input: f32) {
 
 fn update_input(state: &mut BodySpinState, input: f32, auto_spin: f32, mode: u8) {
     let delta = input - state.get(120);
-    let derivative = delta.mul_add(1.5, state.get(124) * 0.0);
+    let derivative = delta.fused_mul_add(1.5, state.get(124) * 0.0);
     state.set(164, auto_spin);
     state.set(120, input);
     state.words[43] = (state.words[43] & 0x00FF_FFFF) | ((mode as u32) << 24);
@@ -101,7 +102,7 @@ fn finish_ground(state: &mut BodySpinState, input: f32) {
     state.set(152, 0.0);
     state.set(144, 0.0);
     state.set(140, 0.0);
-    state.set(132, state.get(132).mul_add(0.8, input * 0.2));
+    state.set(132, state.get(132).fused_mul_add(0.8, input * 0.2));
 }
 
 fn update_air(
@@ -136,7 +137,7 @@ fn update_air(
         state.set(132, faded);
         state.set(120, faded);
     } else {
-        state.set(132, state.get(132).mul_add(0.8, input * 0.2));
+        state.set(132, state.get(132).fused_mul_add(0.8, input * 0.2));
     }
     let proportional = settings.curves[5 + alternate].evaluate(next_time) * state.get(120);
     state.set(144, proportional);
@@ -146,7 +147,7 @@ fn update_air(
     let weight = state
         .get(148)
         .abs()
-        .mul_add(1.0 - settings.derivative_floor, settings.derivative_floor);
+        .fused_mul_add(1.0 - settings.derivative_floor, settings.derivative_floor);
     let mut target = -(weight * proportional);
     let mut acceleration = normal_acceleration;
     let old_speed = state.get(140);

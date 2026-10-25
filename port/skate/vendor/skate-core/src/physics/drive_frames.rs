@@ -6,6 +6,7 @@
 //! matrices (`Ri`, `Up`, `At`, translation). This module keeps that convention
 //! explicit and does not substitute a Bevy joint.
 
+use crate::fused::FusedMulAdd as _;
 use super::{
     board::*,
     drive_parameters::{RetailDriveFrameRaw, RetailDriveFramesRaw},
@@ -222,8 +223,8 @@ fn refined_reciprocal_square_root(value: f32) -> f32 {
     for _ in 0..2 {
         let square = estimate * estimate;
         let half_estimate = estimate * 0.5;
-        let residual = (-value).mul_add(square, 1.0);
-        estimate = half_estimate.mul_add(residual, estimate);
+        let residual = (-value).fused_mul_add(square, 1.0);
+        estimate = half_estimate.fused_mul_add(residual, estimate);
     }
     estimate
 }
@@ -275,8 +276,8 @@ fn compose_affine(
 fn multiply_basis_vector(basis: Basis3, vector: Vector3) -> Vector3 {
     let component = |lane| {
         let first = vector.x * basis.columns[0][lane];
-        let second = vector.y.mul_add(basis.columns[1][lane], first);
-        vector.z.mul_add(basis.columns[2][lane], second)
+        let second = vector.y.fused_mul_add(basis.columns[1][lane], first);
+        vector.z.fused_mul_add(basis.columns[2][lane], second)
     };
     Vector3::new(component(0), component(1), component(2))
 }
@@ -330,10 +331,10 @@ pub fn calculate_truck_transforms(inputs: RetailTruckTransformInputs) -> [Retail
     let alpha = inputs.truck_rotation_axis_angle_degrees * DEGREES_TO_RADIANS;
     let front_z = inputs
         .deck_mid_length
-        .mul_add(HALF, inputs.truck_z_position_front);
+        .fused_mul_add(HALF, inputs.truck_z_position_front);
     let back_z = -inputs
         .deck_mid_length
-        .mul_add(HALF, inputs.truck_z_position_back);
+        .fused_mul_add(HALF, inputs.truck_z_position_back);
 
     [
         RetailAffineTransform {
@@ -366,8 +367,8 @@ fn multiply_basis(left: Basis3, right: Basis3) -> Basis3 {
         columns: right.columns.map(|column| {
             core::array::from_fn(|lane| {
                 let first = column[0] * left.columns[0][lane];
-                let second = column[1].mul_add(left.columns[1][lane], first);
-                column[2].mul_add(left.columns[2][lane], second)
+                let second = column[1].fused_mul_add(left.columns[1][lane], first);
+                column[2].fused_mul_add(left.columns[2][lane], second)
             })
         }),
     }
@@ -394,8 +395,8 @@ fn transpose_multiply_basis(parent: Basis3, child: Basis3) -> Basis3 {
             core::array::from_fn(|lane| {
                 let parent_column = parent.columns[lane];
                 let first = child_column[0] * parent_column[0];
-                let second = child_column[1].mul_add(parent_column[1], first);
-                child_column[2].mul_add(parent_column[2], second)
+                let second = child_column[1].fused_mul_add(parent_column[1], first);
+                child_column[2].fused_mul_add(parent_column[2], second)
             })
         }),
     }
@@ -413,11 +414,11 @@ fn transpose_relative_translation(
     );
     let component = |parent_column: [f32; 3]| {
         let result = neg_parent.z * parent_column[2];
-        let result = neg_parent.y.mul_add(parent_column[1], result);
-        let result = neg_parent.x.mul_add(parent_column[0], result);
-        let result = child_translation.x.mul_add(parent_column[0], result);
-        let result = child_translation.y.mul_add(parent_column[1], result);
-        child_translation.z.mul_add(parent_column[2], result)
+        let result = neg_parent.y.fused_mul_add(parent_column[1], result);
+        let result = neg_parent.x.fused_mul_add(parent_column[0], result);
+        let result = child_translation.x.fused_mul_add(parent_column[0], result);
+        let result = child_translation.y.fused_mul_add(parent_column[1], result);
+        child_translation.z.fused_mul_add(parent_column[2], result)
     };
     Vector3::new(
         component(parent_basis.columns[0]),

@@ -1,5 +1,6 @@
 //! Skateboard::PrepareBoardToolkit82C013F0, TU3. Derived physical axes and
 //! filtered normal are calculated from the same live deck used by the solver.
+use crate::fused::FusedMulAdd as _;
 use super::{
     board::BodyId, board_motion_output::inverse_length_squared, board_runtime::BoardRuntime,
     force_queue::total_body_mass, native_arithmetic::dot3,
@@ -82,9 +83,9 @@ impl BoardToolkit {
         }
         for lane in 0..4 {
             let z = (0.0 - effective[3][2]) * inverse_effective[2][lane];
-            let yz = (0.0 - effective[3][1]).mul_add(inverse_effective[1][lane], z);
+            let yz = (0.0 - effective[3][1]).fused_mul_add(inverse_effective[1][lane], z);
             inverse_effective[3][lane] =
-                (0.0 - effective[3][0]).mul_add(inverse_effective[0][lane], yz);
+                (0.0 - effective[3][0]).fused_mul_add(inverse_effective[0][lane], yz);
         }
         let side = effective[0];
         let up = deck[1];
@@ -106,7 +107,7 @@ impl BoardToolkit {
             normal
         } else {
             let blended = std::array::from_fn(|i| {
-                retained_normal[i].mul_add(
+                retained_normal[i].fused_mul_add(
                     f32::from_bits(0x3f66_6666),
                     normal[i] * f32::from_bits(0x3dcc_cccd),
                 )

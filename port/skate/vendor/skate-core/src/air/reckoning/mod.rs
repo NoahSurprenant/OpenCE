@@ -1,5 +1,6 @@
 //! Complete original TU3 Reckoning::UpdateAirStates82D8DBD8.
 //! Shared Ground filters, frame owners and BodySpin history persist across states.
+use crate::fused::FusedMulAdd as _;
 mod data;
 mod math;
 use crate::{
@@ -48,7 +49,7 @@ pub fn update(
     };
     state.spin_angle = state
         .spin_speed
-        .mul_add(f32::from_bits(0x3c88_8889), state.spin_angle);
+        .fused_mul_add(f32::from_bits(0x3c88_8889), state.spin_angle);
     if state.flip_active {
         //A short call-boundary view, not a second retained owner of matrix1008.
         let mut flip = BodyFlipState {

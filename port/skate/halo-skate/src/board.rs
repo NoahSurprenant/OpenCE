@@ -252,6 +252,38 @@ impl Board {
 }
 
 impl Board {
+    /// As `skin`, the positions alone (the rest of each vertex left as it
+    /// was): what the feet stand on (`deck_top`), at half the cost. The same
+    /// positions, bit for bit.
+    pub fn skin_positions(&self, pose: &Pose, scale: f32, out: &mut [f32]) -> Result<usize, String> {
+        let basis = Mat4::from_cols(Vec4::X, -Vec4::Z, Vec4::Y, Vec4::W);
+        let matrices = self
+            .joints
+            .iter()
+            .map(|joint| {
+                let index = pose.names.iter().position(|n| *n == joint.name);
+                index
+                    .and_then(|i| pose.bones.get(i))
+                    .map(|bone| pose.root * *bone * basis * joint.inverse_bind)
+            })
+            .collect::<Vec<_>>();
+        let count = self.vertices.len().min(out.len() / VERTEX_FLOATS);
+        for (vertex, out) in self.vertices.iter().zip(out.chunks_exact_mut(VERTEX_FLOATS)) {
+            let mut position = Vec3::ZERO;
+            for (&joint, &weight) in vertex.joints.iter().zip(&vertex.weights) {
+                if weight == 0.0 {
+                    continue;
+                }
+                let joint = joint as usize;
+                let matrix = matrices[joint].ok_or_else(|| format!("the skater has no bone {}", self.joints[joint].name))?;
+                position += matrix.transform_point3(vertex.position) * weight;
+            }
+            out[0..3].copy_from_slice(&from_skate(position).to_array());
+        }
+        scale_about_middle(&mut out[..count * VERTEX_FLOATS], scale);
+        Ok(count)
+    }
+
     /// Where `pose` has the board, for another machine to draw it there
     /// (`place`): the skinning of its main joint (the deck) as a turn and a
     /// position in world units, Z up. None without that joint in the pose.
@@ -388,14 +420,27 @@ pub fn deck_top(vertices: &[f32], indices: &[u32], point: Vec3, up: Vec3, radius
     // (the deck's top and bottom faces end at its edge alike)
     let tie = radius * 0.1;
 
+    // (each vertex on the plane once; a triangle whose corners all lie
+    // further than `radius` to one side of the foot is further than that
+    // from it, and is passed over: a board has thousands, the foot is near a
+    // few)
+    let flats: Vec<Vec2> = (0..count).map(|i| flat(position(i))).collect();
     let mut candidates: Vec<(f32, f32)> = Vec::new();
     for triangle in indices.chunks_exact(3) {
         let [a, b, c] = [triangle[0], triangle[1], triangle[2]].map(|i| i as usize);
         if a >= count || b >= count || c >= count {
             continue;
         }
+        let (fa, fb, fc) = (flats[a], flats[b], flats[c]);
+        if (fa.x > radius && fb.x > radius && fc.x > radius)
+            || (fa.x < -radius && fb.x < -radius && fc.x < -radius)
+            || (fa.y > radius && fb.y > radius && fc.y > radius)
+            || (fa.y < -radius && fb.y < -radius && fc.y < -radius)
+        {
+            continue;
+        }
         let (pa, pb, pc) = (position(a), position(b), position(c));
-        let Some((distance, [wa, wb, wc])) = nearest_in_triangle(flat(pa), flat(pb), flat(pc)) else {
+        let Some((distance, [wa, wb, wc])) = nearest_in_triangle(fa, fb, fc) else {
             continue;
         };
         if distance <= radius {

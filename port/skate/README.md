@@ -917,13 +917,22 @@ the game to send to the other machines and to play as another player's
 
 Session 0 has a worker thread of its own, as it always had. The others share
 a pool (`halo-skate/src/pool.rs`): as many threads as the machine has
-processors, at most 16, each with the engine's 32 MB stack - a thread each
-would run the 32-bit game out of address space long before 128 sessions.
-Each session's jobs run in order, the sessions' side by side.
+processors - or as its container's share of them allows (Rust's
+`available_parallelism` reads the cgroup's CPU quota: a pod limited to 3
+processors gets 3) - at most 16, each with the engine's 32 MB stack - a
+thread each would run the 32-bit game out of address space long before 128
+sessions. Each session's jobs run in order, the sessions' side by side.
 `halo_skate_step_begin_in` starts a session's step without waiting, and
-`halo_skate_await_step_in` takes its pose: the game starts each bot's step,
-steps its own player's skater, then takes the bots' poses.
-`halo_skate_close_in` ends a session.
+`halo_skate_await_step_in` takes its pose. The game begins every bot's step
+before the objects update and takes the poses at the next tick's (one tick
+later, which nobody sees), so the pool works while the game's own thread
+plays the rest of the tick (its own player's skater, the objects, the bots'
+brains, the network); it waits only for steps the pool has not finished. A
+pose that comes in meanwhile is not the skater's until it is taken (frame,
+nodes and board all of one step). The worker poses the biped's nodes with
+each pose (`halo_skate_pose_nodes_in` copies them), beside the other
+sessions' rather than on the game's thread. `halo_skate_close_in` ends a
+session.
 
 A new session is a copy of the first one made from the same data (the
 vendored engine's state is `Clone`: `#[derive(Clone)]` across
@@ -942,30 +951,59 @@ they are posed, holstered, drawn and sent to the other machines as the
 host's own skater is (states 90/91 and sounds 94/95 keyed by player index:
 the wire is unchanged).
 
-What skaters cost, measured with the real data (i686 builds, a container
-capped at 1.5 processors and 2 GB):
+What made a step cheap: the engine's `mul_add`s (a fused multiply-add,
+rounded once) compiled to a call of the C library's `fmaf` on every target
+without the FMA instruction (the game's 32-bit x86 build, a portable x86-64
+one, WebAssembly), well over a hundred thousand calls a step: most of its
+time. `vendor/skate-core/src/fused.rs`'s `fused_mul_add` gives the same
+results bit for bit without a call - the instruction where the build has
+it, else the product and sum in `f64` with the sum rounded to odd
+(`real_assets_crowd.rs` checks it against the library). The server image
+builds the engine for the processors it runs on (`configure.py
+--skate-cpu=x86-64-v3`: AVX2 and FMA), the same rides bit for bit. The stock
+collections are found through an index rather than a search of all of them
+(a session's settings loaded several times quicker), and the feet's deck
+under them looks only at the board's triangles near each foot.
 
-| | resident memory | time |
-| --- | --- | --- |
-| the first session (animation banks, board, the template) | about 58 MB | about 12 s of a processor, in the background |
-| each further session (a copy, with its collision) | about 9-12 MB | about 15 ms |
-| a skater's step | | about 4.6 ms of a processor each game tick (30 a second) |
-| a dedicated server, Blood Gulch, 32 bots on foot, no data | 134 MB | about 1 processor |
-| the same, 32 bots on boards (31 sessions) | 551 MB | |
-| the same, 64 bots on boards (59 sessions) | 853 MB | |
+What skaters cost on a dedicated server, measured with the real data and the
+owner's maps (Blood Gulch, Slayer, every bot on a board whenever it can:
+`debug.bot_skate "*ram"`; release `--skate --skate-cpu=x86-64-v3` build,
+Docker containers capped at 3 or 6 processors and 3 GB; about 4 bots in 5
+skating at any time):
 
-So a server where every one of 127 bots skates at full speed needs about
-1.7 GB of memory and, for their steps alone, about 127 x 4.6 ms = 0.58 s of
-processor time every 33 ms tick: some 18 processors of this kind (plus about
-one for every 32 bots' brains). With fewer, the game slows the bots' skaters
-instead of refusing anyone: past 20 ms of skating steps a tick, each bot's
-skater steps every second tick, then every third, up to every 16th (they
-skate slower; the log says "skate: the bots' skaters take ... each steps
-every N ticks now"), and back as the load eases. On the measuring container
-(about one processor for the game) 64 riding bots slowed the game itself to
-about 20 ticks a second, and nothing failed. Remote human skaters cost the
-host almost nothing (their machines run their engines): it relays their
-states and sounds (far ones less often, as their units) and decides their hits.
+| bots | processors | used | memory | the game | the skaters |
+| --- | --- | --- | --- | --- | --- |
+| 32 | 3 | 1.4 | 565 MB | 30 ticks a second, waits 0.4 ms a tick for steps | every tick |
+| 64 | 3 | 2.7 | 905 MB | 30 a second, waits 0.7 ms | every tick |
+| 64 | 6 | 2.6 | 900 MB | 30 a second, waits 0.7 ms | every tick |
+| 128 | 3 | 2.6 | 1.5 GB | 30 a second, waits 0.8 ms | those far from people every other tick |
+| 128 | 6 | 2.6 | 1.6 GB | 30 a second, waits 0.8 ms | those far from people every other tick |
+
+(Before: a step took about 5 ms of a processor on Blood Gulch; 16 skating
+bots already stepped every other tick on 3 processors, and 64 slowed the
+game to 22 ticks a second. Now a step takes about 0.65 ms alone, 1.3 ms in a
+crowd.) A step costs more with more of them side by side on the same machine
+(cache and memory shared; on 6 threads about 1.5 times as much), so 128 bots
+all stepping every tick want about 7 processors of the measuring machine's
+kind, for 128 x 1.3 ms of steps every 33 ms tick at 6 threads' cost.
+
+With fewer, the host steps the skaters far from everyone playing - more than
+25 world units from any living person's unit - every other tick, half of
+them each tick, measuring each step's time on the pool
+(`halo_skate_pool_load`) and how long the game waits for them; between its
+steps a skater glides on at its last step's speed (its biped, pose and board
+moved together), so nobody sees one stop and jump, though it rides half as
+fast meanwhile. Those near people step every tick unless even they are too
+many (then they too, as a last resort); past that the game's ticks take
+longer. Nobody is refused a board. The log says when the periods change
+("skate: the bots' skaters: N near people step every 1 tick, M further away
+every 2 (a step 1.3 ms on the pool's 3 threads ...)") and every 30 seconds
+how the bots' skaters went ("... the game waited 0.4 ms a tick for their
+steps ... the game played 30.0 ticks a second ..."). `debug.skate_bot_period`
+(`HALO_SKATE_BOT_PERIOD`, 1 or 2) sets the period for the tests. Remote human
+skaters cost the host almost nothing (their machines run their engines): it
+relays their states and sounds (far ones less often, as their units) and
+decides their hits.
 
 `server.bot_skaters` is 0 at first: no limit. A number limits how many bots
 ride at once, -1 keeps them on foot. The mixer plays 32 voices at most; with

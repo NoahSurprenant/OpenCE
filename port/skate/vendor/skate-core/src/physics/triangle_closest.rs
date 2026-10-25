@@ -1,4 +1,5 @@
 //! TU3 triangle closest-feature calculation82ADE8B8.
+use crate::fused::FusedMulAdd as _;
 use super::triangle_query::{dot, madd, sub};
 use crate::math::Vector3;
 
@@ -20,10 +21,10 @@ pub(super) fn closest(point: Vector3, vertices: [Vector3; 3]) -> ClosestTriangle
     let bc = dot(edge_b, edge_c);
     let bp = dot(edge_b, toward_origin);
     let cp = dot(edge_c, toward_origin);
-    let determinant = cc.mul_add(bb, -(bc * bc));
-    let u_numerator = cp.mul_add(bc, -(bp * cc));
-    let v_numerator = bp.mul_add(bc, -(cp * bb));
-    let opposite_length_squared = (-bc).mul_add(2.0, bb) + cc;
+    let determinant = cc.fused_mul_add(bb, -(bc * bc));
+    let u_numerator = cp.fused_mul_add(bc, -(bp * cc));
+    let v_numerator = bp.fused_mul_add(bc, -(cp * bb));
+    let opposite_length_squared = (-bc).fused_mul_add(2.0, bb) + cc;
     let feature = if determinant < f32::from_bits(0x0020_0000) {
         if bb > cc {
             if bb > opposite_length_squared { 0 } else { 2 }

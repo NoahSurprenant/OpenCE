@@ -1,5 +1,6 @@
 //! Independent arithmetic for original PhysicsAir's jump-velocity helpers.
 //! Retains original refinements; PC results are not certified Xenon bit-exact.
+use crate::fused::FusedMulAdd as _;
 use super::PhysicsAirMath;
 use crate::physics::{board_motion_output::inverse_length_squared, native_arithmetic};
 
@@ -23,7 +24,7 @@ impl PhysicsAirMath for AirMath {
         let bound = if maximum - length >= -0.0 { length } else { maximum };
         let mut inverse = native_arithmetic::reciprocal_estimate(length);
         for _ in 0..2 {
-            inverse = inverse.mul_add((-inverse).mul_add(length, 1.0), inverse);
+            inverse = inverse.fused_mul_add((-inverse).fused_mul_add(length, 1.0), inverse);
         }
         value.map(|v| (v * bound) * inverse)
     }

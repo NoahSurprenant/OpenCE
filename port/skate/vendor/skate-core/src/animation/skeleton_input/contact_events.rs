@@ -1,6 +1,7 @@
 //! Complete kind3/status&12 dispatch82BDAAA0..82BDACE4.
 //! Bone identity is resolved even for an unknown event name. Push speed comes
 //! from the evaluated trajectory displacement, not a button-driven force.
+use crate::fused::FusedMulAdd as _;
 use super::{name::encode, scalar_attributes::ScalarAttributeInputs};
 use crate::{animation::output::{NativeMatrix, attributes::{AnimationAttribute, AttributeName}},
     physics::native_arithmetic::{dot3, reciprocal_square_root_estimate}};
@@ -44,7 +45,7 @@ pub fn dispatch(attribute: &AnimationAttribute, pose: &ContactEventPose<'_>,
         let squared = dot3(translation, translation);
         let mut inverse = reciprocal_square_root_estimate(squared);
         for _ in 0..2 {
-            inverse = (inverse * 0.5).mul_add((-squared).mul_add(inverse * inverse, 1.0), inverse);
+            inverse = (inverse * 0.5).fused_mul_add((-squared).fused_mul_add(inverse * inverse, 1.0), inverse);
         }
         // Native clears a zero-length result before multiplying by scalar
         // fdivs(1,dt). Estimate arithmetic remains hardware-unverified.

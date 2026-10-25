@@ -133,6 +133,10 @@ pub(crate) enum Job {
     TurnScale { scale: f32 },
     Step { sequence: u64, pad: HaloSkatePad, dt: f32 },
     Suspend,
+    /// The biped's skeleton (`halo_skate_set_skeleton`): the worker poses
+    /// its nodes with each pose it makes, beside the other sessions', rather
+    /// than the game's thread posing each skater in turn.
+    Rig(Option<Arc<rig::Rig>>),
 }
 
 pub(crate) enum Reply {
@@ -151,6 +155,9 @@ pub(crate) enum Reply {
         recovered: bool,
         /// hits on held obstacles since the last pose (`Session::take_held`)
         held: skate_host::bridge::HeldReport,
+        /// the biped's nodes posed so (13 floats each), when the worker has
+        /// the skeleton (`Job::Rig`); else empty
+        nodes: Vec<f32>,
     },
     Error(String),
 }
@@ -174,7 +181,16 @@ struct Host {
     recovered: bool,
     /// The biped's skeleton (`halo_skate_set_skeleton`), kept across engine
     /// restarts (`host_started`): the game describes it once per biped.
-    rig: Option<rig::Rig>,
+    rig: Option<Arc<rig::Rig>>,
+    /// `pose`'s nodes as the worker posed them (`Reply::Pose`), else empty
+    nodes: Vec<f32>,
+    /// A bot's session (not 0): a pose that came in since the game last
+    /// waited for a step (`await_pose`), with its sequence, whether it was
+    /// recovered and its nodes - a bot's step runs while the game plays the
+    /// rest of its tick, and its pose is the skater's from the moment the
+    /// game takes it, not whenever another call happens to look (its frame,
+    /// nodes and board all of one step).
+    pending: Option<(u64, Pose, bool, Vec<f32>)>,
     board: Option<Arc<board::Board>>,
     /// Changes whenever another board is loaded, so that the game takes its
     /// mesh and textures again.
@@ -328,6 +344,8 @@ impl Host {
             pose: None,
             recovered: false,
             rig: None,
+            nodes: Vec::new(),
+            pending: None,
             board: None,
             board_generation: 0,
             board_warned: false,
@@ -373,8 +391,9 @@ impl Host {
                 self.board_generation = BOARD_GENERATIONS.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1);
                 self.board_warned = false;
             }
-            Reply::Pose { pose, recovered, held, .. } => {
+            Reply::Pose { pose, recovered, held, nodes, .. } => {
                 self.pose = Some(pose);
+                self.nodes = nodes;
                 self.recovered |= recovered;
                 self.note_held(held);
             }
@@ -394,8 +413,14 @@ impl Host {
     }
 
     fn drain(&mut self) {
+        let hold = current_session() != 0;
         loop {
             match self.replies.try_recv() {
+                Ok(Reply::Pose { sequence, pose, recovered, held, nodes }) if hold => {
+                    let recovered = recovered || self.pending.as_ref().is_some_and(|p| p.2);
+                    self.pending = Some((sequence, pose, recovered, nodes));
+                    self.note_held(held);
+                }
                 Ok(reply) => self.take(reply),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -420,6 +445,15 @@ impl Host {
     /// Waits up to `wait` for the pose answering `sequence`, taking the
     /// older answers and other replies on the way.
     fn await_pose(&mut self, sequence: u64, wait: Duration) -> bool {
+        // (one that came in already, while the game looked at other things)
+        if let Some((answer, pose, recovered, nodes)) = self.pending.take() {
+            self.pose = Some(pose);
+            self.nodes = nodes;
+            self.recovered |= recovered;
+            if answer == sequence {
+                return true;
+            }
+        }
         let deadline = std::time::Instant::now() + wait;
         loop {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -429,8 +463,10 @@ impl Host {
                     pose,
                     recovered,
                     held,
+                    nodes,
                 }) => {
                     self.pose = Some(pose);
+                    self.nodes = nodes;
                     self.recovered |= recovered;
                     self.note_held(held);
                     if answer == sequence {
@@ -462,6 +498,9 @@ fn host_started(guard: &mut Option<Host>) -> Option<&mut Host> {
         match Host::start() {
             Ok(mut host) => {
                 host.rig = guard.take().and_then(|failed| failed.rig);
+                if host.rig.is_some() {
+                    let _ = host.jobs.send(Job::Rig(host.rig.clone()));
+                }
                 *guard = Some(host);
             }
             Err(e) => {
@@ -493,6 +532,11 @@ pub(crate) struct Worker {
     detector: sound::Detector,
     // a level's collision built again aside (Job::Reload), and its generation
     rebuilding: Option<(u64, Rebuild)>,
+    // the biped's skeleton and the board, to pose its nodes with each pose
+    // (`Job::Rig`), and the board skinned for it
+    rig: Option<Arc<rig::Rig>>,
+    board: Option<Arc<board::Board>>,
+    deck: Vec<f32>,
 }
 
 impl Worker {
@@ -509,13 +553,30 @@ impl Worker {
             hits: obstacles::HitLog::default(),
             detector: sound::Detector::default(),
             rebuilding: None,
+            rig: None,
+            board: None,
+            deck: Vec::new(),
         }
     }
 
     /// Does a job; false when the worker is done (its game gone, or it failed).
     pub(crate) fn handle(&mut self, job: Job) -> bool {
-        let Worker { replies, latest, session, board_root, accumulated, packet, last, recovery, hits, detector, rebuilding } =
-            self;
+        let Worker {
+            replies,
+            latest,
+            session,
+            board_root,
+            accumulated,
+            packet,
+            last,
+            recovery,
+            hits,
+            detector,
+            rebuilding,
+            rig,
+            board,
+            deck,
+        } = self;
         let current = |generation: u64| generation == latest.load(Ordering::SeqCst);
         // (installed between steps once built, when the skater is not on a
         // rail nor in the air, which hold the old grind world's rails)
@@ -634,6 +695,7 @@ impl Worker {
                                 pose,
                                 recovered: false,
                                 held: Default::default(),
+                                nodes: Vec::new(),
                             }
                         }
                         Err(e) => Reply::Error(e),
@@ -643,6 +705,7 @@ impl Worker {
             },
             Job::Step { sequence, pad, dt } => match session.as_mut() {
                 Some((_, s)) => {
+                    let started = (current_session() != 0).then(Instant::now);
                     let period = s.period();
                     *accumulated = (*accumulated + dt).min(MAX_CATCH_UP);
                     let mut result = Ok(());
@@ -669,6 +732,10 @@ impl Worker {
                         *accumulated -= period;
                     }
                     let held = take_held(s);
+                    if let Some(started) = started {
+                        POOL_STEPS.fetch_add(1, Ordering::Relaxed);
+                        POOL_STEP_MICROS.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+                    }
                     let failure = match result {
                         Ok(()) => {
                             let pose = s.pose();
@@ -688,6 +755,7 @@ impl Worker {
                             pose,
                             recovered: false,
                             held,
+                            nodes: Vec::new(),
                         },
                         Err(e) => {
                             *accumulated = 0.0;
@@ -700,6 +768,7 @@ impl Worker {
                                         pose,
                                         recovered: true,
                                         held,
+                                        nodes: Vec::new(),
                                     }
                                 }
                                 None => Reply::Error(e),
@@ -740,6 +809,10 @@ impl Worker {
                 }
                 return true;
             }
+            Job::Rig(new) => {
+                *rig = new;
+                return true;
+            }
         };
         // The board goes with the skater: read once the session is made from
         // another assets folder (at the preload, or with a map when none was
@@ -748,9 +821,16 @@ impl Worker {
             && board_root.as_ref() != Some(root)
         {
             *board_root = Some(root.clone());
-            if replies.send(Reply::Board(load_board(root))).is_err() {
+            *board = load_board(root);
+            if replies.send(Reply::Board(board.clone())).is_err() {
                 return false;
             }
+        }
+        let mut reply = reply;
+        if let (Reply::Pose { pose, nodes, .. }, Some(rig)) = (&mut reply, rig.as_ref()) {
+            *nodes = vec![0.0; rig.len() * 13];
+            let written = pose_nodes(rig, pose, board.as_deref(), deck, nodes);
+            nodes.truncate(written * 13);
         }
         let failed = matches!(reply, Reply::Error(_));
         if replies.send(reply).is_err() || failed {
@@ -1685,7 +1765,12 @@ pub unsafe extern "C" fn halo_skate_set_skeleton(
         .collect();
     let rig = rig::Rig::new(nodes);
     let mapped = rig.mapped() as i32;
-    with_host(|host| host.rig = Some(rig));
+    let rig = Arc::new(rig);
+    with_host(|host| {
+        host.rig = Some(Arc::clone(&rig));
+        host.nodes.clear();
+        let _ = host.jobs.send(Job::Rig(Some(rig)));
+    });
     mapped
 }
 
@@ -1703,29 +1788,40 @@ pub unsafe extern "C" fn halo_skate_pose_nodes(out: *mut f32, capacity: i32) -> 
     let out = unsafe { std::slice::from_raw_parts_mut(out, capacity as usize * 13) };
     with_host(|host| {
         let Host {
-            rig, pose, board, deck, ..
+            rig, pose, board, deck, nodes, ..
         } = host;
         let (Some(rig), Some(pose)) = (rig.as_ref(), pose.as_ref()) else {
             return 0;
         };
-        // the board as the game draws it (halo_skate_board_vertices), grown
-        let scale = BOARD_SCALE.get();
-        let mut on_deck = None;
-        if let Some(board) = board.as_ref() {
-            deck.resize(board.vertices.len() * board::VERTEX_FLOATS, 0.0);
-            if board.skin(pose, scale, deck).is_ok() {
-                on_deck = Some(rig::Deck {
-                    vertices: deck.as_slice(),
-                    indices: board.indices.as_slice(),
-                    ankle: ANKLE_HEIGHT.get(),
-                    offset: FEET_OFFSET.get(),
-                    scale,
-                });
-            }
+        // (posed already by the worker, with the pose: copied)
+        if !nodes.is_empty() && nodes.len() == rig.len() * 13 && out.len() >= nodes.len() {
+            out[..nodes.len()].copy_from_slice(nodes);
+            return rig.len() as i32;
         }
-        rig.pose(pose, on_deck.as_ref(), out) as i32
+        pose_nodes(rig, pose, board.as_deref(), deck, out) as i32
     })
     .unwrap_or(0)
+}
+
+/// The biped's nodes posed as `pose` into `out` (13 floats each), its soles
+/// on the deck of `board` (skinned into `deck`, the board as the game draws
+/// it, grown) while it rides; how many.
+fn pose_nodes(rig: &rig::Rig, pose: &Pose, board: Option<&board::Board>, deck: &mut Vec<f32>, out: &mut [f32]) -> usize {
+    let scale = BOARD_SCALE.get();
+    let mut on_deck = None;
+    if let Some(board) = board {
+        deck.resize(board.vertices.len() * board::VERTEX_FLOATS, 0.0);
+        if board.skin_positions(pose, scale, deck).is_ok() {
+            on_deck = Some(rig::Deck {
+                vertices: deck.as_slice(),
+                indices: board.indices.as_slice(),
+                ankle: ANKLE_HEIGHT.get(),
+                offset: FEET_OFFSET.get(),
+                scale,
+            });
+        }
+    }
+    rig.pose(pose, on_deck.as_ref(), out)
 }
 
 /// Grows the drawn board `scale` times about its middle (1.05 at first),
@@ -2159,6 +2255,28 @@ pub unsafe extern "C" fn halo_skate_assets_present(assets: *const c_char) -> i32
     i32::from(root.join("private").is_dir())
 }
 
+/// The bots' sessions' steps (not session 0's): how many the pool has done,
+/// and the time they took, microseconds, since the engine started.
+static POOL_STEPS: AtomicU64 = AtomicU64::new(0);
+static POOL_STEP_MICROS: AtomicU64 = AtomicU64::new(0);
+
+/// The steps the pool has done so far and the time they took (`POOL_STEPS`),
+/// and how many threads it has: what the game's host sizes its bots' steps
+/// by (skate.c, "many bots on boards").
+///
+/// # Safety
+/// The pointers are writable or NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn halo_skate_pool_load(steps: *mut u64, micros: *mut u64) -> i32 {
+    if !steps.is_null() {
+        unsafe { *steps = POOL_STEPS.load(Ordering::Relaxed) };
+    }
+    if !micros.is_null() {
+        unsafe { *micros = POOL_STEP_MICROS.load(Ordering::Relaxed) };
+    }
+    pool::threads() as i32
+}
+
 /// How many sessions there may be at once, this machine's player's (0) with
 /// them.
 #[unsafe(no_mangle)]
@@ -2386,7 +2504,7 @@ mod tests {
     fn a_replaced_worker_keeps_the_skeleton() {
         let mut guard = Some(Host::start().unwrap());
         let host = guard.as_mut().unwrap();
-        host.rig = Some(rig());
+        host.rig = Some(Arc::new(rig()));
         let mapped = host.rig.as_ref().unwrap().mapped();
         host.fail("a step failed".into());
         let replaced = host_started(&mut guard).unwrap();

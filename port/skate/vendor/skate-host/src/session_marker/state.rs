@@ -1,4 +1,5 @@
 //! PlayerUI::UpdateSessionMarker 82898FC8. Time advances in native UI ticks.
+use skate_core::fused::FusedMulAdd as _;
 #[derive(Clone, Default, Debug)]
 pub(super) struct Hold {
     elapsed: f32,
@@ -50,7 +51,7 @@ pub(super) fn duration(distance: f32) -> f32 {
     } else if distance >= 1000. {
         1.
     } else {
-        distance.mul_add(f32::from_bits(0x3a69_0453), f32::from_bits(0x3de3_8e39))
+        distance.fused_mul_add(f32::from_bits(0x3a69_0453), f32::from_bits(0x3de3_8e39))
     }
 }
 

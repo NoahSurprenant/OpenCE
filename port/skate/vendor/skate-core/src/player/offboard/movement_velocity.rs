@@ -1,5 +1,6 @@
 //! Original Biped velocity/turn producer82D7D9B0, TU3.
 //! Call after movement intent; velocity/turn limits are per physical update.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 mod math;
 use math::*;
@@ -71,7 +72,7 @@ impl State {
         };
         let original = self.velocity;
         let mut target = madd(original, 0.0, scale(direction, target_speed));
-        let turn_error = (settings.turn_vs_speed.evaluate(self.speed) * input.steering).mul_add(radians, -self.turn);
+        let turn_error = (settings.turn_vs_speed.evaluate(self.speed) * input.steering).fused_mul_add(radians, -self.turn);
         let mut maximum_delta = if input.slope_mode { 0.5 } else { f32::from_bits(0x3e4c_cccd) };
         if !(input.override_gate < 0.0) && !input.slope_mode {
             let first = self.override_remaining < 0.0;

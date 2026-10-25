@@ -1,4 +1,5 @@
 //! PhaseBlend attribute intersection82D161B0 and Scale/AddWeighted82D16370/428.
+use crate::fused::FusedMulAdd as _;
 use super::output::attributes::{AnimationAttribute, AttributeName};
 
 /// Bone-name mapping supplied by the stock hierarchy. A native excluded bone
@@ -42,7 +43,7 @@ pub fn blend(left: &mut AnimationAttribute, right: &AnimationAttribute, weight: 
     for &i in lanes {
         let l = f32::from_bits(left.payload.0[i].ok_or("Uninitialized blended attribute payload")?);
         let r = f32::from_bits(right.payload.0[i].ok_or("Uninitialized blended attribute payload")?);
-        left.payload.0[i] = Some(r.mul_add(weight,l*left_weight).to_bits());
+        left.payload.0[i] = Some(r.fused_mul_add(weight,l*left_weight).to_bits());
     }
     Ok(())
 }
@@ -69,7 +70,7 @@ pub fn add_weighted(left: &mut AnimationAttribute, right: &AnimationAttribute, w
     for &i in numeric_lanes(left.kind) {
         let a = f32::from_bits(left.payload.0[i].ok_or("Uninitialized weighted attribute")?);
         let b = f32::from_bits(right.payload.0[i].ok_or("Uninitialized weighted attribute")?);
-        let value = b.mul_add(weight,a);
+        let value = b.fused_mul_add(weight,a);
         left.payload.0[i] = Some(value.to_bits());
     }
     Ok(())

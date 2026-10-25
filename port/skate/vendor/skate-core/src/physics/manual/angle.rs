@@ -1,6 +1,7 @@
 //! Finite scalar Angle::Normalize 8258DB98, from direct TU3 disassembly.
 //! Kept local pending coordinator's shared angle-operation audit.
 
+use crate::fused::FusedMulAdd as _;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AngleError {
     /// Native fctiwz result for nonfinite/overflow input is not reconstructed.
@@ -19,7 +20,7 @@ pub fn normalize(angle: f32) -> Result<f32, AngleError> {
     let whole_turns = turns as i32;
     let tau = f32::from_bits(0x40c9_0fdb);
     // fnmsubs performs fused -(count*tau - angle), then binary32 rounding.
-    let reduced = -((whole_turns as f32).mul_add(tau, -angle));
+    let reduced = -((whole_turns as f32).fused_mul_add(tau, -angle));
     Ok(if reduced >= pi {
         reduced - tau
     } else if reduced < -pi {

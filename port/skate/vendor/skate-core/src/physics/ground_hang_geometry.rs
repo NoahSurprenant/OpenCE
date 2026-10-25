@@ -1,6 +1,7 @@
 //! Geometry actually observed by Ground::ManageHangUps82D39510.
 //! The caller reads only query completion, geometry kind104 and flag29 from
 //! 82C20C08; unrelated grind surface classifications are not used in this path.
+use crate::fused::FusedMulAdd as _;
 use super::{
     board_motion_output::{dot, inverse_length_squared},
     board_world::BoardWorld,
@@ -114,9 +115,9 @@ fn normalize_or_retain(v: Vector3) -> (Vector3, f32) {
 }
 fn cross(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(
-        (-a.z).mul_add(b.y, a.y * b.z),
-        (-a.x).mul_add(b.z, a.z * b.x),
-        (-a.y).mul_add(b.x, a.x * b.y),
+        (-a.z).fused_mul_add(b.y, a.y * b.z),
+        (-a.x).fused_mul_add(b.z, a.z * b.x),
+        (-a.y).fused_mul_add(b.x, a.x * b.y),
     )
 }
 fn add(a: Vector3, b: Vector3) -> Vector3 {
@@ -130,9 +131,9 @@ fn scale(a: Vector3, k: f32) -> Vector3 {
 }
 fn madd(a: Vector3, k: f32, b: Vector3) -> Vector3 {
     Vector3::new(
-        a.x.mul_add(k, b.x),
-        a.y.mul_add(k, b.y),
-        a.z.mul_add(k, b.z),
+        a.x.fused_mul_add(k, b.x),
+        a.y.fused_mul_add(k, b.y),
+        a.z.fused_mul_add(k, b.z),
     )
 }
 

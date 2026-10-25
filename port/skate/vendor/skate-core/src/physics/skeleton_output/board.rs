@@ -1,4 +1,5 @@
 //! Board portion of original TU3 physical pose worker82DB993C..A55C.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::{
     board_motion_output::inverse_length_squared,
     native_arithmetic::dot3,
@@ -78,12 +79,12 @@ pub fn publish(
     let front_angle = wrap(angle(front, negative_x, input.truck_frames[0][0]));
     let wobble = input.deck_wobble_tilt * settings.truck_tilt_wobble_scalar;
     let back_tilt = clamp(
-        (-settings.truck_tilt_scalar).mul_add(back_angle, -wobble),
+        (-settings.truck_tilt_scalar).fused_mul_add(back_angle, -wobble),
         -settings.truck_tilt_max_angle,
         settings.truck_tilt_max_angle,
     );
     let front_tilt = clamp(
-        (-settings.truck_tilt_scalar).mul_add(front_angle, wobble),
+        (-settings.truck_tilt_scalar).fused_mul_add(front_angle, wobble),
         -settings.truck_tilt_max_angle,
         settings.truck_tilt_max_angle,
     );
@@ -132,8 +133,8 @@ fn inverse_direction(frame: &Transform, value: [f32; 4]) -> [f32; 4] {
     let mut output = [0.0; 4];
     for lane in 0..3 {
         let x = value[0] * frame[lane][0];
-        let y = value[1].mul_add(frame[lane][1], x);
-        output[lane] = value[2].mul_add(frame[lane][2], y);
+        let y = value[1].fused_mul_add(frame[lane][1], x);
+        output[lane] = value[2].fused_mul_add(frame[lane][2], y);
     }
     output
 }

@@ -1,4 +1,5 @@
 //! TU3 82D81610: authored-edge/secondary-line merge, then primary lines.
+use crate::fused::FusedMulAdd as _;
 use super::analyzer_math::{madd, plane_segment};
 use super::{Batch, ProbeLayout, QueryResults, Samples, Vector, dot, scale, sub};
 
@@ -86,7 +87,7 @@ fn folded_angle(a: Vector, b: Vector) -> f32 {
     if aa > f32::from_bits(0x38d1b717) && bb > f32::from_bits(0x38d1b717) {
         let unit = |v, square| {
             let r = crate::physics::reciprocal_sqrt::estimate(square);
-            scale(v, (r * 0.5).mul_add((-square).mul_add(r * r, 1.), r))
+            scale(v, (r * 0.5).fused_mul_add((-square).fused_mul_add(r * r, 1.), r))
         };
         angle = crate::trigonometry::acos(dot(unit(a, aa), unit(b, bb)).clamp(-1., 1.));
     }

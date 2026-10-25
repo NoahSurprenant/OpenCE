@@ -1,5 +1,6 @@
 //! Off-board inputs from original TU3 Fill825999F0 and helper8259C260.
 //! The stock ActionGraph owns activation; these inputs do not change state.
+use crate::fused::FusedMulAdd as _;
 use super::controller::DerivedControllerInput;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -101,7 +102,7 @@ pub fn produce_analog(
         if !(dot(safe_unit(stick), negative) <= f32::from_bits(0x3f66_6666)) {
             0.0
         } else {
-            let corrected = std::array::from_fn(|i| normal[i].mul_add(coefficient, stick[i]));
+            let corrected = std::array::from_fn(|i| normal[i].fused_mul_add(coefficient, stick[i]));
             dot(forward, corrected)
         }
     } else {
@@ -123,8 +124,8 @@ fn safe_unit(vector: [f32; 4]) -> [f32; 4] {
     let squared = dot(vector, vector);
     let mut inverse = crate::physics::reciprocal_sqrt::estimate(squared);
     for _ in 0..2 {
-        let correction = (-squared).mul_add(inverse * inverse, 1.0);
-        inverse = (inverse * 0.5).mul_add(correction, inverse);
+        let correction = (-squared).fused_mul_add(inverse * inverse, 1.0);
+        inverse = (inverse * 0.5).fused_mul_add(correction, inverse);
     }
     let length = if squared == 0.0 { 0.0 } else { squared * inverse };
     //Initializer82F826F8 supplies830BD350 from82181A88: LENGTH threshold1e-6.

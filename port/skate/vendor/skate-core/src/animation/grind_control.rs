@@ -1,6 +1,7 @@
 //! S3 TU3 GrindControlFade82BB0D40 and ControlGrindCrouch82BB10F8.
 //! Adapted from the authorized ZIP after independent original-image comparison.
 //! Animation selection, physical observations and tuning remain external inputs.
+use crate::fused::FusedMulAdd as _;
 pub mod facing;
 #[cfg(test)]
 mod tests;
@@ -46,12 +47,12 @@ impl Fade {
         }
         self.elapsed += dt;
         self.target = bound(
-            settings.input_scale.mul_add(intent, self.target),
+            settings.input_scale.fused_mul_add(intent, self.target),
             self.minimum,
             self.maximum,
         );
         let desired =
-            (1.0 - settings.response).mul_add(self.value, self.target * settings.response);
+            (1.0 - settings.response).fused_mul_add(self.value, self.target * settings.response);
         let step = bound(
             desired - self.value,
             self.step - settings.acceleration,

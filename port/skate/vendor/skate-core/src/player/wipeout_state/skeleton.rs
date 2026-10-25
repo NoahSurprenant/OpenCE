@@ -1,4 +1,5 @@
 //! Original Skeleton::UpdateRootTransformsWipeout82BDFBE8.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::{
     skeleton_animation_record::{AnimationPartTransform as Transform, compose_affine},
     skeleton_root::{SkeletonRootFrames, inverse_rigid},
@@ -20,7 +21,7 @@ pub fn update_roots(
     let inverse_hips = inverse_rigid(animation_hips);
     let mut predicted_hips = *physical_hips;
     predicted_hips[3] = std::array::from_fn(|i|
-        hips_velocity[i].mul_add(DT, physical_hips[3][i]));
+        hips_velocity[i].fused_mul_add(DT, physical_hips[3][i]));
     let mut root = compose_affine(&predicted_hips, &inverse_hips);
     let weight = state_time + DT;
     let weight = if -weight >= 0.0 { 0.0 } else { weight };
@@ -28,8 +29,8 @@ pub fn update_roots(
     let mut desired = physical_com;
     desired[1] += f32::from_bits(0xBF4C_CCCD);
     root[3] = std::array::from_fn(|i| {
-        let predicted = com_velocity[i].mul_add(DT, root[3][i]);
-        desired[i].mul_add(weight, predicted * (1.0 - weight))
+        let predicted = com_velocity[i].fused_mul_add(DT, root[3][i]);
+        desired[i].fused_mul_add(weight, predicted * (1.0 - weight))
     });
     roots.animation_to_world = root;
     roots.world_to_animation = inverse_rigid(&root);

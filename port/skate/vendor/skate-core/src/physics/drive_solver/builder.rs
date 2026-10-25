@@ -1,4 +1,5 @@
 //! TU3 drive Jacobian construction, separate from iterative solving.
+use crate::fused::FusedMulAdd as _;
 use super::*;
 use crate::physics::{constraint_frames, native_arithmetic};
 /// Scalar translation of TU3 `DriveJacobian::Build`.
@@ -238,8 +239,8 @@ fn build_coefficients(
         softness: acceleration_weight,
         target_displacement: core::array::from_fn(|i| {
             let rate = velocity_displacement[i] * velocity_weight;
-            let position_and_rate = position_error[i].mul_add(position_weight, rate);
-            acceleration_displacement[i].mul_add(acceleration_weight, position_and_rate)
+            let position_and_rate = position_error[i].fused_mul_add(position_weight, rate);
+            acceleration_displacement[i].fused_mul_add(acceleration_weight, position_and_rate)
         }),
         // Type zero follows the same native strength load; its authored params
         // normally provide zero strength rather than the builder inventing it.

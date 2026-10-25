@@ -1,4 +1,5 @@
 //! Recovered board-part mass properties, separate from integration.
+use crate::fused::FusedMulAdd as _;
 use super::{
     native_arithmetic,
     rigid_body::{RetailBodyMassProperties, RetailInertiaDynamics, RetailLocalMassFrame},
@@ -106,9 +107,9 @@ fn inverse_mass_frame(forward: RetailLocalMassFrame, inertia: Vector3) -> Retail
     });
     let negative_center = [0.0 - center.x, 0.0 - center.y, 0.0 - center.z];
     let translation = core::array::from_fn::<_, 3, _>(|row| {
-        negative_center[0].mul_add(
+        negative_center[0].fused_mul_add(
             columns[0][row],
-            negative_center[1].mul_add(columns[1][row], negative_center[2] * columns[2][row]),
+            negative_center[1].fused_mul_add(columns[1][row], negative_center[2] * columns[2][row]),
         )
     });
     RetailLocalMassFrame {
@@ -250,8 +251,8 @@ fn finalize_principal_mass(
 fn refined_reciprocal(value: f32) -> f32 {
     let mut estimate = native_arithmetic::reciprocal_estimate(value);
     for _ in 0..2 {
-        let residual = (-estimate).mul_add(value, 1.0);
-        estimate = estimate.mul_add(residual, estimate);
+        let residual = (-estimate).fused_mul_add(value, 1.0);
+        estimate = estimate.fused_mul_add(residual, estimate);
     }
     estimate
 }

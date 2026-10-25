@@ -1,6 +1,7 @@
 //! ZIP orientation formulas checked against original S3 family bodies.
 //! S2 equivalents82D9B818/918/BAC0/BCF8/BD88 retain tunable angles/blends;
 //! S3 uses the literals below and adds darkslide's inverted normal.
+use crate::fused::FusedMulAdd as _;
 use super::{length, reciprocal, scale, sub, V};
 use crate::physics::{native_arithmetic::dot3, board_motion_output::inverse_length_squared};
 pub type Frame = [V; 4];
@@ -90,15 +91,15 @@ fn rotate(axis: V, value: V, angle: f32) -> V {
     let (sine, cosine) = crate::trigonometry::sin_cos(angle * 0.5);
     let q = scale(axis, sine);
     let first = cross(q, value);
-    let inner = core::array::from_fn(|i| cosine.mul_add(value[i], first[i]));
+    let inner = core::array::from_fn(|i| cosine.fused_mul_add(value[i], first[i]));
     let second = cross(q, inner);
-    core::array::from_fn(|i| 2.0f32.mul_add(second[i], value[i]))
+    core::array::from_fn(|i| 2.0f32.fused_mul_add(second[i], value[i]))
 }
 
 fn signed(v: V, positive: bool) -> V { if positive { v } else { scale(v, -1.) } }
 fn cross(a: V, b: V) -> V {
-    [(-a[2]).mul_add(b[1], a[1] * b[2]),
-     (-a[0]).mul_add(b[2], a[2] * b[0]),
-     (-a[1]).mul_add(b[0], a[0] * b[1]),
-     (-a[3]).mul_add(b[3], a[3] * b[3])]
+    [(-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+     (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+     (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+     (-a[3]).fused_mul_add(b[3], a[3] * b[3])]
 }

@@ -3,6 +3,7 @@
 //! Production uses geometry::NativePumpingGeometry for the original vector
 //! operations, refinement order and inverse-cosine kernel. The Ground adapter
 //! supplies the current physical sample and the selected stock mode each tick.
+use crate::fused::FusedMulAdd as _;
 use super::{settings::*, state::PumpingState};
 
 /// Literal loaded by Ground Update 82D37EA0, independent of Processed+2604.
@@ -62,7 +63,7 @@ pub fn update<G: PumpingGeometry>(
         let change = height - state.previous_height;
         let rising_change = if change >= 0.0 { change } else { 0.0 };
         let retained = (1.0 - settings.height_change_damping) * state.smoothed_height_change;
-        let smoothed = rising_change.mul_add(settings.height_change_damping, retained);
+        let smoothed = rising_change.fused_mul_add(settings.height_change_damping, retained);
         state.smoothed_height_change = smoothed;
         // bge after fcmpu takes the unordered path too: do not replace with >=.
         let mut effect = if smoothed < settings.minimum_height_change {
@@ -146,7 +147,7 @@ pub fn calculate<G: PumpingGeometry>(
     )?;
     let measured = angular_speed * settings.angular_speed_damping;
     state.angular_speed =
-        (1.0 - settings.angular_speed_damping).mul_add(state.angular_speed, measured);
+        (1.0 - settings.angular_speed_damping).fused_mul_add(state.angular_speed, measured);
     state.absorption = -(speed * state.angular_speed);
     let inclination = geometry.inclination_radians(unit(state.previous_normal[1]))?;
     // Stock 822F8B7C: 2/pi rounded to binary32. This is not host acos().

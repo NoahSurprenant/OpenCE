@@ -2,6 +2,7 @@
 //! to a local principal frame by 82AE7508. This is the aggregate mass producer;
 //! geometry construction and requested-mass scaling remain separate stages.
 
+use crate::fused::FusedMulAdd as _;
 use super::{PrimitiveMass, principal_axes::diagonalize, refined_reciprocal};
 use crate::math::{Basis3, Vector3};
 use crate::physics::rigid_body::RetailLocalMassFrame;
@@ -112,11 +113,11 @@ impl MassMoments {
 
 fn product(matrix: [[f32; 4]; 4], vector: [f32; 4]) -> [f32; 4] {
     core::array::from_fn(|i| {
-        matrix[3][i].mul_add(
+        matrix[3][i].fused_mul_add(
             vector[3],
-            matrix[2][i].mul_add(
+            matrix[2][i].fused_mul_add(
                 vector[2],
-                matrix[1][i].mul_add(vector[1], matrix[0][i] * vector[0]),
+                matrix[1][i].fused_mul_add(vector[1], matrix[0][i] * vector[0]),
             ),
         )
     })

@@ -1,5 +1,6 @@
 //! The production physical-output -> stock graph -> next physical-input phase.
 //! Native actor phases82592FD8/82593128/82593230/82593640 preserve this order.
+use skate_core::fused::FusedMulAdd as _;
 #[path = "animation_grind.rs"]
 mod grind;
 #[path = "animation_phase_packet.rs"]
@@ -201,9 +202,9 @@ pub(crate) fn advance(
         let point = p.probe_1792.vectors_16_32_48[source].map(f32::from_bits);
         let inverse = skater.animated_skeleton.roots.world_to_animation;
         std::array::from_fn(|i| {
-            inverse[2][i].mul_add(
+            inverse[2][i].fused_mul_add(
                 point[2],
-                inverse[1][i].mul_add(point[1], inverse[0][i].mul_add(point[0], inverse[3][i])),
+                inverse[1][i].fused_mul_add(point[1], inverse[0][i].fused_mul_add(point[0], inverse[3][i])),
             )
         })
     } else {

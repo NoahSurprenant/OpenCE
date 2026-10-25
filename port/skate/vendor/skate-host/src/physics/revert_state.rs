@@ -1,5 +1,6 @@
 //! RevertGround102, TU3 vtable82327330: Enter82D43488, Update82D43518,
 //! empty Exit, Ground Post82D4C070, Fill82D43B10. Stock layout018E8A2E5028AB3F.
+use skate_core::fused::FusedMulAdd as _;
 use super::{GamePhysics, SkaterRuntime, ground_runtime::GroundInputObservations};
 use skate_core::{
     math::Vector3,
@@ -209,7 +210,7 @@ pub(super) fn update(physics: &mut GamePhysics, skater: &mut SkaterRuntime) -> R
     Ok(())
 }
 fn dot(a: V, b: V) -> f32 {
-    a[2].mul_add(b[2], a[1].mul_add(b[1], a[0] * b[0]))
+    a[2].fused_mul_add(b[2], a[1].fused_mul_add(b[1], a[0] * b[0]))
 }
 fn xyz(v: V) -> Vector3 {
     Vector3::new(v[0], v[1], v[2])

@@ -1,4 +1,5 @@
 //! Pumping behavior82BAC1B0 and instance seeds82BAC528.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 #[derive(Clone,Debug)]
 pub struct Settings {
@@ -16,7 +17,7 @@ impl State {
         let lower=if -input>=0.0 {0.0}else{input};
         let input=if 1.0-lower>=0.0 {lower}else{1.0};
         //82BAC2F8 is fmadds; preserve the single final rounding.
-        self.filtered=input.mul_add(s.input_blend,(1.0-s.input_blend)*self.filtered);
+        self.filtered=input.fused_mul_add(s.input_blend,(1.0-s.input_blend)*self.filtered);
         self.value=s.amplify.evaluate(self.filtered);
         let start=if !(previous>s.new_pump_threshold)&&self.value>s.new_pump_threshold {
             occupied.iter().position(|&exists|!exists)

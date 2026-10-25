@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::{FeaturePrism, MaximumFeature, closest_feature_segment, prism_math::*};
 
 fn store(output: &mut FeaturePrism, offset: usize, point: V) {
@@ -16,7 +17,7 @@ fn endpoint(feature: &mut MaximumFeature, start: bool) -> V {
     } else {
         let direction = load(feature, 8);
         let length = load(feature, 16);
-        std::array::from_fn(|i| direction[i].mul_add(length[i], origin[i]))
+        std::array::from_fn(|i| direction[i].fused_mul_add(length[i], origin[i]))
     }
 }
 
@@ -64,8 +65,8 @@ pub fn intersect_feature_segments(
     };
     let al = load(a, 16);
     let bl = load(b, 16);
-    let end_a = std::array::from_fn(|i| ad[i].mul_add(al[i], start_a[i]));
-    let end_b = std::array::from_fn(|i| bd[i].mul_add(bl[i], start_b[i]));
+    let end_a = std::array::from_fn(|i| ad[i].fused_mul_add(al[i], start_a[i]));
+    let end_b = std::array::from_fn(|i| bd[i].fused_mul_add(bl[i], start_b[i]));
     let a0 = dot(axis, start_a);
     let b0 = dot(axis, start_b);
     let a1 = dot(axis, end_a);

@@ -1,5 +1,6 @@
 //! Authored seven-part matrices passed to Part::SetTransform by TU3 82C0ADF0.
 //! This function is called by construction/reset before world-pose publication.
+use crate::fused::FusedMulAdd as _;
 use super::RetailAffineTransform;
 use crate::math::{Basis3, Vector3};
 
@@ -37,10 +38,10 @@ pub fn authored_body_transforms(input: AuthoredTransformInputs) -> [RetailAffine
     // fmadds82C0AEE4 and fnmsubs82C0AF60: one rounded multiply/add each.
     let front_z = input
         .deck_mid_length
-        .mul_add(0.5, input.truck_z_position_front);
+        .fused_mul_add(0.5, input.truck_z_position_front);
     let back_z = -input
         .deck_mid_length
-        .mul_add(0.5, input.truck_z_position_back);
+        .fused_mul_add(0.5, input.truck_z_position_back);
     let y = input.truck_y_position;
     let x = input.wheel_x_distance;
     let mut transforms = [RetailAffineTransform::IDENTITY; 7];

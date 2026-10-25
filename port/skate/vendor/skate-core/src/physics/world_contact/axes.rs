@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use crate::physics::reciprocal_sqrt::estimate;
 
 type V = [f32; 4];
@@ -86,10 +87,10 @@ fn sub(a: V, b: V) -> V {
 
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 
@@ -100,7 +101,7 @@ fn dot(a: V) -> f32 {
 fn inverse_length(squared: f32) -> f32 {
     let mut r = estimate(squared);
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-squared).mul_add(r * r, 1.0), r);
+        r = (r * 0.5).fused_mul_add((-squared).fused_mul_add(r * r, 1.0), r);
     }
     r
 }

@@ -1,4 +1,5 @@
 //! SkeletonBody::Init82BE4900, head82BE5428 and extra capsules82BE5180.
+use crate::fused::FusedMulAdd as _;
 use super::{ANIMATION_PART_COUNT, PART_COUNT};
 use crate::{math::{Basis3, Vector3}, physics::{
     mass::{MassMoments, MassShape, PartMassInput, RETAIL_UNBOUNDED_VELOCITY,
@@ -54,8 +55,8 @@ impl HatGeometry {
         Self { radius, half_length: thickness*0.5, translation,
             basis: Basis3 { columns: [
                 [cy*cz, cy*sz, -sy],
-                [sy*sxcz-cxsz, sy.mul_add(sxsz,cxcz), cy*sx],
-                [sy.mul_add(cxcz,sxsz), sy*cxsz-sxcz, cy*cx],
+                [sy*sxcz-cxsz, sy.fused_mul_add(sxsz,cxcz), cy*sx],
+                [sy.fused_mul_add(cxcz,sxsz), sy*cxsz-sxcz, cy*cx],
             ]} }
     }
 }
@@ -166,7 +167,7 @@ fn adjust_inertia(properties: &mut RetailBodyMassProperties, kind: u32, factor: 
     if kind == 1 {
         let mut reciprocal = native_arithmetic::reciprocal_estimate(factor);
         for _ in 0..2 {
-            reciprocal = reciprocal.mul_add((-reciprocal).mul_add(factor, 1.0), reciprocal);
+            reciprocal = reciprocal.fused_mul_add((-reciprocal).fused_mul_add(factor, 1.0), reciprocal);
         }
         d.inverse_tensor = Vector3::new(d.inverse_tensor.x*reciprocal,
             d.inverse_tensor.y*reciprocal, d.inverse_tensor.z*reciprocal);

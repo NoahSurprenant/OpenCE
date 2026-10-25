@@ -1,4 +1,5 @@
 //! tTrajectory and complete PredictionResults8276C9D8/8276DBE0.
+use crate::fused::FusedMulAdd as _;
 use super::math::{IDENTITY, STEP, Transform, UP, Vector, ZERO, reciprocal};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Trajectory {
@@ -12,11 +13,11 @@ impl Trajectory {
         let square = time * time;
         core::array::from_fn(|i| {
             (self.acceleration[i] * 0.5)
-                .mul_add(square, self.velocity[i].mul_add(time, self.position[i]))
+                .fused_mul_add(square, self.velocity[i].fused_mul_add(time, self.position[i]))
         })
     }
     pub fn velocity_at(self, time: f32) -> Vector {
-        core::array::from_fn(|i| self.acceleration[i].mul_add(time, self.velocity[i]))
+        core::array::from_fn(|i| self.acceleration[i].fused_mul_add(time, self.velocity[i]))
     }
     pub fn highest_position(self) -> (Vector, f32) {
         //82D2CCA0: downward velocity or nonnegative gravity has no apex.

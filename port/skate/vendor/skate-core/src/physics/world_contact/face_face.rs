@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use crate::physics::world_contact::{
     FeaturePrism, MaximumFeature, intersect_feature_corner_edge, prism_math::*,
 };
@@ -111,7 +112,7 @@ pub(super) fn intersect(
                 let point = std::array::from_fn(|lane| {
                     let numerator = length[lane] * previous_distance;
                     let along = inverse_difference * numerator;
-                    direction[lane].mul_add(along, origin[lane])
+                    direction[lane].fused_mul_add(along, origin[lane])
                 });
                 append(output, point, project_to_face(b, point));
             }

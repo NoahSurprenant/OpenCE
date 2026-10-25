@@ -1,6 +1,7 @@
 //! Matrix interpolation used by SkeletonIK, TU3 82BD3150/82BD2E60.
 //! The shared Xenon estimate primitives remain host approximations pending
 //! hardware comparison; the recovered branch and refinement order is retained.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     input::angle::atan,
     physics::{
@@ -16,8 +17,8 @@ pub(super) type Vector = [f32; 4];
 pub(super) fn reciprocal(value: f32, refinements: usize) -> f32 {
     let mut inverse = reciprocal_estimate(value);
     for _ in 0..refinements {
-        let error = (-inverse).mul_add(value, 1.0);
-        inverse = inverse.mul_add(error, inverse);
+        let error = (-inverse).fused_mul_add(value, 1.0);
+        inverse = inverse.fused_mul_add(error, inverse);
     }
     inverse
 }
@@ -35,10 +36,10 @@ pub(super) fn normalize(value: Vector) -> Vector {
 
 pub(super) fn cross(left: Vector, right: Vector) -> Vector {
     [
-        (-left[2]).mul_add(right[1], left[1] * right[2]),
-        (-left[0]).mul_add(right[2], left[2] * right[0]),
-        (-left[1]).mul_add(right[0], left[0] * right[1]),
-        (-left[3]).mul_add(right[3], left[3] * right[3]),
+        (-left[2]).fused_mul_add(right[1], left[1] * right[2]),
+        (-left[0]).fused_mul_add(right[2], left[2] * right[0]),
+        (-left[1]).fused_mul_add(right[0], left[0] * right[1]),
+        (-left[3]).fused_mul_add(right[3], left[3] * right[3]),
     ]
 }
 
@@ -73,7 +74,7 @@ pub(super) fn rotation_axis_angle(rotation: &Transform) -> (Vector, f32) {
     } else {
         [0.0; 4]
     };
-    let ratio = sine_twice.mul_add(reciprocal(cosine_twice, 1), 0.0);
+    let ratio = sine_twice.fused_mul_add(reciprocal(cosine_twice, 1), 0.0);
     let mut angle = atan(ratio);
     if cosine_twice < 0.0 {
         angle += f32::from_bits(0x4049_0FDB).copysign(sine_twice);
@@ -129,14 +130,14 @@ pub(super) fn axis_rotation(axis: Vector, angle: f32) -> Transform {
     let tx = complement * x;
     let ty = complement * y;
     let tz = complement * z;
-    let xx = tx.mul_add(x, cosine);
-    let yy = ty.mul_add(y, cosine);
-    let zz = tz.mul_add(z, cosine);
-    let xy_positive = tx.mul_add(y, sz);
+    let xx = tx.fused_mul_add(x, cosine);
+    let yy = ty.fused_mul_add(y, cosine);
+    let zz = tz.fused_mul_add(z, cosine);
+    let xy_positive = tx.fused_mul_add(y, sz);
     let xy_negative = ty * x - sz;
-    let xz_positive = tz.mul_add(x, sy);
+    let xz_positive = tz.fused_mul_add(x, sy);
     let xz_negative = tx * z - sy;
-    let yz_positive = ty.mul_add(z, sx);
+    let yz_positive = ty.fused_mul_add(z, sx);
     let yz_negative = tz * y - sx;
     [
         [xx, xy_positive, xz_negative, xx],
@@ -155,8 +156,8 @@ pub fn interpolate(a: &Transform, b: &Transform, weight: f32) -> (Transform, f32
     for column in 0..3 {
         relative[column] = core::array::from_fn(|lane| {
             let x = a[0][column] * b[0][lane];
-            let y = a[1][column].mul_add(b[1][lane], x);
-            a[2][column].mul_add(b[2][lane], y)
+            let y = a[1][column].fused_mul_add(b[1][lane], x);
+            a[2][column].fused_mul_add(b[2][lane], y)
         });
     }
     let (axis, angle) = rotation_axis_angle(&relative);
@@ -167,7 +168,7 @@ pub fn interpolate(a: &Transform, b: &Transform, weight: f32) -> (Transform, f32
     if angle < f32::from_bits(0x3D0E_FA35) {
         for column in 0..3 {
             output[column] = normalize(core::array::from_fn(|lane| {
-                (b[column][lane] - a[column][lane]).mul_add(weight, a[column][lane])
+                (b[column][lane] - a[column][lane]).fused_mul_add(weight, a[column][lane])
             }));
         }
     } else {
@@ -175,12 +176,12 @@ pub fn interpolate(a: &Transform, b: &Transform, weight: f32) -> (Transform, f32
         for column in 0..3 {
             output[column] = core::array::from_fn(|lane| {
                 let x = a[column][0] * rotation[0][lane];
-                let y = a[column][1].mul_add(rotation[1][lane], x);
-                a[column][2].mul_add(rotation[2][lane], y)
+                let y = a[column][1].fused_mul_add(rotation[1][lane], x);
+                a[column][2].fused_mul_add(rotation[2][lane], y)
             });
         }
     }
-    output[3] = core::array::from_fn(|lane| (b[3][lane] - a[3][lane]).mul_add(weight, a[3][lane]));
+    output[3] = core::array::from_fn(|lane| (b[3][lane] - a[3][lane]).fused_mul_add(weight, a[3][lane]));
     (output, angle - angle * weight)
 }
 
@@ -188,7 +189,7 @@ pub fn interpolate(a: &Transform, b: &Transform, weight: f32) -> (Transform, f32
 /// endpoint weights. Preserve its weighted-sum rounding instead of delta lerp.
 pub fn interpolate_affine(a: &Transform, b: &Transform, weight: f32) -> Transform {
     let translation =
-        core::array::from_fn(|lane| a[3][lane].mul_add(1.0 - weight, b[3][lane] * weight));
+        core::array::from_fn(|lane| a[3][lane].fused_mul_add(1.0 - weight, b[3][lane] * weight));
     let (mut output, _) = interpolate(a, b, weight);
     output[3] = translation;
     output
@@ -217,8 +218,8 @@ pub fn inverse_affine(frame: &Transform) -> Transform {
     let negative = frame[3].map(|v| f32::from_bits(v.to_bits() ^ 0x8000_0000));
     result[3] = core::array::from_fn(|lane| {
         let x = negative[0] * result[0][lane];
-        let y = negative[1].mul_add(result[1][lane], x);
-        negative[2].mul_add(result[2][lane], y)
+        let y = negative[1].fused_mul_add(result[1][lane], x);
+        negative[2].fused_mul_add(result[2][lane], y)
     });
     result
 }

@@ -1,4 +1,5 @@
 //! Original arithmetic ordering and two estimate-refinement steps.
+use crate::fused::FusedMulAdd as _;
 use crate::physics::{board_motion_output::inverse_length_squared, native_arithmetic};
 type Vector = [f32; 4];
 pub(super) const UP: Vector = [0.0, 1.0, 0.0, 0.0];
@@ -15,7 +16,7 @@ pub(super) fn scale(a: Vector, b: f32) -> Vector {
     a.map(|v| v * b)
 }
 pub(super) fn madd(a: Vector, b: f32, c: Vector) -> Vector {
-    std::array::from_fn(|i| a[i].mul_add(b, c[i]))
+    std::array::from_fn(|i| a[i].fused_mul_add(b, c[i]))
 }
 pub(super) fn planar(value: Vector, normal: Vector) -> Vector {
     sub(value, scale(normal, dot(value, normal)))
@@ -33,7 +34,7 @@ pub(super) fn vector_clamp(v: f32, low: f32, high: f32) -> f32 {
 pub(super) fn reciprocal(v: f32) -> f32 {
     let mut r = native_arithmetic::reciprocal_estimate(v);
     for _ in 0..2 {
-        r = r.mul_add((-r).mul_add(v, 1.0), r);
+        r = r.fused_mul_add((-r).fused_mul_add(v, 1.0), r);
     }
     r
 }
@@ -57,9 +58,9 @@ pub(super) fn normalize(value: Vector) -> Vector {
 }
 pub(super) fn cross(a: Vector, b: Vector) -> Vector {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.0,
     ]
 }

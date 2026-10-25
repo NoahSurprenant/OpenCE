@@ -1,6 +1,7 @@
 //! ScoreModule integration. The simulation owns recognition and accounting;
 //! the APT movie only consumes the resulting publication.
 
+use skate_core::fused::FusedMulAdd as _;
 use skate_core::{
     animation::output::attributes::AttributeName,
     physics::filtered_state::FilteredCategory,
@@ -315,8 +316,8 @@ impl Runtime {
                         .data
                         .collector
                         .curve(time, self.held[slot])
-                        .mul_add(f.dt, delta))
-                    .mul_add(c.announcement_threshold, self.metric_rewards[slot]);
+                        .fused_mul_add(f.dt, delta))
+                    .fused_mul_add(c.announcement_threshold, self.metric_rewards[slot]);
                 }
             }
         }

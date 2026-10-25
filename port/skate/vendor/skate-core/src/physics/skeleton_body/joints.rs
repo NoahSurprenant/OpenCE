@@ -1,6 +1,7 @@
 //! SkeletonBody::InitJoints82BE5B30 and SetUpNormalJointLimits82BE58A8.
 //! Frames attach the child to its nearest physical ancestor; the initial
 //! animation bone poses and authored volume frames are distinct inputs.
+use crate::fused::FusedMulAdd as _;
 use super::{ANIMATION_PART_COUNT, JOINT_COUNT, PART_COUNT};
 use crate::{math::Basis3, trigonometry, physics::{
     assembly::BodySnapshot,
@@ -130,7 +131,7 @@ fn inverse_native_step() -> f32 {
     let step = f32::from_bits(0x3C88_8889); //820849C8
     let mut reciprocal = native_arithmetic::reciprocal_estimate(step);
     for _ in 0..2 {
-        reciprocal = reciprocal.mul_add((-reciprocal).mul_add(step, 1.0), reciprocal);
+        reciprocal = reciprocal.fused_mul_add((-reciprocal).fused_mul_add(step, 1.0), reciprocal);
     }
     reciprocal
 }

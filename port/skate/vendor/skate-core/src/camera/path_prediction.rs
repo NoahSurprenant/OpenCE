@@ -1,6 +1,7 @@
 //! Complete candidate-list evaluator TU3 82E02608, used by avoidance82E023D0.
 //! Query enumeration and its separate asynchronous world provider are upstream.
 
+use crate::fused::FusedMulAdd as _;
 /// Fields consumed from each native 48-byte candidate; remaining words are not
 /// interpreted by this evaluator. Velocity is in the same world frame as path.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,7 +37,7 @@ pub fn candidate_collision_time(path: PredictionPath, obstacles: &[PathObstacle]
             }
             let speed_squared = super::vector_tracker::dot(relative_velocity, relative_velocity);
             let time = (-1.0 / speed_squared) * approach;
-            if !(approach.mul_add(time, clearance) < 0.0) {
+            if !(approach.fused_mul_add(time, clearance) < 0.0) {
                 continue;
             }
             time

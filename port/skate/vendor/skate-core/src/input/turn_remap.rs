@@ -1,5 +1,6 @@
 //! Complete TU3 SetTurning vector remap, 82BB4248.
 //! Curves and offsets are supplied from the native animation_turning layout.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 #[derive(Clone, Copy, Debug)]
@@ -19,8 +20,8 @@ fn angle(x: f32, y: f32, magnitude: f32) -> f32 {
         return 0.0;
     }
     let reciprocal = super::angle::reciprocal_estimate(x);
-    let reciprocal = reciprocal.mul_add((-reciprocal).mul_add(x, 1.0), reciprocal);
-    let basic = super::angle::atan(y.mul_add(reciprocal, 0.0));
+    let reciprocal = reciprocal.fused_mul_add((-reciprocal).fused_mul_add(x, 1.0), reciprocal);
+    let basic = super::angle::atan(y.fused_mul_add(reciprocal, 0.0));
     let sign = y.to_bits() & 0x8000_0000;
     let result = if x < 0.0 {
         f32::from_bits(0x4049_0fdb | sign) + basic
@@ -37,7 +38,7 @@ fn angle(x: f32, y: f32, magnitude: f32) -> f32 {
 // Scalar lane of standalone cosine 82473930; its power tree differs from SinCos.
 fn cosine(angle: f32) -> f32 {
     let turns = (angle * f32::from_bits(0x3e22_f983)).round_ties_even();
-    let x = (-f32::from_bits(0x40c9_0fdb)).mul_add(turns, angle);
+    let x = (-f32::from_bits(0x40c9_0fdb)).fused_mul_add(turns, angle);
     let x2 = x * x;
     let x4 = x2 * x2;
     let x6 = x4 * x2;
@@ -49,7 +50,7 @@ fn cosine(angle: f32) -> f32 {
     let x18 = x10 * x8;
     let x22 = x12 * x10;
     let x20 = x10 * x10;
-    let mut value = (-0.5_f32).mul_add(x2, 1.0);
+    let mut value = (-0.5_f32).fused_mul_add(x2, 1.0);
     for (power, coefficient) in [
         (x4, 0x3d2a_aaab),
         (x6, 0xbab6_0b61),
@@ -62,7 +63,7 @@ fn cosine(angle: f32) -> f32 {
         (x20, 0x20f2_a15d),
         (x22, 0x9c86_71cb),
     ] {
-        value = f32::from_bits(coefficient).mul_add(power, value);
+        value = f32::from_bits(coefficient).fused_mul_add(power, value);
     }
     value
 }

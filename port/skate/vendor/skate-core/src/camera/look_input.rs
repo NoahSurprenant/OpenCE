@@ -1,5 +1,6 @@
 //! Stock gameplay FreeCamManager82E084A0, used by a shot's look-stick option.
 //! This is the normal camera's offset filter, unrelated to the replay editor.
+use crate::fused::FusedMulAdd as _;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LookSettings {
     pub heading_offset_degrees: f32,
@@ -25,8 +26,8 @@ impl LookInput {
             if limit - lower >= 0.0 { lower } else { limit }
         };
         let heading = clamp((input[0] * settings.heading_offset_degrees) * radians);
-        self.heading = (heading - self.heading).mul_add(settings.heading_speed * f32::from_bits(0x3c888889), self.heading);
+        self.heading = (heading - self.heading).fused_mul_add(settings.heading_speed * f32::from_bits(0x3c888889), self.heading);
         let elevation = clamp((input[1] * settings.elevation_offset_degrees) * radians);
-        self.elevation = (elevation - self.elevation).mul_add(settings.elevation_speed * f32::from_bits(0x3c888889), self.elevation);
+        self.elevation = (elevation - self.elevation).fused_mul_add(settings.elevation_speed * f32::from_bits(0x3c888889), self.elevation);
     }
 }

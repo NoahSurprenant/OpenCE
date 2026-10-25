@@ -518,10 +518,16 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
     skate_link_inputs: List[Path] = []
     if getattr(sln, "port_skate", False):
         skate_define = "-DHALO_SKATE"
-        skate_library = SKATE_DIR / "target" / SKATE_TARGET / "release" / "libhalo_skate.a"
+        # (configure.py --skate-cpu: compiled for that processor, in a target
+        # folder of its own, so that a build for the baseline beside it is
+        # not made again each time)
+        skate_cpu = getattr(sln, "skate_cpu", None)
+        skate_target_dir = SKATE_DIR / (f"target-{skate_cpu}" if skate_cpu else "target")
+        skate_env = f"env RUSTFLAGS='-C target-cpu={skate_cpu}' " if skate_cpu else ""
+        skate_library = skate_target_dir / SKATE_TARGET / "release" / "libhalo_skate.a"
         n.rule(
             name="linux_cargo",
-            command=f"cargo build --release --manifest-path {SKATE_DIR / 'Cargo.toml'} --config {SKATE_DIR / '.cargo' / 'config.toml'} --target {SKATE_TARGET} -p halo-skate",
+            command=f"{skate_env}cargo build --release --manifest-path {SKATE_DIR / 'Cargo.toml'} --config {SKATE_DIR / '.cargo' / 'config.toml'} --target {SKATE_TARGET} --target-dir {skate_target_dir} -p halo-skate",
             description="CARGO $out",
             pool="console",
             # (cargo leaves an up-to-date library alone)

@@ -1,4 +1,5 @@
 //! Vertex/edge roots in TU3's triangle feature walk:82ADDB48/82ADA3E0.
+use crate::fused::FusedMulAdd as _;
 use super::triangle_query::{cross, dot, sub};
 use crate::math::Vector3;
 
@@ -36,7 +37,7 @@ pub(super) fn sphere(start: Vector3, delta: Vector3, center: Vector3, radius: f3
     }
     let delta_squared = dot(delta, delta);
     let perpendicular = cross(toward_center, delta);
-    let discriminant = delta_squared.mul_add(radius_squared, -dot(perpendicular, perpendicular));
+    let discriminant = delta_squared.fused_mul_add(radius_squared, -dot(perpendicular, perpendicular));
     if discriminant < 0.0 {
         return Root::Miss;
     }
@@ -72,8 +73,8 @@ pub(super) fn cylinder(
         return Root::Away;
     }
     let delta_squared = dot(delta_perpendicular, delta_perpendicular);
-    let residual = approach.mul_add(approach, -(delta_squared * distance_squared));
-    let discriminant = delta_squared.mul_add(radius_squared, residual);
+    let residual = approach.fused_mul_add(approach, -(delta_squared * distance_squared));
+    let discriminant = delta_squared.fused_mul_add(radius_squared, residual);
     if discriminant < 0.0 {
         return Root::Miss;
     }

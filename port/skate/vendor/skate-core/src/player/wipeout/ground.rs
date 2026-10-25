@@ -1,4 +1,5 @@
 //! Complete original Ground checks82D8F9E0 and all its nonexternal leaves.
+use crate::fused::FusedMulAdd as _;
 use super::{common, Frame, Mode, Requests, Settings};
 use crate::{
     physics::native_arithmetic::{dot3, vector_max, vector_min},
@@ -100,7 +101,7 @@ pub fn check(state: &mut Requests, s: &Settings, mode: &Mode, f: &Frame) {
     };
     let speed = (g.balance_min_speed - f.speed) / g.balance_min_speed;
     let amount = (speed * (1.0 - f.animation_up[1])) * slide_gate;
-    let delta = amount.mul_add(skitch_gate, -g.balance_base);
+    let delta = amount.fused_mul_add(skitch_gate, -g.balance_base);
     state.balance = if delta > 0.0 {
         state.balance + delta
     } else {

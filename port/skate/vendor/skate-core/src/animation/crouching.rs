@@ -1,4 +1,5 @@
 //! Stock riding crouch/absorption and auto-pump, TU3 82BB7DA0/82BB8818.
+use crate::fused::FusedMulAdd as _;
 use crate::point_graph::PointGraph;
 
 #[derive(Clone,Debug)]
@@ -55,7 +56,7 @@ impl State {
         let started=self.previous_angle.abs()<a.intent_angle_region && self.previous_magnitude<a.intent_magnitude_start
             && angle.abs()<a.intent_angle_region && magnitude>a.intent_magnitude_start;
         self.previous_angle=angle;self.previous_magnitude=magnitude;
-        self.filtered_potential=p.body_188.mul_add(a.potential_blend,(1.0-a.potential_blend)*self.filtered_potential);
+        self.filtered_potential=p.body_188.fused_mul_add(a.potential_blend,(1.0-a.potential_blend)*self.filtered_potential);
         let sufficient_potential=!(self.filtered_potential<a.potential_threshold);
         if started {self.auto_time=0.0;self.auto_state=1;}
         if self.auto_state==1 && self.auto_time>a.crouch_time {self.auto_state=2;}
@@ -76,7 +77,7 @@ impl State {
         if !intents.motion_flag_108 {crouch=maximum(crouch,intents.hard_turn_crouch.unwrap_or(0.0));}
         if intents.motion_flag_108 && intents.manual.is_some_and(|value|value<0.0) {crouch=maximum(crouch,f32::from_bits(0x3ecccccd));}
         let blend=unit(s.input_blend);
-        self.filtered_input=maximum(crouch,self.auto_fraction).mul_add(blend,(1.0-blend)*self.filtered_input);
+        self.filtered_input=maximum(crouch,self.auto_fraction).fused_mul_add(blend,(1.0-blend)*self.filtered_input);
         if self.filtered_input.abs()<f32::from_bits(0x3ba3d70a) {self.filtered_input=0.0;}
         let mut delta=s.absorption_factor*absorption;
         if crouch>0.0 || self.auto_fraction>0.0 || (self.player_pumping && self.fraction>p.minimum_crouch_528) {
@@ -96,9 +97,9 @@ impl State {
         self.fraction=bound(self.fraction+self.delta_fraction,p.minimum_crouch_528,1.0);
         let from_deck=s.maximum_crouch_from_deck*p.deck_angle_532;
         if from_deck>self.fraction {self.fraction=from_deck;}
-        let height_ratio=unit((-s.maximum_ratio).mul_add(self.fraction,1.0));
+        let height_ratio=unit((-s.maximum_ratio).fused_mul_add(self.fraction,1.0));
         let maximum_height=s.maximum_height.evaluate(p.body_164);
-        Output {height:(maximum_height-s.minimum_height).mul_add(height_ratio,s.minimum_height),new_auto_pump,player_controlled_pump}
+        Output {height:(maximum_height-s.minimum_height).fused_mul_add(height_ratio,s.minimum_height),new_auto_pump,player_controlled_pump}
     }
 }
 fn minimum(a:f32,b:f32)->f32 {if a-b>=0.0 {b} else {a}}

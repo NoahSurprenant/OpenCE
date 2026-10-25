@@ -1,4 +1,5 @@
 //! BodySpin82BAB640, including its native five-state channel controller.
+use skate_core::fused::FusedMulAdd as _;
 use super::motion_animation::MotionAnimation;
 use skate_core::{
     animation::{channel_playback::ChannelSettings, playback_parameters::ParameterInputs},
@@ -279,7 +280,7 @@ impl State {
 }
 fn update_influence(value: &mut f32, delta: &mut f32, target: f32, blend: f32, s: &Settings) {
     //82BABC68..BD9C: first clamp acceleration, then change, then [0,1].
-    let desired = blend.mul_add(target, (1.0 - blend) * *value) - *value;
+    let desired = blend.fused_mul_add(target, (1.0 - blend) * *value) - *value;
     *delta = clamp(
         desired,
         *delta - s.maximum_acceleration,

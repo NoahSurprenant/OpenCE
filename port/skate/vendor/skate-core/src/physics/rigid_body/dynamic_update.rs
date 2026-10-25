@@ -1,5 +1,6 @@
 //! RigidBody::DynamicUpdate82AE6590 reconstruction candidate.
 //! Guest pointers are opaque metadata; the caller supplies their referenced data.
+use crate::fused::FusedMulAdd as _;
 use super::RetailSimulationStep;
 type V = [f32; 4];
 
@@ -59,7 +60,7 @@ pub fn dynamic_update_packed(
     // Scalar fmuls followed by fmadds; cap branches publish the squared cap,
     // rather than recalculating squared speed from the rounded scaled vector.
     let factor = f32::from_bits(inertia[5]) * f32::from_bits(body[31]);
-    let energy = factor.mul_add(angular_squared, linear_squared);
+    let energy = factor.fused_mul_add(angular_squared, linear_squared);
     // S3 82AE6974 / S2 82AE487C: bge tests LT clear, including unordered.
     // Do not replace this with >=; the host predicate below is intentional.
     body[43] = if !(energy < simulation.minimum_energy) {
@@ -154,8 +155,8 @@ fn refined_rsqrt(value: f32) -> f32 {
     for _ in 0..2 {
         let square = estimate * estimate;
         let half_estimate = estimate * 0.5;
-        let residual = (-value).mul_add(square, 1.0);
-        estimate = half_estimate.mul_add(residual, estimate);
+        let residual = (-value).fused_mul_add(square, 1.0);
+        estimate = half_estimate.fused_mul_add(residual, estimate);
     }
     estimate
 }
@@ -189,8 +190,8 @@ fn sub(a: V, b: V) -> V {
     core::array::from_fn(|i| a[i] - b[i])
 }
 fn madd(a: V, b: V, c: V) -> V {
-    core::array::from_fn(|i| a[i].mul_add(b[i], c[i]))
+    core::array::from_fn(|i| a[i].fused_mul_add(b[i], c[i]))
 }
 fn nmsub(a: V, b: V, c: V) -> V {
-    core::array::from_fn(|i| (-a[i]).mul_add(b[i], c[i]))
+    core::array::from_fn(|i| (-a[i]).fused_mul_add(b[i], c[i]))
 }

@@ -3,6 +3,7 @@
 //! The compiled row boundary is decoded once. Calculations preserve the source
 //! operation order for finite inputs; console exceptional-float behavior has
 //! not been established by hardware captures.
+use crate::fused::FusedMulAdd as _;
 #[path = "contact_data.rs"]
 mod data;
 use data::{ContactRows, Reaction};
@@ -30,7 +31,7 @@ pub(super) fn solve(record: &mut [u32], a: &mut [u32], b: &mut [u32]) {
         let mut impulse = rows.accumulated[lane] + rows.target[lane];
         for (component, &value) in error[..3].iter().enumerate() {
             let coefficient_lane = if lane == 3 { 0 } else { lane };
-            impulse = rows.correction_columns[component][coefficient_lane].mul_add(value, impulse);
+            impulse = rows.correction_columns[component][coefficient_lane].fused_mul_add(value, impulse);
         }
         impulse
     });
@@ -49,10 +50,10 @@ pub(super) fn solve(record: &mut [u32], a: &mut [u32], b: &mut [u32]) {
         } else {
             0.0
         };
-        let static_low = (-rows.static_friction).mul_add(normal, 0.0);
-        let static_high = rows.static_friction.mul_add(normal, upper_offset);
-        let dynamic_low = (-rows.dynamic_friction).mul_add(normal, 0.0);
-        let dynamic_high = rows.dynamic_friction.mul_add(normal, upper_offset);
+        let static_low = (-rows.static_friction).fused_mul_add(normal, 0.0);
+        let static_high = rows.static_friction.fused_mul_add(normal, upper_offset);
+        let dynamic_low = (-rows.dynamic_friction).fused_mul_add(normal, 0.0);
+        let dynamic_high = rows.dynamic_friction.fused_mul_add(normal, upper_offset);
         let lower_selected = if candidate[lane] >= static_low {
             candidate[lane]
         } else {

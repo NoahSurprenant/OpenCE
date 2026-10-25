@@ -1,5 +1,6 @@
 //! TU3 82D86F00 airborne entry and 82D872B8 impact admission.
 //! The caller retains this result until Grind::PreUpdate82D40AF8 consumes it.
+use crate::fused::FusedMulAdd as _;
 use super::{V, dot3, arithmetic, admission::engagement_slope_sine};
 use crate::point_graph::PointGraph;
 
@@ -92,11 +93,11 @@ pub fn grounded_velocity(kind: u32, direction: V, velocity: V,
         _ => 0.,
     };
     let help = vertical_help.evaluate(engagement_slope_sine(direction, velocity));
-    let amount = help.mul_add(1. - base, base);
+    let amount = help.fused_mul_add(1. - base, base);
     // Native fsel on (1-amount), including unordered selecting1.
     let amount = if 1. - amount >= 0. { amount } else { 1. };
     let along = dot3(velocity, direction);
-    core::array::from_fn(|i| (direction[i] * along).mul_add(amount, velocity[i] * (1. - amount)))
+    core::array::from_fn(|i| (direction[i] * along).fused_mul_add(amount, velocity[i] * (1. - amount)))
 }
 
 pub fn airborne_velocity(kind: u32, direction: V, normal: V, velocity: V) -> V {
@@ -109,7 +110,7 @@ pub fn airborne_velocity(kind: u32, direction: V, normal: V, velocity: V) -> V {
         _ => 0.0,
     };
     core::array::from_fn(|i| {
-        (velocity[i] - removed[i]).mul_add(amount, velocity[i] * (1.0 - amount))
+        (velocity[i] - removed[i]).fused_mul_add(amount, velocity[i] * (1.0 - amount))
     })
 }
 
@@ -132,8 +133,8 @@ pub fn airborne_rejections(
     reasons
 }
 fn cross(a: V, b: V) -> V {
-    [(-a[2]).mul_add(b[1],a[1]*b[2]),(-a[0]).mul_add(b[2],a[2]*b[0]),
-     (-a[1]).mul_add(b[0],a[0]*b[1]),0.0]
+    [(-a[2]).fused_mul_add(b[1],a[1]*b[2]),(-a[0]).fused_mul_add(b[2],a[2]*b[0]),
+     (-a[1]).fused_mul_add(b[0],a[0]*b[1]),0.0]
 }
 
 #[cfg(test)]

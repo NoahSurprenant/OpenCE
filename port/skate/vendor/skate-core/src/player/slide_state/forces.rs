@@ -1,5 +1,6 @@
 //! Full non-launch arithmetic82D3AB14..AE4C and point force82D925E0.
 //! Uses independent PC arithmetic with the original refinement/operation order.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     math::Vector3,
     physics::{board_motion_output::inverse_length_squared, force_queue::QueuedPointForce},
@@ -48,7 +49,7 @@ pub fn angular_correction(s: &SlideSettings, surface: &SlideSurface, p: SlideInp
     let weight = s.remap_vs_speed.evaluate(p.surface_speed) * age;
     let pi = f32::from_bits(0x4049_0fdb);
     let signed = fsel(p.slide, remap, -remap);
-    let angle = (p.slide * pi).mul_add(1.0 - weight, (signed * pi) * weight);
+    let angle = (p.slide * pi).fused_mul_add(1.0 - weight, (signed * pi) * weight);
     let velocity = normalize(p.velocity);
     let side = normalize(cross(p.normal, velocity));
     let desired = madd(
@@ -64,7 +65,7 @@ pub fn angular_correction(s: &SlideSettings, surface: &SlideSurface, p: SlideInp
             p.normal
         };
     }
-    let strength = (1.0 - s.softest_wheel_spin).mul_add(p.wheel_hardness, s.softest_wheel_spin)
+    let strength = (1.0 - s.softest_wheel_spin).fused_mul_add(p.wheel_hardness, s.softest_wheel_spin)
         * surface.yaw_strength;
     let displacement = scale(
         madd(
@@ -89,7 +90,7 @@ pub fn sliding_force(s: &SlideSettings, surface: &SlideSurface, p: SlideInput) -
         1.0
     };
     let strength =
-        (1.0 - s.softest_wheel_force).mul_add(hardness, s.softest_wheel_force) * response;
+        (1.0 - s.softest_wheel_force).fused_mul_add(hardness, s.softest_wheel_force) * response;
     let side = normalize_safe(cross(p.normal, p.velocity));
     let longitudinal = reject(scale(lateral, strength), normalize_safe(side));
     let angle = if dot(p.velocity, p.velocity) * dot(p.effective_forward, p.effective_forward)
@@ -132,7 +133,7 @@ fn scale(v: V, s: f32) -> V {
     v.map(|v| v * s)
 }
 fn madd(v: V, s: f32, b: V) -> V {
-    std::array::from_fn(|i| v[i].mul_add(s, b[i]))
+    std::array::from_fn(|i| v[i].fused_mul_add(s, b[i]))
 }
 fn reject(v: V, n: V) -> V {
     let d = dot(v, n);
@@ -140,10 +141,10 @@ fn reject(v: V, n: V) -> V {
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 fn normalize(v: V) -> V {

@@ -1,4 +1,5 @@
 //! Candidate record82D82380 and slope-projected approaches82D84D38/82D85070.
+use crate::fused::FusedMulAdd as _;
 use super::analyzer_math::{intersection, madd, tangent};
 use super::profile::Profile;
 use super::{Input, UP, Vector, ZERO, dot, length, sub};
@@ -94,7 +95,7 @@ impl Builder<'_> {
     }
     pub fn approach_up(&mut self, index: usize, flags: u32, slope: f32) {
         let p = self.local(self.profile.segments[index].end);
-        let goal = [-1., (-1. - p[0]).mul_add(slope, p[1])];
+        let goal = [-1., (-1. - p[0]).fused_mul_add(slope, p[1])];
         for i in (0..index).rev() {
             let s = self.profile.segments[i];
             let t = intersection(self.local(s.start), self.local(s.end), p, goal);
@@ -123,7 +124,7 @@ impl Builder<'_> {
             self.input.position
         };
         let p = self.local(point);
-        let goal = [2.8, (2.8 - p[0]).mul_add(slope, p[1])];
+        let goal = [2.8, (2.8 - p[0]).fused_mul_add(slope, p[1])];
         for i in (index + 1) as usize..self.profile.last_ground {
             let s = self.profile.segments[i];
             let t = intersection(self.local(s.start), self.local(s.end), p, goal);

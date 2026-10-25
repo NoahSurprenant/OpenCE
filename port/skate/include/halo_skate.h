@@ -246,6 +246,9 @@ nothing: a dedicated server makes no skater of its own, only its bots' */
 int halo_skate_assets_present(const char *assets);
 /* how many sessions there may be at once, 0 with them */
 int halo_skate_sessions(void);
+/* the bots' sessions' steps the engine's pool has done and the time they
+took (microseconds), so far; returns how many threads the pool has */
+int halo_skate_pool_load(unsigned long long *steps, unsigned long long *micros);
 /* the session ended: its worker, skater and memory gone (made again by
 halo_skate_preload_in) */
 void halo_skate_close_in(int session);

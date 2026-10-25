@@ -1,4 +1,5 @@
 //! Controller-derived state is evaluated on the same fixed gameplay tick.
+use skate_core::fused::FusedMulAdd as _;
 use super::{GamePhysics, skater::SkaterRuntime};
 use crate::input::PublishedTickInput;
 use bevy::prelude::*;
@@ -228,7 +229,7 @@ fn camera_relative_axes(stick: [f32; 2], camera: [[f32; 3]; 3]) -> [f32; 2] {
     //and Buttons18-19: [-LeftAnalogStickLR, 0, LeftAnalogStickUD].
     let local = [-stick[0], 0.0, stick[1]];
     let world: [f32; 3] = std::array::from_fn(|i| {
-        forward[i].mul_add(local[2], up[i].mul_add(local[1], right[i] * local[0]))
+        forward[i].fused_mul_add(local[2], up[i].fused_mul_add(local[1], right[i] * local[0]))
     });
     //82898F44..FAC splits world X/Z into positive/negative pad channels;
     //stock actions64/65 subtract those channels again. Keep that ordering.
@@ -241,9 +242,9 @@ fn camera_relative_axes(stick: [f32; 2], camera: [[f32; 3]; 3]) -> [f32; 2] {
 
 fn cross_camera_axis(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
     ]
 }
 
@@ -253,8 +254,8 @@ fn normalize_camera_axis(v: [f32; 3]) -> [f32; 3] {
     //No fitted epsilon/fallback and no claim of bit-exact Xenon emulation.
     let mut inverse = squared.sqrt().recip();
     for _ in 0..2 {
-        let correction = (-squared).mul_add(inverse * inverse, 1.0);
-        inverse = (inverse * 0.5).mul_add(correction, inverse);
+        let correction = (-squared).fused_mul_add(inverse * inverse, 1.0);
+        inverse = (inverse * 0.5).fused_mul_add(correction, inverse);
     }
     v.map(|component| component * inverse)
 }

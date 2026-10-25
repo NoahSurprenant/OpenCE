@@ -205,7 +205,8 @@ def test_skating_bots_take_a_vehicle(tmp_path):
     assert drove, "no bot drove"
     assert choices or fights, "no vehicle chosen"
     assert all(kind == "on a board" for _, _, kind in choices), f"a vehicle chosen without weighing a board: {choices}"
-    assert all(int(by_vehicle) <= 0.75 * int(by_board) for by_vehicle, by_board, _ in choices), \
+    # (the log rounds both to whole world units: 47.5 against 63.4 is quicker, and logs as 48 and 63)
+    assert all(int(by_vehicle) - 0.5 <= 0.75 * (int(by_board) + 0.5) for by_vehicle, by_board, _ in choices), \
         f"a vehicle chosen though a board was quicker: {choices}"
 
 
@@ -263,7 +264,7 @@ def test_skating_bots_crowd(tmp_path):
     log = _log(tmp_path, "server")
     sessions = {int(n) for n in re.findall(r"skate: bot skater (\d+) made for player", log)}
     copied = re.findall(r"preload: session in (\d+)ms \(a copy of the first\)", log)
-    slower = re.findall(r"skate: the bots' skaters take .*", log)
+    slower = re.findall(r"skate: the bots' skaters: \d+ near people step every .*", log)
     seen = set(posed.findall(_log(tmp_path, "client")))
     print(f"{bots} bots: {len(rode())} rode, {len(sessions)} skate sessions made ({len(copied)} copies, "
           f"{max(map(int, copied)) if copied else 0} ms at most), the client saw {len(seen)} posed with boards; "

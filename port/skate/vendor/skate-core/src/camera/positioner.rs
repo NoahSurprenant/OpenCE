@@ -2,6 +2,7 @@
 //! callees. The caller supplies recovered state/configuration and the native
 //! six-fat-line backend; this module does not choose camera settings.
 
+use crate::fused::FusedMulAdd as _;
 use super::vector_tracker::{length, refined_reciprocal};
 use super::{ScalarTracker, ScalarTrackerParameters};
 
@@ -239,7 +240,7 @@ pub fn project_hit(end: [f32; 4], first_query_start: [f32; 4], result: FatLineRe
         };
         let fraction = if 1.0 - lower >= 0.0 { lower } else { 1.0 };
         core::array::from_fn(|i| {
-            (end[i] - first_query_start[i]).mul_add(fraction, first_query_start[i])
+            (end[i] - first_query_start[i]).fused_mul_add(fraction, first_query_start[i])
         })
     } else {
         end
@@ -272,14 +273,14 @@ pub fn position_from_angles(
     let product: [[f32; 4]; 3] = core::array::from_fn(|column| {
         core::array::from_fn(|i| {
             let value = second[0][i] * first[column][0];
-            let value = second[1][i].mul_add(first[column][1], value);
-            second[2][i].mul_add(first[column][2], value)
+            let value = second[1][i].fused_mul_add(first[column][1], value);
+            second[2][i].fused_mul_add(first[column][2], value)
         })
     });
     let mut point = core::array::from_fn(|i| {
         let value = product[0][i] * 0.0;
-        let value = product[1][i].mul_add(0.0, value);
-        let value = product[2][i].mul_add(distance, value);
+        let value = product[1][i].fused_mul_add(0.0, value);
+        let value = product[2][i].fused_mul_add(distance, value);
         (value + offset[i]) + anchor[i]
     });
     if clamp_height != 0 && minimum_height > point[1] {

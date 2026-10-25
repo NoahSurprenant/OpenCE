@@ -1,4 +1,5 @@
 //! Contact projection/classification82D81F80. No synthesized floor samples.
+use crate::fused::FusedMulAdd as _;
 use super::{Input, Vector, dot, length, scale, sub};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ContactSample {
@@ -77,7 +78,7 @@ impl Samples {
 fn reciprocal(value: f32) -> f32 {
     let mut r = crate::physics::native_arithmetic::reciprocal_estimate(value);
     for _ in 0..2 {
-        r = r.mul_add((-r).mul_add(value, 1.), r);
+        r = r.fused_mul_add((-r).fused_mul_add(value, 1.), r);
     }
     r
 }

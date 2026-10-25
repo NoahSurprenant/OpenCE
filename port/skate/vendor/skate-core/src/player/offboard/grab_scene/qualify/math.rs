@@ -1,20 +1,21 @@
 //! Scalar forms of original VMX steps; independent PC estimates, not bit parity.
+use crate::fused::FusedMulAdd as _;
 pub type Vector = [f32;4];
 pub fn dot(a: Vector,b: Vector)->f32 { a[0]*b[0]+a[1]*b[1]+a[2]*b[2] }
 pub fn sub(a: Vector,b: Vector)->Vector { std::array::from_fn(|i| a[i]-b[i]) }
 pub fn flatten(mut a: Vector)->Vector { a[1]=0.;a }
 pub fn cross(a: Vector,b: Vector)->Vector {
-    [(-a[2]).mul_add(b[1],a[1]*b[2]),(-a[0]).mul_add(b[2],a[2]*b[0]),
-        (-a[1]).mul_add(b[0],a[0]*b[1]),(-a[3]).mul_add(b[3],a[3]*b[3])]
+    [(-a[2]).fused_mul_add(b[1],a[1]*b[2]),(-a[0]).fused_mul_add(b[2],a[2]*b[0]),
+        (-a[1]).fused_mul_add(b[0],a[0]*b[1]),(-a[3]).fused_mul_add(b[3],a[3]*b[3])]
 }
 fn inv_sqrt(value:f32,steps:usize)->f32 {
     let mut r=crate::physics::reciprocal_sqrt::estimate(value);
-    for _ in 0..steps { r=(r*0.5).mul_add((-value).mul_add(r*r,1.),r); }
+    for _ in 0..steps { r=(r*0.5).fused_mul_add((-value).fused_mul_add(r*r,1.),r); }
     r
 }
 pub fn reciprocal(value:f32)->f32 {
     let mut r=1./value;
-    for _ in 0..2 {r=r.mul_add((-value).mul_add(r,1.),r);}
+    for _ in 0..2 {r=r.fused_mul_add((-value).fused_mul_add(r,1.),r);}
     r
 }
 pub fn length(v:Vector)->f32 {
@@ -42,19 +43,19 @@ pub fn closest_point(position:Vector,[a,b]:[Vector;2])->Vector {
     let len=length(direction);
     if len>f32::from_bits(0x37800000) {let r=reciprocal(len);direction=direction.map(|v|v*r);}
     let along=dot(direction,sub(position,a)).min(len).max(0.);
-    std::array::from_fn(|i| direction[i].mul_add(along,a[i]))
+    std::array::from_fn(|i| direction[i].fused_mul_add(along,a[i]))
 }
 pub fn transform(frame:[Vector;4],point:Vector)->Vector {
-    std::array::from_fn(|i| frame[2][i].mul_add(point[2],
-        frame[1][i].mul_add(point[1],frame[0][i].mul_add(point[0],frame[3][i]))))
+    std::array::from_fn(|i| frame[2][i].fused_mul_add(point[2],
+        frame[1][i].fused_mul_add(point[1],frame[0][i].fused_mul_add(point[0],frame[3][i]))))
 }
 pub fn inverse_point(frame:[Vector;4],point:Vector)->Vector {
     let mut result=[0.;4];
     for i in 0..3 {
-        let translation=frame[i][0].mul_add(-frame[3][0],
-            frame[i][1].mul_add(-frame[3][1],frame[i][2]*-frame[3][2]));
-        result[i]=frame[i][2].mul_add(point[2],frame[i][1].mul_add(point[1],
-            frame[i][0].mul_add(point[0],translation)));
+        let translation=frame[i][0].fused_mul_add(-frame[3][0],
+            frame[i][1].fused_mul_add(-frame[3][1],frame[i][2]*-frame[3][2]));
+        result[i]=frame[i][2].fused_mul_add(point[2],frame[i][1].fused_mul_add(point[1],
+            frame[i][0].fused_mul_add(point[0],translation)));
     }
     result
 }

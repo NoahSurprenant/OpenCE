@@ -3,6 +3,7 @@
 //! filters, target, acceleration and damping. Transform/tilt publication is a
 //! separate downstream calculation. Numerical primitives remain unverified
 //! against independent hardware captures.
+use crate::fused::FusedMulAdd as _;
 use crate::{air::ground_normal::GroundNormalFilter, math::Vector3, point_graph::PointGraph};
 use crate::physics::{board_ground::angle_between, board_motion_output::{add, subtract, scale, dot, inverse_length_squared, length}, native_arithmetic};
 
@@ -165,11 +166,11 @@ fn vector(v: [f32; 4]) -> Vector3 { Vector3::new(v[0], v[1], v[2]) }
 fn fsel(test: f32, positive: f32, negative: f32) -> f32 { if test >= -0.0 { positive } else { negative } }
 fn unit_saturate(value: f32) -> f32 { let value = fsel(-value, 0.0, value); fsel(1.0-value, value, 1.0) }
 fn madd(v: Vector3, factor: f32, offset: Vector3) -> Vector3 {
-    Vector3::new(v.x.mul_add(factor,offset.x),v.y.mul_add(factor,offset.y),v.z.mul_add(factor,offset.z))
+    Vector3::new(v.x.fused_mul_add(factor,offset.x),v.y.fused_mul_add(factor,offset.y),v.z.fused_mul_add(factor,offset.z))
 }
 fn blend(from: Vector3, to: Vector3, amount: f32) -> Vector3 { madd(to,amount,scale(from,1.0-amount)) }
 fn cross(a: Vector3, b: Vector3) -> Vector3 {
-    Vector3::new((-a.z).mul_add(b.y,a.y*b.z),(-a.x).mul_add(b.z,a.z*b.x),(-a.y).mul_add(b.x,a.x*b.y))
+    Vector3::new((-a.z).fused_mul_add(b.y,a.y*b.z),(-a.x).fused_mul_add(b.z,a.z*b.x),(-a.y).fused_mul_add(b.x,a.x*b.y))
 }
 fn normalize_safe(value: Vector3, fallback: Vector3) -> Vector3 {
     let squared=dot(value,value); let inverse=inverse_length_squared(squared,2);
@@ -182,7 +183,7 @@ pub(crate) fn clamp_length(value: Vector3, maximum: f32) -> Vector3 {
     if magnitude < f32::from_bits(0x3780_0000) { return value; }
     let bounded=fsel(maximum-magnitude,magnitude,maximum);
     let mut inverse=native_arithmetic::reciprocal_estimate(magnitude);
-    for _ in 0..2 { let error=(-inverse).mul_add(magnitude,1.0);inverse=inverse.mul_add(error,inverse); }
+    for _ in 0..2 { let error=(-inverse).fused_mul_add(magnitude,1.0);inverse=inverse.fused_mul_add(error,inverse); }
     scale(scale(value,bounded),inverse)
 }
 #[cfg(test)]

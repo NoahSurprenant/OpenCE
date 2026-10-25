@@ -1,4 +1,5 @@
 //! TU3 vector-tracker candidates.
+use crate::fused::FusedMulAdd as _;
 use super::{ScalarTrackerParameters, tracker::interpolate};
 
 /// Four lanes are retained because native vector stores update all four.
@@ -40,12 +41,12 @@ impl VectorTracker {
             self.acceleration = clamp_magnitude(self.acceleration, self.acceleration_clamp);
         }
         self.velocity =
-            core::array::from_fn(|i| self.acceleration[i].mul_add(dt, self.velocity[i]));
+            core::array::from_fn(|i| self.acceleration[i].fused_mul_add(dt, self.velocity[i]));
         self.velocity = clamp_magnitude(self.velocity, p.speed_clamp);
-        let next: [f32; 4] = core::array::from_fn(|i| self.velocity[i].mul_add(dt, old[i]));
+        let next: [f32; 4] = core::array::from_fn(|i| self.velocity[i].fused_mul_add(dt, old[i]));
         self.smoothing = interpolate(p.smoothing_min, p.smoothing_max, fraction);
         self.position =
-            core::array::from_fn(|i| (next[i] - old[i]).mul_add(1.0 - self.smoothing, old[i]));
+            core::array::from_fn(|i| (next[i] - old[i]).fused_mul_add(1.0 - self.smoothing, old[i]));
     }
 }
 
@@ -64,7 +65,7 @@ pub fn clamp_magnitude(value: [f32; 4], limit: f32) -> [f32; 4] {
 pub(super) fn refined_reciprocal(value: f32) -> f32 {
     let mut estimate = reciprocal_estimate(value);
     for _ in 0..2 {
-        estimate = estimate.mul_add((-estimate).mul_add(value, 1.0), estimate);
+        estimate = estimate.fused_mul_add((-estimate).fused_mul_add(value, 1.0), estimate);
     }
     estimate
 }
@@ -77,8 +78,8 @@ pub(super) fn length(value: [f32; 4]) -> f32 {
     let square = dot(value, value);
     let mut estimate = crate::physics::reciprocal_sqrt::estimate(square);
     for _ in 0..2 {
-        let residual = (-square).mul_add(estimate * estimate, 1.0);
-        estimate = (estimate * 0.5).mul_add(residual, estimate);
+        let residual = (-square).fused_mul_add(estimate * estimate, 1.0);
+        estimate = (estimate * 0.5).fused_mul_add(residual, estimate);
     }
     if square == 0.0 {
         0.0

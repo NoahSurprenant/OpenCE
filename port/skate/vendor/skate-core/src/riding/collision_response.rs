@@ -1,4 +1,5 @@
 //! Complete collision response calculation, TU3 82D944E8 and its angle helpers.
+use crate::fused::FusedMulAdd as _;
 use crate::{
     math::Vector3,
     physics::{
@@ -62,7 +63,7 @@ pub fn collision_response(
     let tangent: [f32; 4] =
         std::array::from_fn(|i| input.velocity[i] - direction[i] * speed_toward);
     let target_velocity = std::array::from_fn(|i| {
-        direction[i].mul_add(settings.target_displacement_velocity, tangent[i])
+        direction[i].fused_mul_add(settings.target_displacement_velocity, tangent[i])
     });
     let mut delta =
         std::array::from_fn(|i| (target_velocity[i] - input.velocity[i]) * settings.force_scalar);
@@ -111,9 +112,9 @@ pub fn signed_angle(a: Vector3, b: Vector3, up: Vector3) -> f32 {
     let a = scale(a, inverse_length_squared(a_squared, 1));
     let b = scale(b, inverse_length_squared(b_squared, 1));
     let cross = Vector3::new(
-        (-a.z).mul_add(b.y, a.y * b.z),
-        (-a.x).mul_add(b.z, a.z * b.x),
-        (-a.y).mul_add(b.x, a.x * b.y),
+        (-a.z).fused_mul_add(b.y, a.y * b.z),
+        (-a.x).fused_mul_add(b.z, a.z * b.x),
+        (-a.y).fused_mul_add(b.x, a.x * b.y),
     );
     if dot(cross, up) < 0.0 {
         f32::from_bits(0x40c9_0fdb) - angle
@@ -127,7 +128,7 @@ fn wrap_angle(mut angle: f32) -> f32 {
     let tau = f32::from_bits(0x40c9_0fdb);
     if angle < -pi || !(angle < pi) {
         let turns = (angle * f32::from_bits(0x3e22_f983)) as i32;
-        angle = (-(turns as f32)).mul_add(tau, angle);
+        angle = (-(turns as f32)).fused_mul_add(tau, angle);
         if !(angle < pi) {
             angle -= tau;
         } else if angle < -pi {
@@ -138,8 +139,8 @@ fn wrap_angle(mut angle: f32) -> f32 {
 }
 fn reciprocal_refined(value: f32) -> f32 {
     let estimate = reciprocal_estimate(value);
-    let first = estimate.mul_add((-estimate).mul_add(value, 1.0), estimate);
-    first.mul_add((-first).mul_add(value, 1.0), first)
+    let first = estimate.fused_mul_add((-estimate).fused_mul_add(value, 1.0), estimate);
+    first.fused_mul_add((-first).fused_mul_add(value, 1.0), first)
 }
 fn scale(v: Vector3, k: f32) -> Vector3 {
     Vector3::new(v.x * k, v.y * k, v.z * k)

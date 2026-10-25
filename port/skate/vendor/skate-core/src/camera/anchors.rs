@@ -1,5 +1,6 @@
 //! Seven normal-camera anchors created by TU382DF2DB8 and updated82DF69C0.
 //! Names come from that constructor; notably HipsAnchor reads reckoned COM.
+use crate::fused::FusedMulAdd as _;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AnchorInputs {
     /// Subject388: physical output entry0+144.
@@ -52,7 +53,7 @@ impl Anchors {
         let inverse = super::vector_tracker::refined_reciprocal(dt);
         let board = core::array::from_fn(|i| {
             input.board_offset_direction[i]
-                .mul_add(f32::from_bits(0x3e99999a), input.board_position[i])
+                .fused_mul_add(f32::from_bits(0x3e99999a), input.board_position[i])
         });
         let air = core::array::from_fn(|i| {
             input.center_of_mass[i] - input.skeleton_root_up[i] * f32::from_bits(0x3ea8f5c3)
@@ -65,10 +66,10 @@ impl Anchors {
                 input.grind_point
             };
             self.grind_position =
-                core::array::from_fn(|i| input.board_offset_direction[i].mul_add(0.5, point[i]));
+                core::array::from_fn(|i| input.board_offset_direction[i].fused_mul_add(0.5, point[i]));
         } else {
             self.grind_position = core::array::from_fn(|i| {
-                input.board_velocity[i].mul_add(dt, self.grind_position[i])
+                input.board_velocity[i].fused_mul_add(dt, self.grind_position[i])
             });
         }
         let positions = [

@@ -1,4 +1,5 @@
 //! Complete Air checks82D90358 including bad landing82D90D08.
+use crate::fused::FusedMulAdd as _;
 use super::{common, Frame, Mode, Requests, Settings};
 use crate::physics::native_arithmetic::dot3;
 ///82D8FEE8, shared off-board air collision check; no on-board cooldown/landing tests.
@@ -87,7 +88,7 @@ fn bad_landing(state: &mut Requests, s: &Settings, mode: &Mode, f: &Frame, use_c
         }
     } else {
         let into = -dot3(normal, velocity);
-        let tangent = std::array::from_fn(|i| normal[i].mul_add(into, velocity[i]));
+        let tangent = std::array::from_fn(|i| normal[i].fused_mul_add(into, velocity[i]));
         let limit =
             s.air.max_landing_angle.evaluate(common::length(tangent)) * mode.bad_landing_scale;
         if f.landing_angle.abs() > limit {

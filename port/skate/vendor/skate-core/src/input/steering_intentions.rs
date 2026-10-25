@@ -1,5 +1,6 @@
 //! Complete local Turn/HardTurn/HardTurnCrouch emission dataflow in 825999F0.
 //! Other intention outputs and the subsequent action/motion graphs are separate.
+use crate::fused::FusedMulAdd as _;
 use super::{angle::left_stick_angle, controller::magnitude};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -19,7 +20,7 @@ pub fn produce(left: [f32; 2], actor_flags_1908: u32) -> SteeringIntentions {
     let length = if x == 0.0 && y == 0.0 {
         0.0
     } else {
-        magnitude(y.mul_add(y, x * x))
+        magnitude(y.fused_mul_add(y, x * x))
     };
     let signed_length = if x >= 0.0 { length } else { -length };
     let turn = if y > 0.0 {

@@ -1,5 +1,6 @@
 //! CalcManualEffect 82C047F0 control/scalar response and output construction.
 //! The native angle-between-vectors measurement remains a required dependency.
+use crate::fused::FusedMulAdd as _;
 use super::{
     angle,
     settings::{ManualMode, ManualSettings},
@@ -106,7 +107,7 @@ pub fn calculate<G: ManualAngleMeasurement>(
         };
         let scaled_balance = input.balance * input.flipped_controls;
         let sign = if scaled_balance > 0.0 { 1.0 } else { -1.0 };
-        let signed_target = scaled_balance.abs().mul_add(0.75, 0.25) * sign;
+        let signed_target = scaled_balance.abs().fused_mul_add(0.75, 0.25) * sign;
         let started = if state.elapsed == 0.0 { 0.0 } else { 1.0 };
         let degrees_to_radians = f32::from_bits(0x3c8e_fa35);
         let base_angle =
@@ -119,7 +120,7 @@ pub fn calculate<G: ManualAngleMeasurement>(
             let noise = crate::trigonometry::sin(phase) * settings.procedural_noise_scale;
             let speed_scale = settings.noise_vs_speed.evaluate(input.absolute_speed);
             let animated = input.animation_noise * settings.animation_noise_scale;
-            let disturbance = animated.mul_add(input.flipped_controls, noise);
+            let disturbance = animated.fused_mul_add(input.flipped_controls, noise);
             let noise_angle = norm(speed_scale * disturbance)?;
             norm(noise_angle + base_angle)?
         };
@@ -137,7 +138,7 @@ pub fn calculate<G: ManualAngleMeasurement>(
         let weighted_error = error * f32::from_bits(0x3d4c_cccd);
         state.filtered_angle_error = state
             .filtered_angle_error
-            .mul_add(f32::from_bits(0x3f73_3333), weighted_error);
+            .fused_mul_add(f32::from_bits(0x3f73_3333), weighted_error);
         let derivative = clamp_symmetric(
             (angle_change * started) * gains.derivative,
             settings.derivative_limit,
@@ -175,7 +176,7 @@ fn apply_correction(
 ) {
     let frame = input.velocity_frame_z;
     let velocity = input.angular_velocity_world;
-    let local_z = frame[2].mul_add(velocity[2], frame[1].mul_add(velocity[1], frame[0] * velocity[0]));
+    let local_z = frame[2].fused_mul_add(velocity[2], frame[1].fused_mul_add(velocity[1], frame[0] * velocity[0]));
     if !input.braking || !(0.0 > local_z * input.balance) {
         return;
     }

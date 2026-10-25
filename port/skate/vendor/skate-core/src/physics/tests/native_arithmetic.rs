@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::*;
 
 #[test]
@@ -32,8 +33,8 @@ fn a_subnormal_squared_length_refines_to_zero_not_nan() {
     assert!(squared.is_subnormal() && squared > 0.0);
     let mut inverse = reciprocal_square_root_estimate(squared);
     for _ in 0..2 {
-        let correction = (-squared).mul_add(inverse * inverse, 1.0);
-        inverse = (inverse * 0.5).mul_add(correction, inverse);
+        let correction = (-squared).fused_mul_add(inverse * inverse, 1.0);
+        inverse = (inverse * 0.5).fused_mul_add(correction, inverse);
     }
     assert_eq!(inverse, 0.0);
     assert_eq!(squared * inverse, 0.0);
@@ -41,8 +42,8 @@ fn a_subnormal_squared_length_refines_to_zero_not_nan() {
     let smallest = f32::MIN_POSITIVE;
     let mut inverse = reciprocal_square_root_estimate(smallest);
     for _ in 0..2 {
-        let correction = (-smallest).mul_add(inverse * inverse, 1.0);
-        inverse = (inverse * 0.5).mul_add(correction, inverse);
+        let correction = (-smallest).fused_mul_add(inverse * inverse, 1.0);
+        inverse = (inverse * 0.5).fused_mul_add(correction, inverse);
     }
     assert!(inverse.is_finite() && (inverse * smallest.sqrt() - 1.0).abs() < 1e-6);
 }

@@ -1,5 +1,6 @@
 //! FilterMotionGraphIntent TU3 82BB1730/17D0/19F0 and 82BB1B78.
 //! Coefficients and limits are per graph update; only the ramp uses elapsed time.
+use crate::fused::FusedMulAdd as _;
 use crate::input::graph_intents::apply_filter;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,7 +62,7 @@ impl State {
         }
         // 82BB194C..1968: separate target product, then fmadds, then subtract.
         let weighted_target = blend * target;
-        let candidate = (1.0 - blend).mul_add(self.value, weighted_target);
+        let candidate = (1.0 - blend).fused_mul_add(self.value, weighted_target);
         let mut delta = candidate - self.value;
         if let Some(limit) = settings.clamp_acceleration {
             delta = limit_delta(delta, self.previous_delta - limit, self.previous_delta + limit);
@@ -100,7 +101,7 @@ fn ramp(elapsed: f32, time: f32) -> f32 {
     match begin {
         0 => 0.0,
         2 => 1.0,
-        _ => ((1.0f32 - 0.0) / (time - 0.0)).mul_add(elapsed - 0.0, 0.0),
+        _ => ((1.0f32 - 0.0) / (time - 0.0)).fused_mul_add(elapsed - 0.0, 0.0),
     }
 }
 

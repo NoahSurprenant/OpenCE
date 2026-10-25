@@ -1,5 +1,6 @@
 //!82770B40/82771D08 mesh traversal and82770E00/82772028 nearby collection.
 //!This adapter only accepts BoardWorld's authored static-world contract.
+use skate_core::fused::FusedMulAdd as _;
 use skate_core::{
     air::trajectory::{QueryRequest, QueryResult, SurfaceHit, query_trajectory},
     math::Vector3,
@@ -337,17 +338,17 @@ impl StaticScene<'_> {
     fn edges(&self, batch: &Batch) -> Vec<[Vector; 2]> {
         let input = batch.input;
         let center: Vector = std::array::from_fn(|i| {
-            input.up[i].mul_add(
+            input.up[i].fused_mul_add(
                 0.29999998,
-                input.forward[i].mul_add(0.89999998, input.position[i]),
+                input.forward[i].fused_mul_add(0.89999998, input.position[i]),
             )
         });
         let extent: Vector = std::array::from_fn(|i| {
-            input.forward[i].abs().mul_add(
+            input.forward[i].abs().fused_mul_add(
                 0.89999998,
                 input.up[i]
                     .abs()
-                    .mul_add(1.1, input.right[i].abs() * 0.037500001),
+                    .fused_mul_add(1.1, input.right[i].abs() * 0.037500001),
             )
         });
         self.metadata
@@ -383,9 +384,9 @@ fn dot(a: Vector, b: Vector) -> f32 {
 }
 fn cross(a: Vector, b: Vector) -> Vector {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.,
     ]
 }
@@ -400,9 +401,9 @@ fn triangle_box(vertices: [Vector; 3], center: Vector, radius: f32) -> bool {
     let axes = [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.]];
     let separated = |axis: Vector| {
         let p = v.map(|x| dot(x, axis));
-        let extent = axis[2].abs().mul_add(
+        let extent = axis[2].abs().fused_mul_add(
             radius,
-            axis[1].abs().mul_add(radius, axis[0].abs() * radius),
+            axis[1].abs().fused_mul_add(radius, axis[0].abs() * radius),
         );
         p[0].min(p[1]).min(p[2]) > extent || p[0].max(p[1]).max(p[2]) < -extent
     };

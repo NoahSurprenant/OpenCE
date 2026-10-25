@@ -52,7 +52,9 @@ COPY . .
 # The run number of a build of main (the workflow passes it), as tools/ci_build.py gives it: the
 # server logs it. 0 for any other build.
 ARG HALO_BUILD_NUMBER=0
-ARG CONFIGURE_FLAGS="--release --lto=off --pgo=off --portable --skate"
+# (the skate engine for the processors the server runs on: x86-64-v3, AVX2 and FMA, which
+# makes each skater's step several times quicker - the same results bit for bit)
+ARG CONFIGURE_FLAGS="--release --lto=off --pgo=off --portable --skate --skate-cpu=x86-64-v3"
 # (the skate engine's debug information, which cargo's release profile keeps, stripped: about 120 MB;
 # the symbols stay, for a crash's backtrace)
 RUN HALO_BUILD_NUMBER="${HALO_BUILD_NUMBER}" python3 configure.py ${CONFIGURE_FLAGS} \

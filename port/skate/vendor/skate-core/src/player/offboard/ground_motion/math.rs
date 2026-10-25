@@ -1,5 +1,6 @@
 //! Original VMX operation trees expressed with ordinary PC floating-point math.
 //! PC seeds and dot sums are not a bit-exact Xenon emulation claim.
+use crate::fused::FusedMulAdd as _;
 use super::{Frame, Vector};
 use crate::trigonometry;
 pub(super) const ZERO: Vector = [0.0; 4];
@@ -19,17 +20,17 @@ pub(super) fn scale(a: Vector, b: f32) -> Vector {
     a.map(|v| v * b)
 }
 pub(super) fn madd(a: Vector, b: f32, c: Vector) -> Vector {
-    std::array::from_fn(|i| a[i].mul_add(b, c[i]))
+    std::array::from_fn(|i| a[i].fused_mul_add(b, c[i]))
 }
 pub(super) fn dot(a: Vector, b: Vector) -> f32 {
     (a[0] * b[0] + a[1] * b[1]) + a[2] * b[2]
 }
 pub(super) fn cross(a: Vector, b: Vector) -> Vector {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 fn inverse_sqrt(q: f32) -> f32 {
@@ -37,14 +38,14 @@ fn inverse_sqrt(q: f32) -> f32 {
     for _ in 0..2 {
         let square = r * r;
         let half = r * 0.5;
-        r = half.mul_add((-q).mul_add(square, 1.0), r);
+        r = half.fused_mul_add((-q).fused_mul_add(square, 1.0), r);
     }
     r
 }
 pub(super) fn reciprocal(d: f32) -> f32 {
     let mut r = 1.0 / d;
     for _ in 0..2 {
-        r = r.mul_add((-d).mul_add(r, 1.0), r);
+        r = r.fused_mul_add((-d).fused_mul_add(r, 1.0), r);
     }
     r
 }
@@ -96,13 +97,13 @@ pub(super) fn rotate(v: Vector, axis: Vector, angle: f32) -> Vector {
     let t = 1.0 - c;
     let (tx, ty, tz) = (t * x, t * y, t * z);
     let (sx, sy, sz) = (s * x, s * y, s * z);
-    let xx = tx.mul_add(x, c);
+    let xx = tx.fused_mul_add(x, c);
     let yx = ty * x - sz;
-    let zx = tz.mul_add(x, sy);
+    let zx = tz.fused_mul_add(x, sy);
     let columns = [
-        [xx, tx.mul_add(y, sz), tx * z - sy, 0.],
-        [yx, ty.mul_add(y, c), ty.mul_add(z, sx), 0.],
-        [zx, tz * y - sx, tz.mul_add(z, c), 0.],
+        [xx, tx.fused_mul_add(y, sz), tx * z - sy, 0.],
+        [yx, ty.fused_mul_add(y, c), ty.fused_mul_add(z, sx), 0.],
+        [zx, tz * y - sx, tz.fused_mul_add(z, c), 0.],
     ];
     transform_vector(v, [columns[0], columns[1], columns[2], ZERO])
 }
@@ -115,8 +116,8 @@ pub(super) fn limit_angle(target: Vector, from: Vector, maximum: f32) -> Vector 
     let cosine = dot(a, b).max(-1.0).min(1.0);
     let angle = trigonometry::acos(cosine);
     let tau = f32::from_bits(0x40c9_0fdb);
-    let turns = angle.mul_add(f32::from_bits(0x3e22_f983), 0.5).floor();
-    let closest = (-turns).mul_add(tau, angle);
+    let turns = angle.fused_mul_add(f32::from_bits(0x3e22_f983), 0.5).floor();
+    let closest = (-turns).fused_mul_add(tau, angle);
     if closest.abs() < maximum || dot(axis, axis) < f32::from_bits(0x3780_0000) {
         return target;
     }

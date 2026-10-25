@@ -1,4 +1,5 @@
 //! Original result exporter82D80F48 and frame helper82D2CDC0.
+use crate::fused::FusedMulAdd as _;
 use super::state::{IDENTITY, ZERO};
 use super::{Frame, State, Vector};
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -29,16 +30,16 @@ fn dot(a: Vector, b: Vector) -> f32 {
 }
 fn cross(a: Vector, b: Vector) -> Vector {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
-        (-a[3]).mul_add(b[3], a[3] * b[3]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
+        (-a[3]).fused_mul_add(b[3], a[3] * b[3]),
     ]
 }
 fn invsqrt(q: f32) -> f32 {
     let mut r = 1.0 / q.sqrt();
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-q).mul_add(r * r, 1.0), r);
+        r = (r * 0.5).fused_mul_add((-q).fused_mul_add(r * r, 1.0), r);
     }
     r
 }
@@ -57,7 +58,7 @@ pub(crate) fn build_frame(up: Vector, forward: Vector) -> Frame {
     }
     let mut inverse = 1.0 / length;
     for _ in 0..2 {
-        inverse = inverse.mul_add((-inverse).mul_add(length, 1.0), inverse);
+        inverse = inverse.fused_mul_add((-inverse).fused_mul_add(length, 1.0), inverse);
     }
     let right = right.map(|x| x * inverse);
     let up = normalize(up);

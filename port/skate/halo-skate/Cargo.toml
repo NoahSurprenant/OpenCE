@@ -19,3 +19,5 @@ skate-host = { path = "../vendor/skate-host" }
 # (tests/common/halo_map.rs: a Halo Xbox map is deflated after its header)
 flate2 = "1.1"
 serde_json.workspace = true
+# (real_assets_crowd.rs: the engine's fused multiply-add against the library's)
+skate-core.workspace = true

@@ -1,6 +1,7 @@
 //! Complete normal-rig tracking stages. Runtime parameters are explicit native
 //! bindings; this does not initialize a shot or infer stock camera settings.
 
+use crate::fused::FusedMulAdd as _;
 use super::vector_tracker::{length, refined_reciprocal};
 use super::{AngleTracker, ScalarTrackerParameters, VectorTracker, normalize_angle};
 use crate::point_graph::PointGraph;
@@ -71,7 +72,7 @@ impl AngularRigTracking {
             f32::from_bits(0x3f4ccccd)
         };
         let smoothing = if error < f32::from_bits(0x3f490fdb) {
-            (capped - smoothing).mul_add(error * f32::from_bits(0x3fa2f984), smoothing)
+            (capped - smoothing).fused_mul_add(error * f32::from_bits(0x3fa2f984), smoothing)
         } else {
             capped
         };
@@ -124,7 +125,7 @@ pub(super) fn wrap_vmx(angle: f32) -> f32 {
     let tau = f32::from_bits(0x40c90fdb);
     let pi = f32::from_bits(0x40490fdb);
     let turns = (refined_reciprocal(tau) * angle).trunc();
-    let reduced = (-turns).mul_add(tau, angle);
+    let reduced = (-turns).fused_mul_add(tau, angle);
     let lower = if reduced + pi >= 0.0 {
         reduced
     } else {
@@ -190,7 +191,7 @@ impl AnchorRigTracking {
         if self.flags_516 & 4 != 0 {
             self.latch_time = 0.5;
         }
-        clamp_fraction(s.latch_curve.evaluate((-self.latch_time).mul_add(2.0, 1.0))) * s.latch_scale
+        clamp_fraction(s.latch_curve.evaluate((-self.latch_time).fused_mul_add(2.0, 1.0))) * s.latch_scale
     }
 
     /// Complete82E04478.
@@ -204,7 +205,7 @@ impl AnchorRigTracking {
         if subject.value_476() > s.input_threshold {
             self.input_time = 0.5;
         }
-        clamp_fraction(s.input_curve.evaluate((-self.input_time).mul_add(2.0, 1.0))) * s.input_scale
+        clamp_fraction(s.input_curve.evaluate((-self.input_time).fused_mul_add(2.0, 1.0))) * s.input_scale
     }
 
     /// Complete82E041B8. Both smoothing histories update before the disable gate.
@@ -276,13 +277,13 @@ impl ReferenceHeightTracking {
         let blending = !immediate && self.transition_time < self.transition_duration;
         if blending {
             let fraction = clamp_fraction(self.transition_time / self.transition_duration);
-            target = fraction.mul_add(
+            target = fraction.fused_mul_add(
                 self.transition_end - self.transition_start,
                 self.transition_start,
             );
             if self.flags_517 & 8 != 0 {
                 let weight = self.transition_weight * self.transition_weight;
-                target = (1.0 - weight).mul_add(target, self.anchor_height * weight);
+                target = (1.0 - weight).fused_mul_add(target, self.anchor_height * weight);
             }
         } else if self.mode == 0 || self.mode == 2 {
             self.previous_height = old_height;
@@ -294,7 +295,7 @@ impl ReferenceHeightTracking {
         if old_height != f32::MAX && !blending && self.mode != 2 && subject.flag_656() != 0 {
             smoothing = f32::from_bits(0x3c23d70a);
         }
-        self.height = (target - self.height).mul_add(smoothing, self.height);
+        self.height = (target - self.height).fused_mul_add(smoothing, self.height);
         if subject.flag_608() != 0 {
             let delta = self.height - self.anchor_height;
             if delta.abs() > f32::from_bits(0x38d1b717) {

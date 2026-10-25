@@ -1,4 +1,5 @@
 //! Contact arms and inverse-inertia response, `82AE11BC..82AE1588`.
+use crate::fused::FusedMulAdd as _;
 use super::{input::ContactInput, ContactPreparation};
 use crate::math::Vector3;
 
@@ -12,9 +13,9 @@ fn difference(a: Vector3, b: Vector3) -> Vector3 {
 
 fn cross(arm: Vector3, axis: Vector3) -> [f32; 3] {
     [
-        (-arm.z).mul_add(axis.y, arm.y.mul_add(axis.z, 0.0)),
-        (-arm.x).mul_add(axis.z, arm.z.mul_add(axis.x, 0.0)),
-        (-arm.y).mul_add(axis.x, arm.x.mul_add(axis.y, 0.0)),
+        (-arm.z).fused_mul_add(axis.y, arm.y.fused_mul_add(axis.z, 0.0)),
+        (-arm.x).fused_mul_add(axis.z, arm.z.fused_mul_add(axis.x, 0.0)),
+        (-arm.y).fused_mul_add(axis.x, arm.x.fused_mul_add(axis.y, 0.0)),
     ]
 }
 
@@ -25,17 +26,17 @@ fn inertia_response(full: Vector3, split: Vector3, mass: f32, jacobian: [f32; 3]
         [full.z, split.z, split.x, mass],
     ];
     core::array::from_fn(|component| {
-        let first = columns[0][component].mul_add(jacobian[0], 0.0);
-        let second = columns[1][component].mul_add(jacobian[1], first);
-        columns[2][component].mul_add(jacobian[2], second)
+        let first = columns[0][component].fused_mul_add(jacobian[0], 0.0);
+        let second = columns[1][component].fused_mul_add(jacobian[1], first);
+        columns[2][component].fused_mul_add(jacobian[2], second)
     })
 }
 
 fn project(axes: [Vector3; 3], value: Vector3) -> [f32; 3] {
     axes.map(|axis| {
-        let x = axis.x.mul_add(value.x, 0.0);
-        let xy = axis.y.mul_add(value.y, x);
-        axis.z.mul_add(value.z, xy)
+        let x = axis.x.fused_mul_add(value.x, 0.0);
+        let xy = axis.y.fused_mul_add(value.y, x);
+        axis.z.fused_mul_add(value.z, xy)
     })
 }
 
@@ -64,8 +65,8 @@ pub(super) fn prepare(input: ContactInput, time_step: f32) -> ContactPreparation
     });
     let effective_mass = core::array::from_fn(|axis| {
         let products: [f32; 3] = core::array::from_fn(|component| {
-            let a = jacobians[0][axis][component].mul_add(responses[0][axis][component], 0.0);
-            jacobians[1][axis][component].mul_add(responses[1][axis][component], a)
+            let a = jacobians[0][axis][component].fused_mul_add(responses[0][axis][component], 0.0);
+            jacobians[1][axis][component].fused_mul_add(responses[1][axis][component], a)
         });
         (products[2] + (products[0] + inverse_mass[0])) + (products[1] + inverse_mass[1])
     });
@@ -77,20 +78,20 @@ pub(super) fn prepare(input: ContactInput, time_step: f32) -> ContactPreparation
         let force = input.bodies[body].force_acceleration;
         let torque = input.bodies[body].torque_acceleration;
         Vector3::new(
-            arm.z.mul_add(torque.y, (-arm.y).mul_add(torque.z, force.x)),
-            arm.x.mul_add(torque.z, (-arm.z).mul_add(torque.x, force.y)),
-            arm.y.mul_add(torque.x, (-arm.x).mul_add(torque.y, force.z)),
+            arm.z.fused_mul_add(torque.y, (-arm.y).fused_mul_add(torque.z, force.x)),
+            arm.x.fused_mul_add(torque.z, (-arm.z).fused_mul_add(torque.x, force.y)),
+            arm.y.fused_mul_add(torque.x, (-arm.x).fused_mul_add(torque.y, force.z)),
         )
     });
     let separation = difference(input.positions[1], input.positions[0]);
     let relative_acceleration = difference(point_acceleration[1], point_acceleration[0]);
-    let scaled_velocity = components(input.relative_velocity).map(|v| time_step.mul_add(v, 0.0));
+    let scaled_velocity = components(input.relative_velocity).map(|v| time_step.fused_mul_add(v, 0.0));
     let acceleration =
-        components(relative_acceleration).map(|v| v.mul_add(time_step * time_step, 0.0));
+        components(relative_acceleration).map(|v| v.fused_mul_add(time_step * time_step, 0.0));
     let predicted = core::array::from_fn::<_, 3, _>(|i| {
         scaled_velocity[i] + (components(separation)[i] + acceleration[i])
     });
-    let restitution = scaled_velocity.map(|v| (-v).mul_add(input.restitution, 0.0));
+    let restitution = scaled_velocity.map(|v| (-v).fused_mul_add(input.restitution, 0.0));
     ContactPreparation {
         arms,
         axes: input.axes,

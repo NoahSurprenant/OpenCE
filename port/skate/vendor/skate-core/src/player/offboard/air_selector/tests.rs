@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::math::*;
 use super::*;
 use crate::math::Vector3;
@@ -194,7 +195,7 @@ fn animation_correction_retains_native_fused_up_plus_forward_operation() {
         [0.6, -0.8, 0., 0.], [0.; 4]];
     s.adjust_animation(10, [0., 0.6, -0.8, 0.], axes, 0.);
     let forward = 0.6_f32 * -0.8;
-    let expected = -0.8_f32.mul_add(0.6, forward);
+    let expected = -0.8_f32.fused_mul_add(0.6, forward);
     assert_ne!(expected, -(0.8_f32 * 0.6 + forward));
     assert_eq!(s.correction_8304[0].to_bits(), expected.to_bits());
 }

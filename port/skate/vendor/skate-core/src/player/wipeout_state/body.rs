@@ -1,4 +1,5 @@
 //! Original body adjustments used by WipeoutGround300.
+use crate::fused::FusedMulAdd as _;
 use super::math::{self,V};
 use crate::{math::Vector3,physics::skeleton_body::SkeletonBody};
 pub fn set_velocity(body:&mut SkeletonBody,velocity:V) {
@@ -64,7 +65,7 @@ pub fn special_surface(body:&mut SkeletonBody,height:f32) {
     for i in 1..24 {
         let depth=(height+0.1)-body.record.pose[i][3][1];
         let drag=if depth>0.0 {
-            body.apply_part_displacement(i,[0.0,depth.mul_add(0.6,0.1)*WEIGHTS[i-1],0.0,0.0]);
+            body.apply_part_displacement(i,[0.0,depth.fused_mul_add(0.6,0.1)*WEIGHTS[i-1],0.0,0.0]);
             0.1
         } else {0.005};
         body.bodies_mut()[i].inertia.angular_drag=drag*f32::from_bits(0x426F_FFFF);

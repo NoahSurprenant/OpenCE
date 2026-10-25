@@ -2,6 +2,7 @@
 //! Original Skate3 SHA256:
 //!431b8eba23565affdc10d137df19b06fe286244cefb3e1a13f32693e9600395a.
 //! Skate2 locomotion82DA0678 uses FeetIK/Skeleton, not this Biped job contract.
+use crate::fused::FusedMulAdd as _;
 use super::{
     contact_toolkit::ContactPrefix,
     controller::{Frame, GroundJob, Vector},
@@ -93,7 +94,7 @@ pub fn prepare<E>(
     }
     // VMX82D30F48: position592 + velocity608 * float1/60, not render/solver dt.
     let animation_position = std::array::from_fn(|i| {
-        input.processed_velocity[i].mul_add(STEP, input.processed_position[i])
+        input.processed_velocity[i].fused_mul_add(STEP, input.processed_position[i])
     });
     let job = GroundJob {
         contact_position: copied.position,
@@ -155,7 +156,7 @@ pub fn sync_frames(
             state.flags_144_to_150[6] = false;
         }
         state.angle_172 *= f32::from_bits(0x3f66_6666);
-        let angle = (-state.angular_velocity_176).mul_add(state.duration_180, state.angle_172);
+        let angle = (-state.angular_velocity_176).fused_mul_add(state.duration_180, state.angle_172);
         let (sin, cos) = crate::trigonometry::sin_cos(angle);
         // Geometric host frame: do not publish Rodrigues permutation scratch W.
         let forward = madd([sin, 0., cos, 0.], animation[2][2],
@@ -171,17 +172,17 @@ pub fn sync_frames(
 }
 
 fn madd(v: Vector, scale: f32, offset: Vector) -> Vector {
-    std::array::from_fn(|i| v[i].mul_add(scale, offset[i]))
+    std::array::from_fn(|i| v[i].fused_mul_add(scale, offset[i]))
 }
 fn cross(a: Vector, b: Vector) -> Vector {
-    [(-a[2]).mul_add(b[1], a[1]*b[2]), (-a[0]).mul_add(b[2], a[2]*b[0]),
-        (-a[1]).mul_add(b[0], a[0]*b[1]), (-a[3]).mul_add(b[3], a[3]*b[3])]
+    [(-a[2]).fused_mul_add(b[1], a[1]*b[2]), (-a[0]).fused_mul_add(b[2], a[2]*b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0]*b[1]), (-a[3]).fused_mul_add(b[3], a[3]*b[3])]
 }
 fn normalize(v: Vector) -> Vector {
     let square = crate::physics::native_arithmetic::dot3(v, v);
     let mut inverse = crate::physics::reciprocal_sqrt::estimate(square);
     for _ in 0..2 {
-        inverse = (inverse*0.5).mul_add((-square).mul_add(inverse*inverse, 1.), inverse);
+        inverse = (inverse*0.5).fused_mul_add((-square).fused_mul_add(inverse*inverse, 1.), inverse);
     }
     v.map(|lane| lane*inverse)
 }

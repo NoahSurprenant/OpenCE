@@ -1,5 +1,6 @@
 //! Scene boundary for the recovered BipedToolkit probe layout. The pending
 //! packet owns observations; the world's geometry and acceleration tree stay shared.
+use skate_core::fused::FusedMulAdd as _;
 use skate_core::{
     math::Vector3,
     physics::{
@@ -66,9 +67,9 @@ pub(crate) fn query(world: &BoardWorld, probe: Probe, matching_id: u32) -> Resul
                     let t = frame.translation;
                     let b = frame.basis.columns;
                     Vector3::new(
-                        b[2][0].mul_add(v.z, b[1][0].mul_add(v.y, b[0][0].mul_add(v.x, t.x))),
-                        b[2][1].mul_add(v.z, b[1][1].mul_add(v.y, b[0][1].mul_add(v.x, t.y))),
-                        b[2][2].mul_add(v.z, b[1][2].mul_add(v.y, b[0][2].mul_add(v.x, t.z))),
+                        b[2][0].fused_mul_add(v.z, b[1][0].fused_mul_add(v.y, b[0][0].fused_mul_add(v.x, t.x))),
+                        b[2][1].fused_mul_add(v.z, b[1][1].fused_mul_add(v.y, b[0][1].fused_mul_add(v.x, t.y))),
+                        b[2][2].fused_mul_add(v.z, b[1][2].fused_mul_add(v.y, b[0][2].fused_mul_add(v.x, t.z))),
                     )
                 });
                 let mut geometry = TriangleLineHit {

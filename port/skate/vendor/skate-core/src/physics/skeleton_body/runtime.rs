@@ -1,4 +1,5 @@
 //! Actual 26-part ownership and Reset82BD9990 / physical-record publication.
+use crate::fused::FusedMulAdd as _;
 use super::{SkeletonBodyDefinition, SkeletonPhysicalRecord, PART_COUNT, ANIMATION_PART_COUNT};
 use crate::physics::{
     assembly::BodySnapshot,
@@ -101,7 +102,7 @@ impl SkeletonBody {
         let step = f32::from_bits(0x3C88_8889);
         let mut inverse_step = native_arithmetic::reciprocal_estimate(step);
         for _ in 0..2 {
-            inverse_step = inverse_step.mul_add((-inverse_step).mul_add(step, 1.0), inverse_step);
+            inverse_step = inverse_step.fused_mul_add((-inverse_step).fused_mul_add(step, 1.0), inverse_step);
         }
         let body = &mut self.bodies[part];
         let value = displacement.map(|d| (d * inverse_step) * body.inertia.inverse_mass);

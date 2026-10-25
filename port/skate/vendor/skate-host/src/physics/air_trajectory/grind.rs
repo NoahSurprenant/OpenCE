@@ -1,4 +1,5 @@
 //! Real static University provider -> native trajectory admission -> landing orientation.
+use skate_core::fused::FusedMulAdd as _;
 use crate::grind_world::StaticProvider;
 use skate_core::{
     air::trajectory::{
@@ -253,16 +254,16 @@ fn scale(a: V, s: f32) -> V {
 }
 fn cross(a: V, b: V) -> V {
     [
-        (-a[2]).mul_add(b[1], a[1] * b[2]),
-        (-a[0]).mul_add(b[2], a[2] * b[0]),
-        (-a[1]).mul_add(b[0], a[0] * b[1]),
+        (-a[2]).fused_mul_add(b[1], a[1] * b[2]),
+        (-a[0]).fused_mul_add(b[2], a[2] * b[0]),
+        (-a[1]).fused_mul_add(b[0], a[0] * b[1]),
         0.,
     ]
 }
 fn inverse(square: f32) -> f32 {
     let mut r = square.sqrt().recip();
     for _ in 0..2 {
-        r = (r * 0.5).mul_add((-square).mul_add(r * r, 1.), r);
+        r = (r * 0.5).fused_mul_add((-square).fused_mul_add(r * r, 1.), r);
     }
     r
 }

@@ -4,6 +4,7 @@
 //! during PostInput82DB56C0. ProcessOutput82DB7580 publishes its result to
 //! SkateboardMotion+192. The source uses the *turn torque* curves, despite
 //! the function name; the nearby HeadingAdjustVsSpeed/Slope curves differ.
+use crate::fused::FusedMulAdd as _;
 use crate::{physics::native_arithmetic, point_graph::PointGraph, trigonometry};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,8 +32,8 @@ impl SpeedAndSlopeSettings {
         let half_pi = f32::from_bits(0x3FC9_0FDB);
         let mut inverse_half_pi = native_arithmetic::reciprocal_estimate(half_pi);
         for _ in 0..2 {
-            let error = (-inverse_half_pi).mul_add(half_pi, 1.0);
-            inverse_half_pi = inverse_half_pi.mul_add(error, inverse_half_pi);
+            let error = (-inverse_half_pi).fused_mul_add(half_pi, 1.0);
+            inverse_half_pi = inverse_half_pi.fused_mul_add(error, inverse_half_pi);
         }
         let mut slope = inverse_half_pi * trigonometry::acos(normal_y);
         if slope > f32::from_bits(0x3F99_999A) {

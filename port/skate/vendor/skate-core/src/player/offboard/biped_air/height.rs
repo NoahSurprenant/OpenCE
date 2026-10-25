@@ -1,13 +1,14 @@
 //! Original TU3 82D2FF50 and 82D2FDD0, recovered from disassembly.
+use crate::fused::FusedMulAdd as _;
 use super::{DT, Vector};
 pub(super) fn dot(a: Vector, b: Vector) -> f32 {
-    a[2].mul_add(b[2], a[1].mul_add(b[1], a[0] * b[0]))
+    a[2].fused_mul_add(b[2], a[1].fused_mul_add(b[1], a[0] * b[0]))
 }
 pub(super) fn sub(a: Vector, b: Vector) -> Vector {
     core::array::from_fn(|i| a[i] - b[i])
 }
 pub(super) fn madd(a: Vector, b: f32, c: Vector) -> Vector {
-    core::array::from_fn(|i| a[i].mul_add(b, c[i]))
+    core::array::from_fn(|i| a[i].fused_mul_add(b, c[i]))
 }
 pub(super) fn select(test: f32, positive: f32, negative: f32) -> f32 {
     if test >= 0.0 { positive } else { negative }

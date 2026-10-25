@@ -1,3 +1,4 @@
+use crate::fused::FusedMulAdd as _;
 use super::{NativeMatrix, PoseBufferError};
 
 /// TU3 0x828D3B58: local matrices to hierarchy-composed matrices.
@@ -89,12 +90,12 @@ fn concatenate(local: NativeMatrix, parent: NativeMatrix) -> NativeMatrix {
     for row in 0..4 {
         for lane in 0..4 {
             let first = if row == 3 {
-                parent[0][lane].mul_add(local[row][0], parent[3][lane])
+                parent[0][lane].fused_mul_add(local[row][0], parent[3][lane])
             } else {
                 parent[0][lane] * local[row][0]
             };
-            let second = parent[1][lane].mul_add(local[row][1], first);
-            result[row][lane] = parent[2][lane].mul_add(local[row][2], second);
+            let second = parent[1][lane].fused_mul_add(local[row][1], first);
+            result[row][lane] = parent[2][lane].fused_mul_add(local[row][2], second);
         }
     }
     result
