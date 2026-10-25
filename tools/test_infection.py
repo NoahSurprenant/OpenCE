@@ -356,8 +356,8 @@ def test_infection_skaters_stepping_in_turn(tmp_path):
     (skate.c, "many bots on boards"): between its steps each glides on, so
     no riding skater's biped ever stands still a tick, and the game plays
     on - the infected still rides at the survivors, the host decides its
-    run-overs and they infect, and the infected win (a skater stepped every
-    other tick rides half as fast: later). About three minutes."""
+    run-overs and they infect (a skater stepped every other tick rides half
+    as fast, so the round need not end the same way). About three minutes."""
     _, maps, assets = _needs_skate()
     log = _bots_alone(tmp_path, "server", _server(), maps, assets, {
         "HALO_SERVER_BOTS": "5", "HALO_BOT_DIFFICULTIES": "hard,peaceful,peaceful,peaceful,peaceful",
@@ -373,7 +373,7 @@ def test_infection_skaters_stepping_in_turn(tmp_path):
     assert periods and all(p[1] == "2" and p[3] == "2" for p in periods), f"the skaters did not step every other tick: {periods}"
     assert still and any(int(s[0]) >= 1 for s in still), f"no report of the skaters riding: {still}"
     assert all(s[1] == "0" for s in still), f"a riding skater stood still between its steps: {still}"
-    assert infected and infected[0][1] == "0", f"the infected infected nobody: {infected}"
+    assert len(infected) >= 2 and infected[0][1] == "0", f"the infected infected too few: {infected}"
     assert "0" in RUN_OVER_KILLED.findall(log), "the infected's kill was no run-over"
-    assert over and over.group(2) == "infected", f"the infected did not win: {over and over.groups()}"
+    assert over, "the round did not end"
     assert not re.search(r"NOT FINITE|EXCEPTION|fatal error", log), "a pose not finite, or a fatal error"

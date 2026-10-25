@@ -205,7 +205,8 @@ def test_skating_bots_take_a_vehicle(tmp_path):
     assert drove, "no bot drove"
     assert choices or fights, "no vehicle chosen"
     assert all(kind == "on a board" for _, _, kind in choices), f"a vehicle chosen without weighing a board: {choices}"
-    assert all(int(by_vehicle) <= 0.75 * int(by_board) for by_vehicle, by_board, _ in choices), \
+    # (the log rounds both to whole world units: 47.5 against 63.4 is quicker, and logs as 48 and 63)
+    assert all(int(by_vehicle) - 0.5 <= 0.75 * (int(by_board) + 0.5) for by_vehicle, by_board, _ in choices), \
         f"a vehicle chosen though a board was quicker: {choices}"
 
 
