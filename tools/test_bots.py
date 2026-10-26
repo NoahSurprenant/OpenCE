@@ -1266,7 +1266,9 @@ def test_bots_fill_a_full_lobby(tmp_path):
     (bots.c's bots_update), and joining 128 of them to a lobby that resends
     its settings to everyone already in it takes several minutes on a busy
     runner (as test_skating_bots_crowd's "three minutes" for far fewer bots
-    riding, not just joining, does). About thirteen minutes."""
+    riding, not just joining, does); locally, in CI alongside the other bots
+    groups, all 128 joined (and a game, 127 to its score limit, started and
+    even finished) in just under 600 s. About fifteen minutes."""
     maps, paths = _needs("HALO_TEST_GAME", "HALO_TEST_SERVER")
     server, game = paths["HALO_TEST_SERVER"], paths["HALO_TEST_GAME"]
     games = {"server": _start(tmp_path, "server", server, maps, {
@@ -1276,7 +1278,7 @@ def test_bots_fill_a_full_lobby(tmp_path):
     executables = {"server": server, "client": game}
     try:
         _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) >= 128 and
-              "server: the game starts" in _log(tmp_path, "server"), 600, games, tmp_path,
+              "server: the game starts" in _log(tmp_path, "server"), 900, games, tmp_path,
               "a full lobby of 128 bots did not join")
         games["client"] = _start(tmp_path, "client", game, maps, {
             "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
