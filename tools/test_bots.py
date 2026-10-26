@@ -1321,7 +1321,7 @@ def test_bots_names_are_unique_past_32(tmp_path):
     games = {"server": _start(tmp_path, "server", server, maps, {
         "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "1",
         "HALO_SERVER_BOTS_FILL": "1", "HALO_BOT_SEED": "9",
-        "HALO_NET_ADDRESS": _test_address(257), "HALO_NET_BROADCAST": _test_address(258),
+        "HALO_NET_ADDRESS": _test_address(160), "HALO_NET_BROADCAST": _test_address(161),
         "HALO_TELNET_CONSOLE": "1", "HALO_TELNET_CONSOLE_PORT": str(port)})}
     try:
         _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) >= 1 and
