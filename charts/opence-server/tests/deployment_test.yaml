@@ -56,7 +56,7 @@ tests:
 
   - it: maps the settings to the HALO_ variables
     set:
-      server: { maps: ["bloodgulch:slayer", "bloodgulch:ctf", "hangemhigh:king"], gameTypes: [slayer], timeLimit: 10, scoreLimit: 25, bots: 4, botDifficulty: hard, botSkaters: 2 }
+      server: { maps: ["bloodgulch:slayer", "bloodgulch:ctf", "hangemhigh:king"], gameTypes: [slayer], timeLimit: 10, scoreLimit: 25, bots: 4, botsFill: false, botDifficulty: hard, botSkaters: 2 }
       network: { publicAddress: "halo.example.com:27015", serverName: Test, hostPublic: true }
     asserts:
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_DEDICATED, value: "1" } }
@@ -67,6 +67,7 @@ tests:
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TIME_LIMIT, value: "10" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_SCORE_LIMIT, value: "25" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOTS, value: "4" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOTS_FILL, value: "false" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOT_DIFFICULTY, value: hard } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOT_SKATERS, value: "2" } }
       - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SKATE_ASSETS, value: /skate-data/assets } }
@@ -75,6 +76,20 @@ tests:
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_SERVER_NAME, value: Test } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_HOST_PUBLIC, value: "true" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_ALLOW_UPNP, value: "false" } }
+
+  - it: fills bots to server.bots by default, and allows a full lobby of 128
+    set:
+      server.bots: 128
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOTS, value: "128" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOTS_FILL, value: "true" } }
+
+  - it: refuses 128 bots without botsFill, which the engine would clamp to 127 anyway
+    set:
+      server: { bots: 128, botsFill: false }
+    asserts:
+      - failedTemplate:
+          errorPattern: "server/bots"
 
   - it: is invite-only by default and leaves empty settings to the game
     asserts:

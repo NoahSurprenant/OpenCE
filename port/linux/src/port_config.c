@@ -575,7 +575,8 @@ static const struct config_setting config_settings[] =
 		"How many bots a game this machine hosts has (a dedicated server's, or\n"
 		"one the menus host): players the host plays itself, named \"[BOT] ...\",\n"
 		"which every machine sees as other players (port/linux/README.md's\n"
-		"\"Bots\"); 0 to 127. Not in co-op." },
+		"\"Bots\"); 0 to 127, or 0 to 128 with server.bots_fill (a full lobby).\n"
+		"Not in co-op." },
 
 	{ "server.bots_fill", _config_boolean, "false", "HALO_SERVER_BOTS_FILL", _environment_value, _platform_all,
 		"server.bots is how many players a game has in all: a bot leaves as a\n"

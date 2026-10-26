@@ -4812,9 +4812,9 @@ static struct gametype_option const gametype_options[] =
 	{ "map_share_upload_spinner", _option_setting, 0, 0, 6, { 0 }, "network.map_share_upload",
 		{ "256", "512", "1024", "2048", "4096", "8192" } },
 	/* bots' (Server Setup's BOTS: tools/port_settings.py's BOT_SETUP; bots.c) */
-	{ "bots_spinner", _option_setting, 0, 0, 24, { 0 }, "server.bots",
+	{ "bots_spinner", _option_setting, 0, 0, 25, { 0 }, "server.bots",
 		{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "20", "24", "32",
-		"48", "64", "96", "127" } },
+		"48", "64", "96", "127", "128" } },
 	{ "bot_difficulty_spinner", _option_setting, 0, 0, 5, { 0 }, "server.bot_difficulty",
 		{ "peaceful", "easy", "normal", "hard", "legendary" } },
 	{ "bots_fill_spinner", _option_setting, 0, 0, 2, { 0 }, "server.bots_fill", { "false", "true" } },

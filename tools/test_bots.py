@@ -1255,3 +1255,40 @@ def test_bots_leave_for_a_person(tmp_path):
         _stop(games, tmp_path, executables)
         for cache in tmp_path.rglob("cache*.map"):
             cache.unlink()
+
+
+def test_bots_fill_a_full_lobby(tmp_path):
+    """A dedicated server with server.bots_fill and a full lobby (server.bots
+    128, the chart's maximum) and a person who joins it: a bot leaves at once
+    to make room (bots_make_room, which does that either way; server.bots_fill
+    only keeps the bots topped up to server.bots as people come and go), the
+    person plays, and when they leave a bot comes back. About two minutes."""
+    maps, paths = _needs("HALO_TEST_GAME", "HALO_TEST_SERVER")
+    server, game = paths["HALO_TEST_SERVER"], paths["HALO_TEST_GAME"]
+    games = {"server": _start(tmp_path, "server", server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "128",
+        "HALO_SERVER_BOTS_FILL": "1", "HALO_BOT_SEED": "7",
+        "HALO_NET_ADDRESS": _test_address(249), "HALO_NET_BROADCAST": _test_address(250)})}
+    executables = {"server": server, "client": game}
+    try:
+        _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) >= 128 and
+              "server: the game starts" in _log(tmp_path, "server"), 180, games, tmp_path,
+              "a full lobby of 128 bots did not join")
+        games["client"] = _start(tmp_path, "client", game, maps, {
+            "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
+            "HALO_NET_ADDRESS": _test_address(250), "HALO_NET_BROADCAST": _test_address(249)})
+        position = re.compile(r"network test: tick \d+ .* local (\d+) camera")
+        _wait(lambda: "left to make room for a person" in _log(tmp_path, "server") and
+              len([m for m in position.findall(_log(tmp_path, "client")) if m != "-1"]) >= 5, 90, games, tmp_path,
+              "the person did not get into the full game")
+        server_log = _log(tmp_path, "server")
+        assert re.search(r"server: (?!\[BOT\])\S.* joined", server_log), server_log[-3000:]
+        joined_before = len(BOT_JOINED.findall(server_log))
+        games["client"].kill()
+        games["client"].wait()
+        _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) > joined_before, 60, {"server": games["server"]},
+              tmp_path, "no bot came back after the person left")
+    finally:
+        _stop(games, tmp_path, executables)
+        for cache in tmp_path.rglob("cache*.map"):
+            cache.unlink()

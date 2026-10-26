@@ -620,7 +620,8 @@ jobs:
     # (test_bots_ctf), King of the Hill, Oddball, Race and Juggernaut
     # (test_bots_game_types), four throwing grenades in Team
     # Slayer (test_bots_grenades), a bot leaving a full server for a
-    # person (test_bots_leave_for_a_person), a client loading the map while
+    # person (test_bots_leave_for_a_person), a person joining a full lobby of
+    # 128 bots with server.bots_fill (test_bots_fill_a_full_lobby), a client loading the map while
     # the host builds the bots' graphs aside (test_bots_a_client_loading_while_the_graphs_build),
     # a bot put in a vehicle
     # getting out again (test_bots_out_of_a_vehicle), and bots driving Blood
@@ -698,7 +699,7 @@ jobs:
           # loopback addresses differ, so they go side by side)
           mkdir -p "$RUNNER_TEMP/bots"
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/a" tools/test_bots.py \
-            -k "dedicated_server or older_client or listen_host or nav_on_every_map or leave_for or rotation or start_now or graphs_build" \
+            -k "dedicated_server or older_client or listen_host or nav_on_every_map or leave_for or fill_a_full_lobby or rotation or start_now or graphs_build" \
             > "$RUNNER_TEMP/bots-a.log" 2>&1 &
           first=$!
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/bots/b" tools/test_bots.py \
@@ -724,11 +725,11 @@ jobs:
           wait $sixth || true
           cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log"
-          if ! grep -q '8 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
+          if ! grep -q '9 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
             ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '2 passed' "$RUNNER_TEMP/bots-d.log" || ! grep -q '5 passed' "$RUNNER_TEMP/bots-e.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-f.log" ||
             grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log"; then
-            echo "::error::the twenty-four tests of tools/test_bots.py did not all run and pass (7 + 4 + 2 + 2 + 5 + 4)"
+            echo "::error::the twenty-six tests of tools/test_bots.py did not all run and pass (9 + 4 + 2 + 2 + 5 + 4)"
             exit 1
           fi
 
