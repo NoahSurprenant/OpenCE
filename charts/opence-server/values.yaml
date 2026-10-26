@@ -89,9 +89,15 @@ server:
   timeLimit: 15
   # server.score_limit: the score to win; 0: the game type's.
   scoreLimit: 0
-  # server.bots: the bots in each game, 0 to 127: players the server plays itself, named "[BOT] ..."
-  # (port/linux/README.md, "Bots").
+  # server.bots: the bots in each game: players the server plays itself, named "[BOT] ..."
+  # (port/linux/README.md, "Bots"). 0 to 127 normally, so a person can always join; 0 to 128 (a full
+  # lobby) with botsFill below, since a bot leaves at once for a person who joins a full game.
   bots: 0
+  # server.bots_fill: with it, server.bots is how many players a game has in all - a bot leaves as a
+  # person joins and comes back as one leaves (either way a bot leaves at once for a person who joins
+  # a full game). Without it the bots join and stay regardless of who else joins. Defaults on: it is
+  # what most servers with bots want, and it is what lets server.bots reach 128.
+  botsFill: true
   # server.bot_difficulty: peaceful (they never fight), easy, normal, hard or legendary.
   botDifficulty: normal
   # server.bot_skaters: with skateData, the most bots on boards at once: 0 for no limit, -1 for

@@ -426,7 +426,7 @@ the setting for one start of the game. It has priority over the file.
 | `server.score_limit` | `0` | `HALO_SERVER_SCORE_LIMIT` | The score to win a game of a dedicated server. `0`: the score of the game type. |
 | `server.bots_fill` | `false` | `HALO_SERVER_BOTS_FILL` | `server.bots` is how many players the game has in all: a bot leaves as a person joins, and comes back as one leaves. Refer to "Bots". |
 | `server.max_players` | `0` | `HALO_SERVER_MAX_PLAYERS` | The most players (people and bots) in a dedicated server's games; 0 for the build's 128. |
-| `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 127. Refer to "Bots". |
+| `server.bots` | `0` | `HALO_SERVER_BOTS` | The number of bots in the games that this machine hosts (a dedicated server, or a game of the menus), 0 to 127, or 0 to 128 with `server.bots_fill`. Refer to "Bots". |
 | `debug.bot_seed` | `0` | `HALO_BOT_SEED` | The start of the bots' random numbers, so that the bots of a test do the same each run. |
 | `debug.game_seed` | `0` | `HALO_GAME_SEED` | The start of the game's random numbers instead of the time (0: the time), so that a test's games go the same way each run. |
 | `server.infection_run_over` | `0` | `HALO_SERVER_INFECTION_RUN_OVER` | Infection: the damage of an infected skater's run-over, in percent of any skater's; `0`: the game type's own. Refer to "Infection". |
@@ -1221,7 +1221,8 @@ infected on foot, unarmed.
 
 A host can have bots
 : players that the host plays itself. Set `server.bots`
-(`HALO_SERVER_BOTS`) to the number of bots, from 0 to 127. The bots join the
+(`HALO_SERVER_BOTS`) to the number of bots, from 0 to 127, or 0 to 128 (a
+full lobby) with `server.bots_fill` below. The bots join the
 lobby of each game that the host makes (a dedicated server's, or a game
 that the menus host), and stay from game to game as the other players do.
 Co-op games have no bots.
@@ -1243,9 +1244,12 @@ Co-op games have no bots.
   is how many players the game has in all: a bot leaves as each person
   joins. `server.max_players` sets how many players a dedicated server's
   games take (0: 128).
+- Without `server.bots_fill`, `server.bots` stays at 127 at most, so a
+  person can always join; with it, a full lobby of 128 is allowed, since a
+  person who joins one still gets in (a bot leaves at once, as above).
 - A host that the menus make sets them in Server Setup's BOTS screen
-  (BOTS: 0 to 16, then 20, 24, 32, 48, 64, 96 and 127; DIFFICULTY and FILL,
-  which write these settings); a change in the
+  (BOTS: 0 to 16, then 20, 24, 32, 48, 64, 96, 127 and 128; DIFFICULTY and
+  FILL, which write these settings); a change in the
   lobby takes effect at once.
 - A bot plays Slayer: it roams the map along the walking graph (below),
   takes better weapons, powerups and grenades lying about, and fights the

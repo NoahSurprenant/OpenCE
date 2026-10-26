@@ -114,6 +114,16 @@ static short bots_difficulty_setting(
 	return difficulty == NONE ? _bot_difficulty_normal : difficulty;
 }
 
+/* the most bots server.bots may ask for right now: BOTS_MAXIMUM (a full
+lobby) with server.bots_fill, since a bot leaves at once for a person who
+joins a full game (bots_make_room); else BOTS_MAXIMUM - 1, so a person can
+always join */
+static short bots_maximum(
+	void)
+{
+	return config_boolean("server.bots_fill") ? BOTS_MAXIMUM : BOTS_MAXIMUM - 1;
+}
+
 /* the difficulty of the next bot added by the settings: the next of
 debug.bot_difficulties ("easy,normal,hard,legendary": one for each bot in
 the order they join, for games of bots of each difficulty against each
@@ -714,7 +724,7 @@ void bots_update(
 	if (!bots_globals.hosting)
 	{
 		bots_globals.hosting = TRUE;
-		bots_globals.setting = (short)PIN(config_integer("server.bots"), 0, BOTS_MAXIMUM);
+		bots_globals.setting = (short)PIN(config_integer("server.bots"), 0, bots_maximum());
 		bots_globals.wanted = bots_globals.setting;
 		bots_globals.difficulty_setting = bots_difficulty_setting();
 	}
@@ -722,7 +732,7 @@ void bots_update(
 	and the difficulty taken at once) */
 	if (system_milliseconds() - bots_globals.settings_read >= 1000)
 	{
-		short setting = (short)PIN(config_integer("server.bots"), 0, BOTS_MAXIMUM);
+		short setting = (short)PIN(config_integer("server.bots"), 0, bots_maximum());
 		short difficulty = bots_difficulty_setting();
 
 		bots_globals.settings_read = system_milliseconds();
@@ -986,14 +996,14 @@ boolean bots_console_command(
 				return FALSE;
 			}
 		}
-		while (added < count && bots_count() < BOTS_MAXIMUM && bots_add(difficulty))
+		while (added < count && bots_count() < bots_maximum() && bots_add(difficulty))
 		{
 			added++;
 			bots_globals.wanted = MAX(bots_globals.wanted, bots_count());
 		}
 		if (added < count)
 			console_warning("bot add: %ld of %ld added (the game is full, or between games, or has %d bots)",
-				added, count, BOTS_MAXIMUM);
+				added, count, bots_maximum());
 		return added > 0;
 	}
 	if (!strcmp(word, "remove"))

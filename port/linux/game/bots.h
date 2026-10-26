@@ -11,9 +11,12 @@ none of this. */
 
 struct player_datum;
 
-/* the most bots a game has (four to a bot machine): all but one of the
-players a game has, so that a person can always join */
-#define BOTS_MAXIMUM (HALO_PORT_MAXIMUM_NETWORK_PLAYERS - 1)
+/* the most bots the bot array holds (four to a bot machine): a full lobby.
+Only server.bots_fill lets the setting reach it - a bot leaves at once for
+a person who joins a full game (bots_make_room); without it the setting
+stays at BOTS_MAXIMUM - 1, so a person can always join (bots.c's
+bots_maximum) */
+#define BOTS_MAXIMUM HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* the tag every bot's name starts with, so that people know who is one
 (nothing on the wire says so) */
 #define BOTS_NAME_TAG L"[BOT] "

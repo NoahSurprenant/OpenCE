@@ -15,6 +15,7 @@ server:
   timeLimit: 10
   scoreLimit: 25
   bots: 4
+  botsFill: false
   botDifficulty: hard
   botSkaters: 2
 network:
