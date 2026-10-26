@@ -1327,8 +1327,13 @@ def test_bots_names_are_unique_past_32(tmp_path):
         "HALO_NET_ADDRESS": _test_address(160), "HALO_NET_BROADCAST": _test_address(161),
         "HALO_TELNET_CONSOLE": "1", "HALO_TELNET_CONSOLE_PORT": str(port)})}
     try:
+        # ("server: the game starts" logs before the server's own state
+        # reaches ingame - network_game_server_port_add_bot() needs the
+        # lobby open or ingame, so the console's add raced ahead of it and
+        # failed at once; "all machines have successfully loaded" is
+        # logged right as the state becomes ingame, the line after)
         _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) >= 1 and
-              "server: the game starts" in _log(tmp_path, "server"), 60, games, tmp_path,
+              "all machines have successfully loaded" in _log(tmp_path, "server"), 60, games, tmp_path,
               "the first bot did not join")
         answer = _console(port, "bot add 39 peaceful")
         assert "bot add: 0 of 39 added" not in answer, answer
