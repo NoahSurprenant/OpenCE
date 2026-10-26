@@ -1262,7 +1262,11 @@ def test_bots_fill_a_full_lobby(tmp_path):
     128, the chart's maximum) and a person who joins it: a bot leaves at once
     to make room (bots_make_room, which does that either way; server.bots_fill
     only keeps the bots topped up to server.bots as people come and go), the
-    person plays, and when they leave a bot comes back. About two minutes."""
+    person plays, and when they leave a bot comes back. Bots join one a frame
+    (bots.c's bots_update), and joining 128 of them to a lobby that resends
+    its settings to everyone already in it takes several minutes on a busy
+    runner (as test_skating_bots_crowd's "three minutes" for far fewer bots
+    riding, not just joining, does). About thirteen minutes."""
     maps, paths = _needs("HALO_TEST_GAME", "HALO_TEST_SERVER")
     server, game = paths["HALO_TEST_SERVER"], paths["HALO_TEST_GAME"]
     games = {"server": _start(tmp_path, "server", server, maps, {
@@ -1272,7 +1276,7 @@ def test_bots_fill_a_full_lobby(tmp_path):
     executables = {"server": server, "client": game}
     try:
         _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) >= 128 and
-              "server: the game starts" in _log(tmp_path, "server"), 180, games, tmp_path,
+              "server: the game starts" in _log(tmp_path, "server"), 600, games, tmp_path,
               "a full lobby of 128 bots did not join")
         games["client"] = _start(tmp_path, "client", game, maps, {
             "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
