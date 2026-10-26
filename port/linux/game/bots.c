@@ -55,13 +55,28 @@ void console_warning(const char *format, ...);
 #define BOT_NAME_LENGTH 12
 
 /* the call-signs after the name tag: a bot's name, as a player's, is at most
-11 characters */
+11 characters ("[BOT] " is 6, so each of these at most 5). One hundred and
+twenty-eight of them - a full lobby's worth (BOTS_MAXIMUM) - so bots_new_name
+never needs its numbered fallback for however many bots the host can have at
+once; it stays only in case that ever changes without this list keeping up */
 static wchar_t const *const bot_names[] =
 {
 	L"Alpha", L"Bravo", L"Delta", L"Echo", L"Golf", L"Hotel", L"India", L"Kilo",
 	L"Lima", L"Mike", L"Oscar", L"Papa", L"Romeo", L"Tango", L"Zulu", L"Ash",
 	L"Brick", L"Cobra", L"Dutch", L"Ember", L"Flint", L"Ghost", L"Hawk", L"Iron",
 	L"Jade", L"Knox", L"Lynx", L"Moss", L"Nova", L"Onyx", L"Pike", L"Rook",
+	L"Wolf", L"Bear", L"Lion", L"Puma", L"Fox", L"Hare", L"Crow", L"Owl",
+	L"Eagle", L"Viper", L"Adder", L"Mamba", L"Raven", L"Crane", L"Heron", L"Stork",
+	L"Swan", L"Dove", L"Wren", L"Robin", L"Finch", L"Quail", L"Teal", L"Drake",
+	L"Goose", L"Swift", L"Lark", L"Kite", L"Elk", L"Deer", L"Moose", L"Boar",
+	L"Bull", L"Stag", L"Buck", L"Mule", L"Goat", L"Lamb", L"Pony", L"Shark",
+	L"Orca", L"Tuna", L"Trout", L"Perch", L"Bass", L"Carp", L"Eel", L"Crab",
+	L"Clam", L"Newt", L"Toad", L"Frog", L"Gator", L"Mink", L"Otter", L"Skunk",
+	L"Civet", L"Lemur", L"Koala", L"Panda", L"Tiger", L"Zebra", L"Camel", L"Llama",
+	L"Moth", L"Wasp", L"Flea", L"Gnat", L"Snail", L"Slug", L"Worm", L"Tick",
+	L"Mite", L"Steel", L"Brass", L"Zinc", L"Lead", L"Gold", L"Opal", L"Topaz",
+	L"Amber", L"Coral", L"Chalk", L"Slate", L"Shale", L"Pearl", L"Ruby", L"Jet",
+	L"Azure", L"Ivory", L"Khaki", L"Beige", L"Umber", L"Sepia", L"Plum", L"Olive",
 };
 
 static struct
@@ -197,6 +212,7 @@ static void bots_new_name(
 	int size)
 {
 	short index;
+	long number;
 
 	for (index = 0; index < (short)NUMBEROF(bot_names); index++)
 	{
@@ -206,7 +222,36 @@ static void bots_new_name(
 		if (!bots_name_taken(game, name))
 			return;
 	}
-	/* (all taken: the host's numbering makes it unique) */
+	/* (all taken - more bots than call-signs, which bot_names having
+	BOTS_MAXIMUM of them never lets happen today: the first free one numbered
+	("Alph2", "Alph3", ...) as get_unique_random_name does, its call-sign
+	shortened to make room for the digits if it must) */
+	for (number = 2; number < 1000; number++)
+	{
+		for (index = 0; index < (short)NUMBEROF(bot_names); index++)
+		{
+			wchar_t digits[4];
+			int digit_count = 0;
+			int base_length;
+			long value;
+
+			ustrncpy(name, BOTS_NAME_TAG, size - 1);
+			name[size - 1] = 0;
+			ustrncat(name, bot_names[index], size - 1 - (int)ustrlen(name));
+			base_length = (int)ustrlen(name);
+			for (value = number; value; value /= 10)
+				digits[digit_count++] = (wchar_t)(L'0' + value % 10);
+			base_length = MIN(base_length, size - 1 - digit_count);
+			while (digit_count > 0)
+				name[base_length++] = digits[--digit_count];
+			name[base_length] = 0;
+			if (!bots_name_taken(game, name))
+				return;
+		}
+	}
+	/* (even that is somehow exhausted: the caller's buffer, whatever it last
+	held, is used as is - bots_add() only warns the lobby, it never refuses a
+	bot over its name) */
 }
 
 static short bots_count(
