@@ -1308,33 +1308,37 @@ def test_bots_fill_a_full_lobby(tmp_path):
 
 def test_bots_names_are_unique_past_32(tmp_path):
     """A dedicated server with one bot (so the lobby is not alone and
-    starts), then 127 more added at once over the telnet console ("bot add
-    127": unlike server.bots_fill's one-a-frame top-up, the console's own
-    "add" loop is not paced, so the rest join in seconds, not minutes): all
-    128 get distinct names. bot_names (bots.c) has BOTS_MAXIMUM call-signs
-    now, so bots_new_name's own loop finds a free one for each of them;
-    before, with only 32, every bot past the 32nd got the same name
-    ("[BOT] Rook"). About a minute."""
+    starts), then 39 more added at once over the telnet console ("bot add
+    39": unlike server.bots_fill's one-a-frame top-up, the console's own
+    "add" loop is not paced): all 40 - past the 32 call-signs bot_names had
+    before - get distinct names. bot_names (bots.c) now has BOTS_MAXIMUM of
+    them, so bots_new_name's own loop finds a free one for each; before,
+    every bot past the 32nd got the same name ("[BOT] Rook"). server.max
+    players is set explicitly: debug.network_test's dedicated host only
+    reads it when a server name is given too (network_test.c), so without
+    it the lobby is left at its small built-in default and the console's
+    "add" fails at once, full. About two minutes."""
     maps, paths = _needs("HALO_TEST_SERVER")
     server = paths["HALO_TEST_SERVER"]
     port = 23230 + os.getpid() % 500
     games = {"server": _start(tmp_path, "server", server, maps, {
         "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "1",
-        "HALO_SERVER_BOTS_FILL": "1", "HALO_BOT_SEED": "9",
+        "HALO_SERVER_MAX_PLAYERS": "40", "HALO_SERVER_BOTS_FILL": "1", "HALO_BOT_SEED": "9",
         "HALO_NET_ADDRESS": _test_address(160), "HALO_NET_BROADCAST": _test_address(161),
         "HALO_TELNET_CONSOLE": "1", "HALO_TELNET_CONSOLE_PORT": str(port)})}
     try:
         _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) >= 1 and
               "server: the game starts" in _log(tmp_path, "server"), 60, games, tmp_path,
               "the first bot did not join")
-        _console(port, "bot add 127 peaceful")
-        _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) >= 128, 120, games, tmp_path,
-              "the console did not add the remaining 127 bots")
+        answer = _console(port, "bot add 39 peaceful")
+        assert "bot add: 0 of 39 added" not in answer, answer
+        _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) >= 40, 180, games, tmp_path,
+              "the console did not add the remaining 39 bots")
     finally:
         _stop(games, tmp_path, {"server": server})
         for cache in (tmp_path / "server" / "saves").rglob("cache*.map"):
             cache.unlink()
     names = [name for name, *_ in BOT_JOINED.findall(_log(tmp_path, "server"))]
-    assert len(names) == 128, f"{len(names)} bots joined, not 128: {names}"
+    assert len(names) == 40, f"{len(names)} bots joined, not 40: {names}"
     repeats = sorted(n for n in set(names) if names.count(n) > 1)
     assert not repeats, f"some bots share a name: {repeats}"
