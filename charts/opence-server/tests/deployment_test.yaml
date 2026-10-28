@@ -56,7 +56,7 @@ tests:
 
   - it: maps the settings to the HALO_ variables
     set:
-      server: { maps: ["bloodgulch:slayer", "bloodgulch:ctf", "hangemhigh:king"], gameTypes: [slayer], timeLimit: 10, scoreLimit: 25, bots: 4, botsFill: false, botDifficulty: hard, botSkaters: 2 }
+      server: { maps: ["bloodgulch:slayer", "bloodgulch:ctf", "hangemhigh:king"], gameTypes: [slayer], timeLimit: 10, scoreLimit: 25, bots: 4, botsFill: false, botDifficulty: hard, botSkaters: 2, trickAttack: { roundMinutes: 8, bankDelayTenths: 30, stealPercent: 75, hotSpotMultiplierTenths: 30, hotSpotSeconds: 45, ramming: 1 } }
       network: { publicAddress: "halo.example.com:27015", serverName: Test, hostPublic: true }
     asserts:
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_DEDICATED, value: "1" } }
@@ -70,6 +70,12 @@ tests:
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOTS_FILL, value: "false" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOT_DIFFICULTY, value: hard } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_BOT_SKATERS, value: "2" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_MINUTES, value: "8" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_BANK_DELAY, value: "30" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_STEAL, value: "75" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_HOT_SPOT_MULTIPLIER, value: "30" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_HOT_SPOT_SECONDS, value: "45" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_RAMMING, value: "1" } }
       - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SKATE_ASSETS, value: /skate-data/assets } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_TUNNEL_PORT, value: "27015" } }
       - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_PUBLIC_ADDRESS, value: "halo.example.com:27015" } }
@@ -90,6 +96,27 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "server/bots"
+
+  - it: leaves Trick Attack settings to the game type by default
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_MINUTES, value: "0" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_BANK_DELAY, value: "0" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_STEAL, value: "0" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_HOT_SPOT_MULTIPLIER, value: "0" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_HOT_SPOT_SECONDS, value: "0" } }
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_RAMMING, value: "-1" } }
+
+  - it: turns Trick Attack ramming off
+    set:
+      server.trickAttack.ramming: 0
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_SERVER_TRICK_RAMMING, value: "0" } }
+
+  - it: refuses a Trick Attack hot spot multiplier between 1 and 9 (0 or 10-100 only)
+    set:
+      server.trickAttack.hotSpotMultiplierTenths: 5
+    asserts:
+      - failedTemplate: {}
 
   - it: is invite-only by default and leaves empty settings to the game
     asserts:

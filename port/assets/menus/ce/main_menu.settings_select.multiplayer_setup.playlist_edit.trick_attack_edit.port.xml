@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The port's multiplayer screens, in the PC version's style (tools/port_settings.py) -->
+<menus>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_options_screen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/gradient">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/game_type_select/header_rules"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_options_menu"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_options_help" type="text" controller="1" left="68" top="345" width="482" height="66" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/cap_trick_attack_options" font="ui\large_ui" color="#FFFFFFFF">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_options_menu" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_children" description="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_options_help">
+		<data input="game settings lists text update"/>
+		<on event="created" run="mp profile init trick attack rules"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_attack" x="54" y="73"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_minutes" x="54" y="103"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_bank_delay" x="54" y="133"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_steal" x="54" y="163"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_hot_spot_multiplier" x="54" y="193"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_hot_spot_seconds" x="54" y="223"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_ramming" x="54" y="253"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_button_bar" y="414"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
+		<data input="common button bar update"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_button_ok" x="380" y="1"/>
+		<child widget="common_button_cancel" x="510" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_button_ok" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="1" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
+		<on event="a" run="mp profile set trick attack rules" back="true"/>
+		<on event="start" run="mp profile set trick attack rules" back="true"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_attack" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_label"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_labels" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_attack" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_attack">
+		<string text="OFF"/>
+		<string text="ON"/>
+	</strings>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_minutes" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_minutes_label"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_minutes_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_minutes_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_labels" string_index="1" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_minutes_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_minutes" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_minutes">
+		<string text="1 MIN"/>
+		<string text="2 MIN"/>
+		<string text="3 MIN"/>
+		<string text="4 MIN"/>
+		<string text="5 MIN"/>
+		<string text="6 MIN"/>
+		<string text="7 MIN"/>
+		<string text="8 MIN"/>
+		<string text="9 MIN"/>
+		<string text="10 MIN"/>
+		<string text="11 MIN"/>
+		<string text="12 MIN"/>
+		<string text="13 MIN"/>
+		<string text="14 MIN"/>
+		<string text="15 MIN"/>
+		<string text="16 MIN"/>
+		<string text="17 MIN"/>
+		<string text="18 MIN"/>
+		<string text="19 MIN"/>
+		<string text="20 MIN"/>
+		<string text="21 MIN"/>
+		<string text="22 MIN"/>
+		<string text="23 MIN"/>
+		<string text="24 MIN"/>
+		<string text="25 MIN"/>
+		<string text="26 MIN"/>
+		<string text="27 MIN"/>
+		<string text="28 MIN"/>
+		<string text="29 MIN"/>
+		<string text="30 MIN"/>
+	</strings>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_bank_delay" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_bank_delay_label"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_bank_delay_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_bank_delay_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_labels" string_index="2" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_bank_delay_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_bank_delay" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_bank_delay">
+		<string text="0.5 SEC"/>
+		<string text="1.0 SEC"/>
+		<string text="1.5 SEC"/>
+		<string text="2.0 SEC"/>
+		<string text="2.5 SEC"/>
+		<string text="3.0 SEC"/>
+		<string text="3.5 SEC"/>
+		<string text="4.0 SEC"/>
+		<string text="4.5 SEC"/>
+		<string text="5.0 SEC"/>
+	</strings>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_steal" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_steal_label"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_steal_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_steal_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_labels" string_index="3" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_steal_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_steal" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_steal">
+		<string text="10%"/>
+		<string text="20%"/>
+		<string text="30%"/>
+		<string text="40%"/>
+		<string text="50%"/>
+		<string text="60%"/>
+		<string text="70%"/>
+		<string text="80%"/>
+		<string text="90%"/>
+		<string text="100%"/>
+	</strings>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_hot_spot_multiplier" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_hot_spot_multiplier_label"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_hot_spot_multiplier_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_hot_spot_multiplier_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_labels" string_index="4" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_hot_spot_multiplier_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_hot_spot_multiplier" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_hot_spot_multiplier">
+		<string text="x1.5"/>
+		<string text="x2"/>
+		<string text="x2.5"/>
+		<string text="x3"/>
+		<string text="x3.5"/>
+		<string text="x4"/>
+		<string text="x4.5"/>
+		<string text="x5"/>
+	</strings>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_hot_spot_seconds" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_hot_spot_seconds_label"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_hot_spot_seconds_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_hot_spot_seconds_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_labels" string_index="5" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_hot_spot_seconds_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_hot_spot_seconds" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_hot_spot_seconds">
+		<string text="15 SEC"/>
+		<string text="30 SEC"/>
+		<string text="45 SEC"/>
+		<string text="60 SEC"/>
+		<string text="75 SEC"/>
+		<string text="90 SEC"/>
+		<string text="105 SEC"/>
+		<string text="120 SEC"/>
+		<string text="135 SEC"/>
+		<string text="150 SEC"/>
+		<string text="165 SEC"/>
+		<string text="180 SEC"/>
+	</strings>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/op_trick_ramming" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_ramming_label"/>
+		<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_ramming_spinner" x="286" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_ramming_label" type="text" controller="1" width="300" height="22" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_labels" string_index="6" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_ramming_spinner" type="spinner" top="2" width="206" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_ramming" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -13 19 -7" footer_bounds="7 208 19 214">
+		<on event="left_mouse" run="mouse spinner 1wide click"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/var_trick_ramming">
+		<string text="ON"/>
+		<string text="OFF"/>
+	</strings>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_labels">
+		<string text="TRICK ATTACK:"/>
+		<string text="ROUND TIME:"/>
+		<string text="BANK DELAY:"/>
+		<string text="STEAL SHARE:"/>
+		<string text="HOT SPOT MULTIPLIER:"/>
+		<string text="HOT SPOT DURATION:"/>
+		<string text="RAMMING:"/>
+	</strings>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/cap_trick_attack_options">
+		<string text="Slayer as it is."/>
+		<string text="Everyone skates, nobody shoots: trick combos bank\nwhen ridden away clean; ramming someone mid-combo\nsteals a share. Highest score wins."/>
+		<string text="The highest score when 1 minute is up wins."/>
+		<string text="The highest score when 2 minutes is up wins."/>
+		<string text="The highest score when 3 minutes is up wins."/>
+		<string text="The highest score when 4 minutes is up wins."/>
+		<string text="The highest score when 5 minutes is up wins."/>
+		<string text="The highest score when 6 minutes is up wins."/>
+		<string text="The highest score when 7 minutes is up wins."/>
+		<string text="The highest score when 8 minutes is up wins."/>
+		<string text="The highest score when 9 minutes is up wins."/>
+		<string text="The highest score when 10 minutes is up wins."/>
+		<string text="The highest score when 11 minutes is up wins."/>
+		<string text="The highest score when 12 minutes is up wins."/>
+		<string text="The highest score when 13 minutes is up wins."/>
+		<string text="The highest score when 14 minutes is up wins."/>
+		<string text="The highest score when 15 minutes is up wins."/>
+		<string text="The highest score when 16 minutes is up wins."/>
+		<string text="The highest score when 17 minutes is up wins."/>
+		<string text="The highest score when 18 minutes is up wins."/>
+		<string text="The highest score when 19 minutes is up wins."/>
+		<string text="The highest score when 20 minutes is up wins."/>
+		<string text="The highest score when 21 minutes is up wins."/>
+		<string text="The highest score when 22 minutes is up wins."/>
+		<string text="The highest score when 23 minutes is up wins."/>
+		<string text="The highest score when 24 minutes is up wins."/>
+		<string text="The highest score when 25 minutes is up wins."/>
+		<string text="The highest score when 26 minutes is up wins."/>
+		<string text="The highest score when 27 minutes is up wins."/>
+		<string text="The highest score when 28 minutes is up wins."/>
+		<string text="The highest score when 29 minutes is up wins."/>
+		<string text="The highest score when 30 minutes is up wins."/>
+		<string text="A combo banks after 0.5 seconds riding on\nclean."/>
+		<string text="A combo banks after 1.0 seconds riding on\nclean."/>
+		<string text="A combo banks after 1.5 seconds riding on\nclean."/>
+		<string text="A combo banks after 2.0 seconds riding on\nclean."/>
+		<string text="A combo banks after 2.5 seconds riding on\nclean."/>
+		<string text="A combo banks after 3.0 seconds riding on\nclean."/>
+		<string text="A combo banks after 3.5 seconds riding on\nclean."/>
+		<string text="A combo banks after 4.0 seconds riding on\nclean."/>
+		<string text="A combo banks after 4.5 seconds riding on\nclean."/>
+		<string text="A combo banks after 5.0 seconds riding on\nclean."/>
+		<string text="Ramming a skater mid-combo takes 10% of their\nunbanked combo."/>
+		<string text="Ramming a skater mid-combo takes 20% of their\nunbanked combo."/>
+		<string text="Ramming a skater mid-combo takes 30% of their\nunbanked combo."/>
+		<string text="Ramming a skater mid-combo takes 40% of their\nunbanked combo."/>
+		<string text="Ramming a skater mid-combo takes 50% of their\nunbanked combo."/>
+		<string text="Ramming a skater mid-combo takes 60% of their\nunbanked combo."/>
+		<string text="Ramming a skater mid-combo takes 70% of their\nunbanked combo."/>
+		<string text="Ramming a skater mid-combo takes 80% of their\nunbanked combo."/>
+		<string text="Ramming a skater mid-combo takes 90% of their\nunbanked combo."/>
+		<string text="Ramming a skater mid-combo takes 100% of their\nunbanked combo."/>
+		<string text="The hot spot scores x1.5 what is landed in it."/>
+		<string text="The hot spot scores x2 what is landed in it."/>
+		<string text="The hot spot scores x2.5 what is landed in it."/>
+		<string text="The hot spot scores x3 what is landed in it."/>
+		<string text="The hot spot scores x3.5 what is landed in it."/>
+		<string text="The hot spot scores x4 what is landed in it."/>
+		<string text="The hot spot scores x4.5 what is landed in it."/>
+		<string text="The hot spot scores x5 what is landed in it."/>
+		<string text="The hot spot moves to a new spot every 15 seconds."/>
+		<string text="The hot spot moves to a new spot every 30 seconds."/>
+		<string text="The hot spot moves to a new spot every 45 seconds."/>
+		<string text="The hot spot moves to a new spot every 60 seconds."/>
+		<string text="The hot spot moves to a new spot every 75 seconds."/>
+		<string text="The hot spot moves to a new spot every 90 seconds."/>
+		<string text="The hot spot moves to a new spot every 105 seconds."/>
+		<string text="The hot spot moves to a new spot every 120 seconds."/>
+		<string text="The hot spot moves to a new spot every 135 seconds."/>
+		<string text="The hot spot moves to a new spot every 150 seconds."/>
+		<string text="The hot spot moves to a new spot every 165 seconds."/>
+		<string text="The hot spot moves to a new spot every 180 seconds."/>
+		<string text="Ramming a skater mid-combo makes them bail and\ntakes a share of their combo into the rammer's\nscore."/>
+		<string text="Skaters never bail from a ram."/>
+	</strings>
+	<widget name="main_menu/settings_select/multiplayer_setup/playlist_edit/slayer_edit/op_trick_attack_options" type="text" width="512" height="28" bitmap="bitmaps/option_bkds" string_list="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_row" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+		<on event="a" open="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_options_screen"/>
+		<on event="start" open="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_options_screen"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
+	<strings name="main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit/trick_attack_row">
+		<string text="TRICK ATTACK OPTIONS..."/>
+	</strings>
+</menus>

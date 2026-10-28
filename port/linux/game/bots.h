@@ -91,6 +91,18 @@ long bots_board_reaches(
 	real *node_x,
 	real *node_y,
 	real *node_z);
+/* (trick_attack.c) a spot a board reaches and leaves (the main ground of
+bots_board_reaches): the pick'th, round, of those at least away_distance
+(world units, level) from away_x/y - of any with none so far - into x/y/z;
+how many there were, 0 for none, NONE unknown (no graph yet) */
+long bots_board_spot(
+	unsigned long pick,
+	real away_x,
+	real away_y,
+	real away_distance,
+	real *x,
+	real *y,
+	real *z);
 /* (infection.c) the map's walking graph is wanted even with no bots (a
 host's, bots_update: built aside as for bots); a client builds its own here
 (it has no bots_update): call each tick while wanted */

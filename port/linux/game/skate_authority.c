@@ -58,6 +58,7 @@ decides), and its client's skater decides its own hits as before. */
 #include <stdio.h>
 #include <string.h>
 #include "infection.h"
+#include "trick_attack.h"
 
 /* the platform layer's (the port's log) */
 void platform_log(const char *format, ...);
@@ -758,7 +759,7 @@ static void skate_authority_run_over(struct skate_verdict const *verdict, boolea
 	struct object_datum *skater = object_try_and_get(skater_index);
 	struct skate_run_over_watch *watch;
 	/* (Infection: an infected skater's, scaled by the variant) */
-	real share = infection_run_over_share(skater_index, skate_run_over_share(verdict->closing));
+	real share = trick_attack_run_over_share(infection_run_over_share(skater_index, skate_run_over_share(verdict->closing)));
 
 	/* (one dead here already
 , the host's killing blow come first, is watched
@@ -983,6 +984,24 @@ static void skate_authority_decide(long machine_index, struct skate_report const
 	input.normal = report->normal;
 	input.run_over_told = TEST_FLAG(report->flags, _skate_report_run_over_bit);
 	skate_verdict_decide(&input, &outcome);
+	/* (Trick Attack: ramming a skater mid-combo knocks them off and takes a
+	share of it: trick_attack.c) */
+	if (outcome.believed && input.parties[1].skater)
+	{
+		byte target_player = skate_authority_player_of(report->target_index);
+
+		/* (the rammer: whichever of the two came at the other faster) */
+		real_vector3d apart;
+		real skater_closing, target_closing;
+
+		vector_from_points3d(&skater->object.position, &target->object.position, &apart);
+		skater_closing = dot_product3d(&skater->object.translational_velocity, &apart);
+		target_closing = -dot_product3d(&target->object.translational_velocity, &apart);
+		if (target_player != SKATE_AUTHORITY_NO_PLAYER && skater_closing >= target_closing)
+			trick_attack_ram(report->player_index, target_player, outcome.closing, &outcome.bails[0], &outcome.bails[1]);
+		else if (target_player != SKATE_AUTHORITY_NO_PLAYER)
+			trick_attack_ram(target_player, report->player_index, outcome.closing, &outcome.bails[1], &outcome.bails[0]);
+	}
 	if (!outcome.believed)
 	{
 		platform_log("skate verdict refused: player %d's hit at %.1f m/s, %.2f world units apart (%.2f believed)",
@@ -1202,7 +1221,10 @@ void skate_authority_handle_reports(long machine_index, byte const *data, byte c
 	{
 		struct skate_report report;
 
-		if (skate_report_read(data, &report))
+		/* (Trick Attack's own entries: a client's skater's tricks) */
+		if (data[0] == TRICK_ATTACK_ENTRY_FORMAT)
+			trick_attack_handle_report(machine_index, data);
+		else if (skate_report_read(data, &report))
 			skate_authority_decide(machine_index, &report);
 	}
 }
@@ -1218,6 +1240,12 @@ void skate_authority_handle_verdicts(byte const *data, byte const *end, short co
 		struct skate_verdict verdict;
 		short heard;
 
+		/* (Trick Attack's own entries: the combos going, the hot spot) */
+		if (data[0] == TRICK_ATTACK_ENTRY_FORMAT)
+		{
+			trick_attack_handle_entry(data);
+			continue;
+		}
 		if (!skate_verdict_read(data, &verdict))
 			continue;
 		skate_authority_globals.announced_time = game_time_get();

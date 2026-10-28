@@ -102,9 +102,10 @@ enum
 	PLAYLIST_PROFILE_OPTIONS_MAGIC = 0x4F565047, /* 'GPVO' little-endian */
 	PLAYLIST_PROFILE_OPTIONS_VERSION = 1,
 	MAXIMUM_GAME_VARIANT_NAME_LENGTH = 12,
-	/* port: and Infection's (port/linux/game/infection.c), the 27th, which
-	the map's names (ui\default_multiplayer_game_setting_names) lack */
-	NUMBER_OF_DEFAULT_PLAYLIST_PROFILES = 27,
+	/* port: and Infection's (port/linux/game/infection.c), the 27th, and
+	Trick Attack's (port/linux/game/trick_attack.c), the 28th, which the
+	map's names (ui\default_multiplayer_game_setting_names) lack */
+	NUMBER_OF_DEFAULT_PLAYLIST_PROFILES = 28,
 	NUMBER_OF_XBOX_DEFAULT_PLAYLIST_PROFILES = 26,
 };
 
@@ -227,6 +228,7 @@ static struct playlist_profile_data playlist_profile_default_data =
 		build_game_variant_team_king,
 		build_game_variant_team_slayer,
 		build_game_variant_infection,
+		build_game_variant_trick_attack,
 	},
 	TRUE
 };
@@ -574,9 +576,12 @@ static void playlist_profile_create_default_profiles_on_disk(
 			csstrncat(path, "\\blam.lst", MAXIMUM_FILENAME_LENGTH);
 			path[MAXIMUM_FILENAME_LENGTH] = 0;
 
-			/* port: past the map's names, the port's own */
-			if (profile_index >= NUMBER_OF_XBOX_DEFAULT_PLAYLIST_PROFILES)
+			/* port: past the map's names, the port's own (TrickAttack: no
+			space, MAXIMUM_GAME_VARIANT_NAME_LENGTH - 1 holds 11 wide chars) */
+			if (profile_index == NUMBER_OF_XBOX_DEFAULT_PLAYLIST_PROFILES)
 				display_name = L"Infection";
+			else if (profile_index > NUMBER_OF_XBOX_DEFAULT_PLAYLIST_PROFILES)
+				display_name = L"TrickAttack";
 			else
 			{
 				display_name = unicode_string_list_get_string(

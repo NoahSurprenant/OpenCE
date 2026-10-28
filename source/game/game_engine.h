@@ -127,6 +127,25 @@ struct slayer_variant
 	/* the seconds a survivor may stay where no board reaches (a roof, a
 	tower) before it hurts them (infection.c); 0: 10, 255: never */
 	byte infection_out_of_reach;
+	/* port: Trick Attack (port/linux/game/trick_attack.c), in the same
+	unused bytes: a free-for-all on skateboards scored by the tricks each
+	skater lands (Skate 3's own scoring). Builds before it play Slayer. */
+	boolean trick_attack;
+	/* the round's minutes (the highest score then wins); 0: 5 */
+	byte trick_minutes;
+	/* tenths of a second a combo must ride on clean after its last landing
+	before it banks; 0: 20 */
+	byte trick_bank_delay;
+	/* the percent of a rammed skater's unbanked combo their rammer takes;
+	0: 50 */
+	byte trick_steal;
+	/* the hot spot's multiplier of what is landed in it, in tenths; 0: 20 */
+	byte trick_hot_spot_multiplier;
+	/* the seconds the hot spot stays before it moves; 0: 60 */
+	byte trick_hot_spot_seconds;
+	/* ramming (knocking a skater mid-combo off their board steals a share
+	of it): 0 on, else off */
+	byte trick_no_ramming;
 };
 
 struct king_variant
@@ -653,6 +672,11 @@ long game_engine_port_player_score(
 void game_engine_port_set_player_team(
 	long player_index,
 	long team_index);
+/* port: Trick Attack (port/linux/game/trick_attack.c): the host adds points
+to the player's Slayer score (a banked combo, a ram's take) */
+void game_engine_slayer_port_add_score(
+	long player_index,
+	long points);
 
 void game_engine_clear_goal_position(
 	short goal_index);

@@ -457,6 +457,12 @@ jobs:
     # tests run in that group too: no skater goes through a floor on the
     # server or a lossy client (Blood Gulch, Sidewinder, Hang 'Em High), and
     # a biped left in the floor gets on its board on that floor.
+    # tools/test_trick_attack.py (Trick Attack: port/linux/README.md's "Trick
+    # Attack") runs beside them as a group of its own: six bots scoring by
+    # their tricks within the rules (always on a board, unarmed), the hot
+    # spot moving where a board reaches; hunting bots ramming combos and
+    # taking half; a listen host with a client whose skater's tricks the host
+    # scores, both playing an edited gametype and the client's HUD showing it.
     #
 
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
@@ -558,6 +564,10 @@ jobs:
             tools/test_skating_bots.py::test_skating_bots_get_on_in_the_floor -k "not test_infection_out_of_reach" \
             > "$RUNNER_TEMP/infection.log" 2>&1 &
           infection=$!
+          # (and Trick Attack, tools/test_trick_attack.py, a group of its own)
+          python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/trick-attack" \
+            tools/test_trick_attack.py > "$RUNNER_TEMP/trick-attack.log" 2>&1 &
+          trick_attack=$!
           # (and the skaters' falls out of the level, tools/test_skating_bots.py's
           # level_it_rides and fall_again, with this shortest group)
           python3 -m pytest -v -rs -p no:cacheprovider --basetemp="$RUNNER_TEMP/skate-mp" \
@@ -568,8 +578,10 @@ jobs:
             tee "$RUNNER_TEMP/skate-mp.log" || true
           wait $bots || true
           wait $infection || true
+          wait $trick_attack || true
           cat "$RUNNER_TEMP/skate-bots.log"
           cat "$RUNNER_TEMP/infection.log"
+          cat "$RUNNER_TEMP/trick-attack.log"
           if ! grep -q '10 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
             echo "::error::test_skate_multiplayer, test_skate_hitbox, the five test_dedicated_server tests, test_infection_out_of_reach and the two fall tests did not all run and pass"
             exit 1
@@ -583,6 +595,10 @@ jobs:
 
             exit 1
           fi
+          if ! grep -q '3 passed' "$RUNNER_TEMP/trick-attack.log" || grep -qi 'skipped' "$RUNNER_TEMP/trick-attack.log"; then
+            echo "::error::the three tests of tools/test_trick_attack.py did not all run and pass"
+            exit 1
+          fi
 
       - name: Compile cache
         run: ccache --show-stats
@@ -593,7 +609,8 @@ jobs:
         if: failure()
         run: |
           for f in "$RUNNER_TEMP"/skate-mp/*/*/run.log "$RUNNER_TEMP"/skate-mp/*/*/*/run.log \
-            "$RUNNER_TEMP"/skate-bots/*/*/run.log "$RUNNER_TEMP"/infection/*/*/run.log; do
+            "$RUNNER_TEMP"/skate-bots/*/*/run.log "$RUNNER_TEMP"/infection/*/*/run.log \
+            "$RUNNER_TEMP"/trick-attack/*/*/run.log; do
 
             [ -f "$f" ] && { echo "== $f"; tail -n 60 "$f"; }
           done

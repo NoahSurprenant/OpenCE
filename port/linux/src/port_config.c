@@ -682,6 +682,42 @@ static const struct config_setting config_settings[] =
 		"Infection's test: the players (absolute indices, with commas between)\n"
 		"who start infected, instead of a random choice; \"client\": the people on\n"
 		"other machines than the host; \"bots\": every bot." },
+	{ "server.trick_minutes", _config_integer, "0", "HALO_SERVER_TRICK_MINUTES", _environment_value, _platform_all,
+		"Trick Attack (port/linux/README.md's \"Trick Attack\"): the round's\n"
+		"minutes (a shorter server.time_limit wins); 0 for the game type's own (5)." },
+	{ "server.trick_bank_delay", _config_integer, "0", "HALO_SERVER_TRICK_BANK_DELAY", _environment_value,
+		_platform_all,
+		"Trick Attack: tenths of a second a combo must ride on clean after its\n"
+		"last landing before it banks; 0 for the game type's own (20)." },
+	{ "server.trick_steal", _config_integer, "0", "HALO_SERVER_TRICK_STEAL", _environment_value, _platform_all,
+		"Trick Attack: the percent of a rammed skater's unbanked combo their\n"
+		"rammer takes; 0 for the game type's own (50)." },
+	{ "server.trick_hot_spot_multiplier", _config_integer, "0", "HALO_SERVER_TRICK_HOT_SPOT_MULTIPLIER",
+		_environment_value, _platform_all,
+		"Trick Attack: the hot spot's multiplier of what is landed in it, in\n"
+		"tenths (10 to 100); 0 for the game type's own (20, x2)." },
+	{ "server.trick_hot_spot_seconds", _config_integer, "0", "HALO_SERVER_TRICK_HOT_SPOT_SECONDS", _environment_value,
+		_platform_all,
+		"Trick Attack: the seconds the hot spot stays before it moves; 0 for the\n"
+		"game type's own (60)." },
+	{ "server.trick_ramming", _config_integer, "-1", "HALO_SERVER_TRICK_RAMMING", _environment_value, _platform_all,
+		"Trick Attack: ramming a skater mid-combo knocks them off and takes a\n"
+		"share of it: 1 on, 0 off, -1 the game type's own (on)." },
+	{ "debug.trick_test_place", _config_string, "\"\"", "HALO_TRICK_TEST_PLACE", _environment_value, _platform_all,
+		"Trick Attack's tests: players (absolute indices) the host puts somewhere\n"
+		"once their first unit is in the game, \"<player>:<x>,<y>,<z>\" with\n"
+		"semicolons between (world units), as debug.infection_test_place." },
+	{ "debug.trick_hot_spot", _config_string, "\"\"", "HALO_TRICK_HOT_SPOT", _environment_value, _platform_all,
+		"Trick Attack's tests: the first hot spot, \"<x>,<y>,<z>\" (world units),\n"
+		"instead of a random spot a board reaches; later ones move as ever." },
+	{ "debug.trick_mark_points", _config_integer, "0", "HALO_TRICK_MARK_POINTS", _environment_value, _platform_all,
+		"Trick Attack's tests: the unbanked combo from which a skater is marked\n"
+		"on everyone's HUD, hunted by hard bots and, banked, called out; 0 for\n"
+		"the game type's own (5000)." },
+	{ "debug.trick_hud_log", _config_boolean, "false", "HALO_TRICK_HUD_LOG", _environment_value, _platform_all,
+		"Trick Attack's tests: every machine logs what its HUD shows its player\n"
+		"(the combo, the sequence under way, the hot spot, the leaders, a\n"
+		"callout, the marks) every five seconds." },
 	{ "debug.skate_test_under_floor", _config_real, "0.0", "HALO_SKATE_TEST_UNDER_FLOOR", _environment_value,
 		_platform_all,
 		"Skate 3 mode's test: that many seconds into a game, the host's first bot\n"

@@ -210,6 +210,8 @@ struct bot_tricks
 	boolean grabbing;
 	short grab_trigger;
 	short manual_ticks;
+	/* (Trick Attack) it holds off new tricks for its combo to bank */
+	boolean banking;
 	long pop_tick;
 	long sloppy_tick;
 	real sloppy_air;
@@ -274,6 +276,11 @@ struct bot_skate
 	boolean ramming;
 	/* (Infection) it is infected: it hunts on its board */
 	boolean infected;
+	/* (Trick Attack) the player whose combo it hunts (NONE: none); the hot
+	spot it heads for (a hash of where) and its node */
+	long hunted;
+	long hot_spot_number;
+	long hot_spot_node;
 	boolean bailing;
 	/* it grinds; it lines up with a rail, and the tick before which it tries
 	no other */

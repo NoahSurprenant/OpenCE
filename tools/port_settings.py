@@ -703,10 +703,12 @@ WIDGET_PATCHES = {
         f"{TEAMPLAY_EDIT}/teamplay_button_bar": [
             f'<child widget="{TEAMPLAY_EDIT}/op_{key}" x="54" y="{163 + 30 * index}"/>'
             for index, (key, *_) in enumerate(TEAMPLAY_ROWS)]}},
-    # (Slayer's row opening Infection's options: _infection_options)
+    # (Slayer's rows opening Infection's and Trick Attack's options:
+    # _infection_options, _trick_attack_options)
     f"{SLAYER_EDIT}/slayer_options_menu": {"insert_before": {
         f"{SLAYER_EDIT}/slayer_button_bar": [
-            f'<child widget="{SLAYER_EDIT}/op_infection_options" x="54" y="253"/>']}},
+            f'<child widget="{SLAYER_EDIT}/op_infection_options" x="54" y="253"/>',
+            f'<child widget="{SLAYER_EDIT}/op_trick_attack_options" x="54" y="283"/>']}},
     # (the PC's Vehicles row's Start opened Item Options)
 
     "main_menu/settings_select/multiplayer_setup/playlist_edit/playlist_edit_vehicles_list_item": {"handlers": [
@@ -1579,6 +1581,104 @@ def _infection_options() -> list:
     return lines
 
 
+# Trick Attack's options (port/linux/game/trick_attack.c), a screen of their
+# own opened from Slayer's (_trick_attack_options; menu_functions.c's
+# gametype_options give each spinner's values): each row's key, its label,
+# its choices' words and their helps. trick_ramming's choices are ON then
+# OFF (menu_functions.c's trick_ramming_spinner: _option_byte_not stores
+# trick_no_ramming's complement, so "ON" is the first choice, like the
+# other rows' first choice is their field's own value)
+TRICK_ATTACK_EDIT = "main_menu/settings_select/multiplayer_setup/playlist_edit/trick_attack_edit"
+TRICK_ATTACK_MINUTES = tuple(range(1, 31))
+# tenths of a second
+TRICK_ATTACK_BANK_DELAYS = tuple(range(5, 51, 5))
+TRICK_ATTACK_STEALS = tuple(range(10, 101, 10))
+# tenths (x1.5 to x5.0)
+TRICK_ATTACK_HOT_SPOT_MULTIPLIERS = tuple(range(15, 51, 5))
+TRICK_ATTACK_HOT_SPOT_SECONDS = tuple(range(15, 181, 15))
+TRICK_ATTACK_ROWS = [
+    ("trick_attack", "TRICK ATTACK:", ["OFF", "ON"], [
+        "Slayer as it is.",
+        "Everyone skates, nobody shoots: trick combos bank\\nwhen ridden away clean; ramming someone mid-combo\\nsteals a share. Highest score wins.",
+    ]),
+    ("trick_minutes", "ROUND TIME:", [f"{n} MIN" for n in TRICK_ATTACK_MINUTES],
+     [f"The highest score when {n} minute{'s' if n > 1 else ''} is up wins." for n in TRICK_ATTACK_MINUTES]),
+    ("trick_bank_delay", "BANK DELAY:", [f"{n / 10:.1f} SEC" for n in TRICK_ATTACK_BANK_DELAYS],
+     [f"A combo banks after {n / 10:.1f} seconds riding on\\nclean." for n in TRICK_ATTACK_BANK_DELAYS]),
+    ("trick_steal", "STEAL SHARE:", [f"{n}%" for n in TRICK_ATTACK_STEALS],
+     [f"Ramming a skater mid-combo takes {n}% of their\\nunbanked combo." for n in TRICK_ATTACK_STEALS]),
+    ("trick_hot_spot_multiplier", "HOT SPOT MULTIPLIER:", [f"x{n / 10:g}" for n in TRICK_ATTACK_HOT_SPOT_MULTIPLIERS],
+     [f"The hot spot scores x{n / 10:g} what is landed in it." for n in TRICK_ATTACK_HOT_SPOT_MULTIPLIERS]),
+    ("trick_hot_spot_seconds", "HOT SPOT DURATION:", [f"{n} SEC" for n in TRICK_ATTACK_HOT_SPOT_SECONDS],
+     [f"The hot spot moves to a new spot every {n} seconds." for n in TRICK_ATTACK_HOT_SPOT_SECONDS]),
+    ("trick_ramming", "RAMMING:", ["ON", "OFF"], [
+        "Ramming a skater mid-combo makes them bail and\\ntakes a share of their combo into the rammer's\\nscore.",
+        "Skaters never bail from a ram.",
+    ]),
+]
+
+
+def _trick_attack_options() -> list:
+    """Trick Attack's screen of options, as the gametype editor's are (its
+    spinners the gametype's: "mp profile init/set trick attack rules"), and
+    the row on Slayer's screen that opens it"""
+    base = TRICK_ATTACK_EDIT
+    lines = _widget(f"{base}/trick_attack_options_screen", [("width", 640), ("height", 480),
+                                                            ("flags", "pass_unhandled_to_focused_child"),
+                                                            ("bitmap", "bitmaps/gradient")],
+                    ['<child widget="main_menu/settings_select/multiplayer_setup/playlist_edit/game_type_select/'
+                     'header_rules"/>', f'<child widget="{base}/trick_attack_options_menu"/>'])
+    lines += _widget(f"{base}/trick_attack_options_help", [("type", "text"), ("controller", 1), ("left", 68),
+                                                           ("top", 345), ("width", 482), ("height", 66),
+                                                           ("string_list", f"{base}/cap_trick_attack_options"),
+                                                           ("font", "ui\\large_ui"), ("color", "#FFFFFFFF")], [])
+    children = ['<data input="game settings lists text update"/>',
+                '<on event="created" run="mp profile init trick attack rules"/>']
+    children += [f'<child widget="{base}/op_{key}" x="54" y="{73 + 30 * index}"/>'
+                 for index, (key, *_) in enumerate(TRICK_ATTACK_ROWS)]
+    children.append(f'<child widget="{base}/trick_attack_button_bar" y="414"/>')
+    lines += _widget(f"{base}/trick_attack_options_menu", [("type", "column_list"), ("width", 640), ("height", 480),
+                                                           ("flags", "pass_unhandled_to_focused_child up_down_tabs_children"),
+                                                           ("description", f"{base}/trick_attack_options_help")], children)
+    lines += _widget(f"{base}/trick_attack_button_bar", [("type", "column_list"), ("width", 640), ("height", 28),
+                                                         ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
+                     ['<data input="common button bar update"/>', f'<child widget="{base}/trick_attack_button_ok" x="380" y="1"/>',
+                      '<child widget="common_button_cancel" x="510" y="1"/>'])
+    lines += _button(f"{base}/trick_attack_button_ok", 1,
+                     ['<on event="a" run="mp profile set trick attack rules" back="true"/>',
+                      '<on event="start" run="mp profile set trick attack rules" back="true"/>'])
+    for index, (key, label, strings, _) in enumerate(TRICK_ATTACK_ROWS):
+        lines += _widget(f"{base}/op_{key}", [("width", 512), ("height", 28), ("flags", "pass_unhandled_to_focused_child"),
+                                              ("bitmap", "bitmaps/option_bkds"), ("color", "#FF2896FF")],
+                         [f'<child widget="{base}/{key}_label"/>', f'<child widget="{base}/{key}_spinner" x="286" y="1"/>'])
+        lines += _widget(f"{base}/{key}_label", [("type", "text"), ("controller", 1), ("width", 300), ("height", 22),
+                                                 ("string_list", f"{base}/trick_attack_labels"), ("string_index", index or None),
+                                                 ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("text_x", 13),
+                                                 ("text_y", 4)], [])
+        lines += _widget(f"{base}/{key}_spinner",
+                         [("type", "spinner"), ("top", 2), ("width", 206), ("height", 20),
+                          ("flags", "pass_unhandled_to_focused_child left_right_tabs_items"),
+                          ("string_list", f"{base}/var_{key}"), ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
+                          ("align", "center"), ("text_y", 4), ("list_flags", "items_from_strings"),
+                          ("header_bitmap", "bitmaps/arrow_sm_left"), ("footer_bitmap", "bitmaps/arrow_sm_right"),
+                          ("header_bounds", "7 -13 19 -7"), ("footer_bounds", "7 208 19 214")],
+                         ['<on event="left_mouse" run="mouse spinner 1wide click"/>'])
+        lines += _strings(f"{base}/var_{key}", strings)
+    lines += _strings(f"{base}/trick_attack_labels", [label for _, label, *_ in TRICK_ATTACK_ROWS])
+    lines += _strings(f"{base}/cap_trick_attack_options", [text for *_, helps in TRICK_ATTACK_ROWS for text in helps])
+    # (Slayer's screen's row opening it: Slayer's own help shows nothing for it)
+    lines += _widget(f"{SLAYER_EDIT}/op_trick_attack_options", [("type", "text"), ("width", 512), ("height", 28),
+                                                                ("bitmap", "bitmaps/option_bkds"),
+                                                                ("string_list", f"{base}/trick_attack_row"),
+                                                                ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
+                                                                ("text_x", 13), ("text_y", 4)],
+                     [f'<on event="a" open="{base}/trick_attack_options_screen"/>',
+                      f'<on event="start" open="{base}/trick_attack_options_screen"/>',
+                      '<on event="left_mouse" run="mouse emit accept event"/>'])
+    lines += _strings(f"{base}/trick_attack_row", ["TRICK ATTACK OPTIONS..."])
+    return lines
+
+
 def _map_kind() -> list:
     """the map lists' first row (New Game's and the Map screen's), as the
     gametype list's chooser: a spinner of SINGLEPLAYER or MULTIPLAYER maps,
@@ -1617,6 +1717,7 @@ def multiplayer_files() -> dict:
         "main_menu/settings_select/multiplayer_setup/item_options_edit".replace("/", ".") + ".port.xml": head + _item_options_extras() + ["</menus>", ""],
         TEAMPLAY_EDIT.replace("/", ".") + ".port.xml": head + _teamplay_options_extras() + ["</menus>", ""],
         INFECTION_EDIT.replace("/", ".") + ".port.xml": head + _infection_options() + ["</menus>", ""],
+        TRICK_ATTACK_EDIT.replace("/", ".") + ".port.xml": head + _trick_attack_options() + ["</menus>", ""],
     }
 
 

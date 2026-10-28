@@ -104,6 +104,30 @@ server:
   # always on foot.
   botSkaters: 0
 
+  # The Trick Attack game type's own settings (server.trick_minutes and friends). They only matter
+  # for maps whose game type is trick_attack - a "<map>:trick_attack" entry in server.maps, or
+  # trick_attack in server.gameTypes for maps with no game type of their own.
+  trickAttack:
+    # server.trick_minutes: the round length, in minutes. 0: the game type's own (5).
+    roundMinutes: 0
+    # server.trick_bank_delay: how long a trick carrier must survive before it banks (counts for
+    # good), in tenths of a second. 0: the game type's own (20, two seconds).
+    bankDelayTenths: 0
+    # server.trick_steal: the chance, in percent (1-100), that killing a trick carrier steals their
+    # trick instead of dropping it. 0: the game type's own (50).
+    stealPercent: 0
+    # server.trick_hot_spot_multiplier: the hot spot's score multiplier, in tenths (20 = x2),
+    # 10-100 (x1 to x10). 0: the game type's own (20, x2).
+    hotSpotMultiplierTenths: 0
+    # server.trick_hot_spot_seconds: how long the hot spot lasts, in seconds (max 255). 0: the game
+    # type's own (60).
+    hotSpotSeconds: 0
+    # server.trick_ramming: whether ramming a trick carrier's vehicle knocks their trick loose.
+    # -1: the game type's own (on). 0: off. 1: on. An integer tri-state, like botSkaters' -1 above,
+    # rather than a default/on/off string - it matches how the chart already spells "use the game
+    # type's own" for this family of settings.
+    ramming: -1
+
 network:
   # network.tunnel_port: the UDP port of internet play, which the Service exposes.
   tunnelPort: 27015

@@ -594,6 +594,7 @@ struct network_game *network_game_server_get_game(struct network_game_server *se
 #include "units/units.h"
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 #include "infection.h" /* port: port/linux/game/infection.c */
+#include "trick_attack.h" /* port: port/linux/game/trick_attack.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -4286,6 +4287,8 @@ void game_engine_game_starting(
 			game_engine->game_starting();
 		/* port: Infection's first infected (the host) */
 		infection_game_starting();
+		/* port: and Trick Attack's (every machine) */
+		trick_attack_game_starting();
 
 		game_engine_build_lighting();
 	}
@@ -4864,6 +4867,8 @@ void game_engine_update(
 
 		/* port: Infection (every machine; the host decides) */
 		infection_update();
+		/* port: Trick Attack (every machine; the host scores) */
+		trick_attack_update();
 
 		if (game_engine->update)
 			game_engine->update();
@@ -5632,6 +5637,8 @@ long game_engine_port_time_limit_ticks(
 
 	if (infection_active())
 		return infection_time_limit_ticks(minutes);
+	if (trick_attack_active())
+		return trick_attack_time_limit_ticks(minutes);
 	return minutes > 0 ? minutes * 60L * TICKS_PER_SECOND : 0;
 }
 
@@ -5770,6 +5777,8 @@ void game_engine_end_game(
 	{
 		/* port: Infection's winner, logged (the host) */
 		infection_game_over();
+		/* port: Trick Attack's scores, logged (the host) */
+		trick_attack_game_over();
 		game_engine_globals.postgame_state = game_engine_mode_postgame_delay;
 		game_engine_globals.postgame_timer = 7.0f;
 		game_engine_play_multiplayer_sound(_multiplayer_sound_game_over);
@@ -6576,6 +6585,34 @@ struct game_variant *build_game_variant_infection(
 	return variant;
 }
 
+/* port: Trick Attack (port/linux/game/trick_attack.c): Slayer, free for all,
+on boards and unarmed, scored by the tricks landed; no vehicles, no score
+limit (the round's time ends it), quick respawns. */
+struct game_variant *build_game_variant_trick_attack(
+	struct game_variant *variant)
+{
+	struct game_variant result;
+
+	build_game_variant_slayer(&result);
+	/* (its name, for the server browser: a saved gametype has its own) */
+	ustrncpy(result.human_readable_game_description, L"TrickAttack",
+		NUMBEROF(result.human_readable_game_description) - 1);
+	result.human_readable_game_description[NUMBEROF(result.human_readable_game_description) - 1] = 0;
+	result.universal_variant.teams = FALSE;
+	result.universal_variant.respawn_time = 0;
+	result.universal_variant.suicide_penalty = 0;
+	result.universal_variant.vehicle_set = _game_engine_vehicles_none;
+	result.universal_variant.score_to_win = 0;
+	result.game_engine_variant.slayer.no_death_bonus = TRUE;
+	result.game_engine_variant.slayer.no_kill_penalty = TRUE;
+	result.game_engine_variant.slayer.trick_attack = TRUE;
+	trick_attack_variant_defaults(&result);
+
+	*variant = result;
+
+	return variant;
+}
+
 struct game_variant *build_game_variant_stalker(
 
 	struct game_variant *variant)
@@ -7247,6 +7284,32 @@ struct game_variant *game_engine_get_variant_by_name(
 		else if (config_integer("debug.infection_out_of_reach") < 0)
 			result.game_engine_variant.slayer.infection_out_of_reach = 255;
 	}
+	/* port: and Trick Attack (port/linux/game/trick_attack.c), with the
+	dedicated server's settings (server.trick_*; 0: the game type's) */
+	else if (csstrcmp(name, "trick_attack") == 0 || csstrcmp(name, "trickattack") == 0)
+	{
+		extern long config_integer(char const *name);
+		struct slayer_variant *slayer;
+		long value;
+
+		result = *build_game_variant_trick_attack(&temporary);
+		slayer = &result.game_engine_variant.slayer;
+		if ((value = config_integer("server.trick_minutes")) > 0)
+			slayer->trick_minutes = (byte)MIN(value, 255);
+		/* (tenths of a second) */
+		if ((value = config_integer("server.trick_bank_delay")) > 0)
+			slayer->trick_bank_delay = (byte)MIN(value, 255);
+		if ((value = config_integer("server.trick_steal")) > 0)
+			slayer->trick_steal = (byte)MIN(value, 100);
+		/* (tenths) */
+		if ((value = config_integer("server.trick_hot_spot_multiplier")) > 0)
+			slayer->trick_hot_spot_multiplier = (byte)PIN(value, 10, 100);
+		if ((value = config_integer("server.trick_hot_spot_seconds")) > 0)
+			slayer->trick_hot_spot_seconds = (byte)MIN(value, 255);
+		/* (1 on, 0 off; below 0 the game type's) */
+		if ((value = config_integer("server.trick_ramming")) >= 0)
+			slayer->trick_no_ramming = (byte)(value == 0);
+	}
 
 
 	*variant = result;
@@ -7418,6 +7481,14 @@ void game_engine_variant_cleanup(
 			PIN(variant->game_engine_variant.slayer.infection_run_over, 0, 5000);
 		if (variant->game_engine_variant.slayer.infection)
 			variant->universal_variant.teams = TRUE;
+		/* port: Trick Attack is every skater for themselves (and never
+		Infection too) */
+		variant->game_engine_variant.slayer.trick_attack = !!variant->game_engine_variant.slayer.trick_attack;
+		if (variant->game_engine_variant.slayer.trick_attack)
+		{
+			variant->game_engine_variant.slayer.infection = FALSE;
+			variant->universal_variant.teams = FALSE;
+		}
 		break;
 
 	case game_engine_oddball:

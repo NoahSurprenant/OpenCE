@@ -86,6 +86,7 @@ symbols in this file:
 #include "text/unicode.h"
 #include "units/units.h"
 #include "infection.h" /* port: port/linux/game/infection.c */
+#include "trick_attack.h" /* port: port/linux/game/trick_attack.c */
 
 /* ---------- constants */
 
@@ -518,6 +519,9 @@ static void slayer_engine_player_killed_player(
 		/* port: Infection: a survivor's own score is their kills, an
 		infected's the survivors they infected; the team scores are the
 		outcome (slayer_engine_update) */
+		/* port: Trick Attack: the score is tricks alone (trick_attack.c) */
+		if (trick_attack_active())
+			return;
 		if (infection_active())
 		{
 			if (killing_player_index != dead_player_index && killing_player->team_index != dead_player->team_index)
@@ -598,7 +602,17 @@ static boolean slayer_engine_display_score(
 		break;
 
 	case _game_engine_message_show_score:
-		if (game_engine_get_variant()->universal_variant.teams)
+		/* port: Trick Attack: the place and the points (no score limit) */
+		if (trick_attack_active())
+		{
+			usnprintf(
+				buffer,
+				buffer_character_count,
+				L"%ls %ld POINTS",
+				get_place_name(game_engine_get_place(player_index, _get_score_team)),
+				slayer_get_score(player_index, _get_score_individual));
+		}
+		else if (game_engine_get_variant()->universal_variant.teams)
 		{
 			wchar_t *place_name = get_place_name(
 				game_engine_get_place(player_index, _get_score_team));
@@ -711,7 +725,7 @@ static void slayer_player_update(
 
 	/* (a client ends the game when the host has; Infection's ends by its
 	teams and time: game_engine_should_end_game) */
-	if (!network_game_distributed_client() && !infection_active() &&
+	if (!network_game_distributed_client() && !infection_active() && !trick_attack_active() &&
 
 		slayer_get_score(index, _get_score_team) >=
 		game_engine_get_variant()->universal_variant.score_to_win)
@@ -849,4 +863,17 @@ boolean game_engine_slayer_read_network_state(
 			game_show_score_extended(iterator.datum_index, _slayer_message_new_target, target);
 	}
 	return TRUE;
+}
+
+/* port: Trick Attack (port/linux/game/trick_attack.c): the host adds a
+banked combo, or a ram's take, to the player's score (and their team's: in
+free for all every player is a team), which reaches the clients with the
+game type's state */
+void game_engine_slayer_port_add_score(
+	long player_index,
+	long points)
+{
+	if (network_game_distributed_client() || player_index == NONE || !points)
+		return;
+	slayer_engine_adjust_score(player_index, points);
 }

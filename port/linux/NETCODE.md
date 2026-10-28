@@ -320,6 +320,15 @@ from the host as often as their states, `_distributed_message_skate_sound_down`)
 the loops' state and the one-shots of the last half second, numbered, so
 that every machine hears every skater; dropped as unknown kinds by builds
 without them, with no change of version either.
+Trick Attack (`port/linux/game/trick_attack.c`, `README.md`'s "Trick Attack")
+adds entries of a kind of its own (their first byte
+`TRICK_ATTACK_ENTRY_FORMAT`, where the others have their format) to two of
+those messages: a client's skater's running trick totals (its engine's
+scoring) in the skate report, which the host takes only for that machine's
+player, capped, and scores; and the host's word on every combo going and the
+hot spot in the skate verdict, a few times a second. A build without Trick
+Attack skips them as entries of another format; the banked scores travel as
+Slayer's always have, in the game type's state.
 
 ## Bots
 

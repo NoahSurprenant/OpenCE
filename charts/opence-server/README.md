@@ -224,6 +224,7 @@ The chart maps its values to the server's environment variables (port/linux/READ
 | `server.gameTypes` (list) | `HALO_SERVER_GAME_TYPES` |
 | `server.timeLimit`, `server.scoreLimit` | `HALO_SERVER_TIME_LIMIT`, `HALO_SERVER_SCORE_LIMIT` |
 | `server.bots`, `server.botsFill`, `server.botDifficulty`, `server.botSkaters` | `HALO_SERVER_BOTS`, `HALO_SERVER_BOTS_FILL`, `HALO_SERVER_BOT_DIFFICULTY`, `HALO_SERVER_BOT_SKATERS` |
+| `server.trickAttack.roundMinutes`, `.bankDelayTenths`, `.stealPercent`, `.hotSpotMultiplierTenths`, `.hotSpotSeconds`, `.ramming` (maps whose game type is `trick_attack` only) | `HALO_SERVER_TRICK_MINUTES`, `HALO_SERVER_TRICK_BANK_DELAY`, `HALO_SERVER_TRICK_STEAL`, `HALO_SERVER_TRICK_HOT_SPOT_MULTIPLIER`, `HALO_SERVER_TRICK_HOT_SPOT_SECONDS`, `HALO_SERVER_TRICK_RAMMING` |
 | `network.tunnelPort` | `HALO_NET_TUNNEL_PORT` |
 | `network.publicAddress` | `HALO_NET_PUBLIC_ADDRESS` |
 | `network.hostPublic`, `network.serverName` | `HALO_NET_HOST_PUBLIC`, `HALO_NET_SERVER_NAME` |

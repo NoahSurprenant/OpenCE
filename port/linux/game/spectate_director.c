@@ -9,7 +9,8 @@ Each game tick every player gets an interest:
 - a kill in the last seconds (the most), being in a fight (their weapon fired
   lately, or they were hurt), carrying the flag or the ball, driving fast,
   riding a board fast or in the air (Skate 3 mode's skaters, as every machine
-  has them: skate_network.c), and enemies close by;
+  has them: skate_network.c), a Trick Attack combo going (the biggest
+  outweighs a kill: trick_attack.c), and enemies close by;
 - a little more the longer since they were shown, so everyone gets a turn.
 
 And the shot rules, so the picture never jitters:
@@ -37,6 +38,7 @@ Every cut is logged with its reason and the game tick, which the tests read
 #include "units/units.h"
 
 #include "skate.h"
+#include "trick_attack.h"
 #include "spectate.h"
 #include "spectate_director.h"
 
@@ -76,6 +78,11 @@ Every cut is logged with its reason and the game tick, which the tests read
 #define FAST_SKATER 0.15f
 #define SKATER_AIR_SPEED 0.04f
 #define NEAR_WEIGHT 0.6f
+/* Trick Attack: a combo going, a weight each 300 points, to ten (the
+biggest combo outweighs a kill) */
+#define COMBO_WEIGHT 1.0f
+#define COMBO_POINTS 300.0f
+#define COMBO_MOST 10.0f
 /* interest a second since they were last shown, to two minutes */
 #define TURN_WEIGHT 0.02f
 #define TURN_SECONDS 120.0f
@@ -91,6 +98,7 @@ enum
 	_reason_vehicle,
 	_reason_skate,
 	_reason_near,
+	_reason_combo,
 	_reason_turn,
 	_reason_time,
 	_reason_left,
@@ -100,7 +108,7 @@ enum
 
 static char const *const reason_names[NUMBER_OF_REASONS] =
 {
-	"start", "kill", "killer", "fight", "hurt", "objective", "vehicle", "skate", "near", "turn", "time", "left", "died"
+	"start", "kill", "killer", "fight", "hurt", "objective", "vehicle", "skate", "near", "combo", "turn", "time", "left", "died"
 };
 
 /* ---------- globals */
@@ -120,6 +128,7 @@ static struct
 	real vehicle;
 	real skate;
 	real near;
+	real combo;
 	real unshown_seconds;
 	/* the ticks of their last kill and death (NONE: none) */
 	long kill_tick;
@@ -176,6 +185,7 @@ static real interest(
 	terms[_reason_vehicle] = VEHICLE_WEIGHT * director_players[absolute_index].vehicle;
 	terms[_reason_skate] = director_players[absolute_index].skate;
 	terms[_reason_near] = NEAR_WEIGHT * MIN(director_players[absolute_index].near, 3.0f);
+	terms[_reason_combo] = COMBO_WEIGHT * MIN(director_players[absolute_index].combo, COMBO_MOST);
 	terms[_reason_turn] = TURN_WEIGHT * MIN(director_players[absolute_index].unshown_seconds, TURN_SECONDS);
 	*reason = _reason_turn;
 	for (index = 0; index < NUMBER_OF_REASONS; index++)
@@ -279,6 +289,7 @@ static void director_tick(
 		director_players[absolute_index].vehicle = 0.0f;
 		director_players[absolute_index].skate = 0.0f;
 		director_players[absolute_index].near = 0.0f;
+		director_players[absolute_index].combo = (real)trick_attack_unbanked(iterator.datum_index) / COMBO_POINTS;
 		if (!unit)
 			continue;
 

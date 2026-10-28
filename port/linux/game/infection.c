@@ -37,6 +37,7 @@ gametype's auto team balance already moves players. So the wire is the same.
 #include "units/units.h"
 
 #include "infection.h"
+#include "trick_attack.h"
 #include "bots.h"
 #include "skate.h"
 
@@ -109,7 +110,9 @@ boolean infection_player_infected(long player_index)
 	return player->team_index == INFECTION_TEAM_INFECTED;
 }
 
-boolean infection_unit_restricted(long unit_index)
+/* the unit is an infected player's, alive (Infection's own: their boards'
+speed, turning, reach and run-over damage) */
+static boolean infection_unit_infected(long unit_index)
 {
 	struct object_datum *object;
 
@@ -118,6 +121,12 @@ boolean infection_unit_restricted(long unit_index)
 	return object->object.type == _object_type_biped && object->object.owner_player_index != NONE &&
 		object->object.owner_team_index == INFECTION_TEAM_INFECTED &&
 		!TEST_FLAG(object->object.damage_flags, _object_dead_bit);
+}
+
+boolean infection_unit_restricted(long unit_index)
+{
+	/* (and in Trick Attack everyone: trick_attack.c) */
+	return infection_unit_infected(unit_index) || trick_attack_unit_restricted(unit_index);
 }
 
 void infection_filter_action(long player_index, long unit_index, unsigned long *control_flags)
@@ -758,7 +767,7 @@ real infection_run_over_share(long skater_unit_index, real share)
 {
 	long percent;
 
-	if (!infection_unit_restricted(skater_unit_index))
+	if (!infection_unit_infected(skater_unit_index))
 		return share;
 	percent = infection_variant()->game_engine_variant.slayer.infection_run_over;
 	if (percent <= 0)
@@ -803,7 +812,7 @@ real infection_skate_time_scale(long unit_index)
 {
 	long percent;
 
-	if (!infection_unit_restricted(unit_index))
+	if (!infection_unit_infected(unit_index))
 		return 1.0f;
 	percent = infection_variant()->game_engine_variant.slayer.infection_speed;
 	return percent > 0 ? (real)PIN(percent, 50, 250) / 100.0f : 1.0f;
@@ -813,7 +822,7 @@ real infection_skate_turn_scale(long unit_index)
 {
 	long percent;
 
-	if (!infection_unit_restricted(unit_index))
+	if (!infection_unit_infected(unit_index))
 		return 1.0f;
 	percent = infection_variant()->game_engine_variant.slayer.infection_turning;
 	return percent > 0 ? (real)PIN(percent, 100, 200) / 100.0f : 1.0f;
@@ -823,7 +832,7 @@ real infection_board_reach(long skater_unit_index, long biped_index)
 {
 	struct object_datum *biped;
 
-	if (!infection_unit_restricted(skater_unit_index) || !(biped = object_try_and_get(biped_index)) ||
+	if (!infection_unit_infected(skater_unit_index) || !(biped = object_try_and_get(biped_index)) ||
 		biped->object.owner_player_index == NONE || biped->object.owner_team_index != INFECTION_TEAM_SURVIVORS)
 	{
 		return 0.0f;
@@ -925,4 +934,9 @@ void infection_draw(short local_player_index)
 		draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
 		rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, text);
 	}
+}
+
+long infection_refused_presses(void)
+{
+	return infection.refused_ticks;
 }
