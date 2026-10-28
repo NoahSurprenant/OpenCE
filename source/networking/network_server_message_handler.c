@@ -2204,10 +2204,22 @@ static boolean network_game_server_handle_message_client_join_game_request(
 		so, rather than leaving the machine to time out */
 		struct message_server_machine_rejected rejection;
 		struct network_message *reply;
+		struct transport_address source_address;
+		boolean full = network_game_server_get_state(server, NULL) == _network_game_server_state_ingame &&
+			network_game_server_game_is_open(server);
 
-		rejection.reason = network_game_server_get_state(server, NULL) == _network_game_server_state_ingame &&
-			network_game_server_game_is_open(server) ?
-			_rejection_code_game_is_full : _network_game_server_rejection_reason_game_not_open;
+		rejection.reason = full ? _rejection_code_game_is_full : _network_game_server_rejection_reason_game_not_open;
+		network_connection_get_address(
+			network_game_server_get_client_connection(server_client_machine),
+			&source_address,
+			FALSE);
+		/* (port: every refusal is logged, here as everywhere else in this
+		file - a machine whose join request arrived while the game was not
+		open to it at all, not even as a late joiner) */
+		network_event(
+			"refusing a machine @ %s trying to join: %s",
+			transport_address_to_string(&source_address),
+			full ? "the game is full" : "the game is not open to join");
 		reply = create_network_game_message(_message_server_machine_rejected, &rejection, sizeof(rejection));
 		if (reply)
 		{

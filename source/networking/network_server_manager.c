@@ -2127,6 +2127,34 @@ short network_game_server_last_refusal_code(
 	return network_game_server_refusal_code;
 }
 
+/* port: whether network_game_server_add_player_to_game's last failure is
+worth retrying rather than refusing the machine outright: a bot left to make
+room for this very player (bots_make_room), but its engine slot is not
+reusable until its quit plays out (NETWORK_GAME_PLAYER_QUIT_DELAY ticks,
+network_game_player_slot_held) - network_game_add_player() can fail in that
+window even though network_game_has_free_player_slot() now says there is
+room. Only matters with no slack left in the 128-player array (server.bots
+128 with server.bots_fill): with any slack, some other, already-free slot is
+picked up at once and this is never set. */
+static boolean network_game_server_add_player_should_retry = FALSE;
+
+boolean network_game_server_last_add_player_should_retry(
+	void)
+{
+	return network_game_server_add_player_should_retry;
+}
+
+/* port: 0 while no retry of server->queued_player is pending, else the game
+time to give up by (set the first time it is retried) */
+static long network_game_server_queued_player_retry_until = 0;
+
+/* port: bots_make_room() left a reservation (bots_globals.rooms_reserved)
+that must be let go (bots_make_room_resolved()) once this player's join is
+decided either way - set whenever add_player_to_game calls bots_make_room(),
+even if the very next network_game_add_player() succeeds (its retry window
+never opens: network_game_server_queued_player_retry_until would stay 0) */
+static boolean network_game_server_room_reservation_pending = FALSE;
+
 boolean network_game_server_accept_client_machine_into_game(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine)
@@ -2504,19 +2532,29 @@ boolean network_game_server_add_player_to_game(
 	struct network_player *player)
 {
 	boolean success;
+	boolean bot_left_to_make_room = FALSE;
 
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x46C, server);
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x46D, machine);
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x46E, player);
 
+	network_game_server_add_player_should_retry = FALSE;
 	if (machine->machine_index == player->machine_index)
 	{
 		/* port: a person, the game full of players and bots: a bot leaves
-		at once to make room (port/linux/game/bots.c) */
+		at once to make room (port/linux/game/bots.c). Not while a retry is
+		already pending for this same join (network_game_server_queued_player_retry_until):
+		its bot already left and is still only on its way out
+		(network_game_player_slot_held) - network_game_has_free_player_slot()
+		stays FALSE until it is fully gone, and calling this again would send
+		another bot after it for no reason */
 		if (!network_game_server_port_machine_is_bot(player->machine_index) &&
-			!network_game_has_free_player_slot(&server->game))
+			!network_game_has_free_player_slot(&server->game) &&
+			!network_game_server_queued_player_retry_until)
 		{
-			bots_make_room();
+			bot_left_to_make_room = bots_make_room();
+			if (bot_left_to_make_room)
+				network_game_server_room_reservation_pending = TRUE;
 		}
 		/* port: the smaller team (the Xbox game took turns with a counter of
 		its own, which a failed add or an earlier game moved on) */
@@ -2563,6 +2601,19 @@ boolean network_game_server_add_player_to_game(
 		{
 			network_event(
 				"network_game_add_player() failed in network_game_server_add_player_to_game()");
+			if (bot_left_to_make_room || network_game_server_queued_player_retry_until)
+			{
+				/* port: the bot's slot (network_game_has_free_player_slot)
+				is free, but its engine player datum, still playing out its
+				quit, is not yet (network_game_player_slot_held) - try this
+				same player again shortly (bot_left_to_make_room the first
+				time, network_game_server_queued_player_retry_until already
+				pending on a retry) rather than refusing them for a game
+				that is, despite this, making room right now */
+				network_game_server_add_player_should_retry = TRUE;
+				network_event(
+					"a bot left to make room but its slot is not reusable yet; retrying the new player shortly");
+			}
 		}
 	}
 	else
@@ -2658,6 +2709,7 @@ void network_game_server_update_ticks(
 					&server->waiting_players[1],
 					server->waiting_player_count * sizeof(struct network_player));
 				server->queued_player_valid = TRUE;
+				network_game_server_queued_player_retry_until = 0;
 			}
 			if (server->queued_player_valid)
 			{
@@ -2701,26 +2753,66 @@ void network_game_server_update_ticks(
 					{
 						network_game_server_start_late_joiner(server, client_machine);
 					}
+					if (network_game_server_room_reservation_pending)
+					{
+						bots_make_room_resolved();
+						network_game_server_room_reservation_pending = FALSE;
+					}
+					network_game_server_queued_player_retry_until = 0;
+					server->queued_player_valid = FALSE;
 				}
 				else
 				{
-					network_event("server failed to add a network player in-game");
-					/* port: a machine joining the game in progress whose last
-					player could not join (the game is full): started with those
-					that did, or refused, not left waiting for ever */
-					if (client_machine &&
-						!TEST_FLAG(client_machine->flags, _network_client_machine_level_loaded_bit) &&
-						!TEST_FLAG(client_machine->flags, _network_client_machine_started_late_bit) &&
-						!network_game_server_machine_has_waiting_players(server, client_machine->machine_index))
-					{
-						if (network_game_server_machine_has_players(server, client_machine->machine_index))
-							network_game_server_start_late_joiner(server, client_machine);
-						else
-							network_game_server_refuse_late_joiner(server, client_machine, _rejection_code_game_is_full);
-					}
-				}
+					boolean retry = FALSE;
 
-				server->queued_player_valid = FALSE;
+					network_event("server failed to add a network player in-game");
+					if (network_game_server_last_add_player_should_retry())
+					{
+						/* port: a bot just left to make room for this very
+						player (bots_make_room), but its engine slot is not
+						reusable until its quit plays out
+						(NETWORK_GAME_PLAYER_QUIT_DELAY ticks to the quit,
+						then the kill and player_died() clearing its unit,
+						network_game_player_slot_held) - ten seconds, several
+						times that, before giving up and treating this as the
+						game truly having no room, rather than refusing a
+						player the game is, despite this, making room for */
+						if (!network_game_server_queued_player_retry_until)
+						{
+							network_game_server_queued_player_retry_until =
+								game_time_get() + 10 * TICKS_PER_SECOND;
+						}
+						retry = game_time_get() < network_game_server_queued_player_retry_until;
+					}
+					if (retry)
+					{
+						network_event("a bot left to make room but its slot is not reusable yet; retrying shortly");
+					}
+					else
+					{
+						/* port: a machine joining the game in progress whose last
+						player could not join (the game is full): started with those
+						that did, or refused, not left waiting for ever */
+						if (client_machine &&
+							!TEST_FLAG(client_machine->flags, _network_client_machine_level_loaded_bit) &&
+							!TEST_FLAG(client_machine->flags, _network_client_machine_started_late_bit) &&
+							!network_game_server_machine_has_waiting_players(server, client_machine->machine_index))
+						{
+							if (network_game_server_machine_has_players(server, client_machine->machine_index))
+								network_game_server_start_late_joiner(server, client_machine);
+							else
+								network_game_server_refuse_late_joiner(server, client_machine, _rejection_code_game_is_full);
+						}
+						if (network_game_server_room_reservation_pending)
+						{
+							bots_make_room_resolved();
+							network_game_server_room_reservation_pending = FALSE;
+						}
+						network_game_server_queued_player_retry_until = 0;
+						server->queued_player_valid = FALSE;
+					}
+					/* (else: still TRUE, retried next tick) */
+				}
 			}
 		}
 		break;

@@ -39,8 +39,13 @@ void platform_log(char const *format, ...);
 int platform_quit_requested(void);
 void platform_exit_deadline(int status, unsigned seconds);
 
-/* the players the server's list is asked for at most */
-#define DEDICATED_SERVER_MAXIMUM_PLAYERS 64
+/* the players the server's list is asked for at most: every slot
+(HALO_PORT_MAXIMUM_NETWORK_PLAYERS, 128 with server.bots_fill's full lobby,
+bots.h's BOTS_MAXIMUM) - a lower, stale cap here (64) left a player past it
+(a person joining a lobby already that full, or the last of 65+ bots) out of
+dedicated_server_log_players()'s "server: NAME joined/left" console lines,
+though not out of the game itself */
+#define DEDICATED_SERVER_MAXIMUM_PLAYERS HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* the server's state in a game (network_server_manager.c's enum
 network_game_server_state) */
 #define DEDICATED_SERVER_STATE_INGAME 1

@@ -58,8 +58,16 @@ boolean bots_remove(
 boolean bots_console_command(
 	char const *text);
 /* (network_server_manager.c) a person joins a game full of players and
-bots: a bot leaves at once */
-void bots_make_room(
+bots: a bot leaves at once, TRUE if one did (one could be removed; its
+engine slot, held for its quit to play out (NETWORK_GAME_PLAYER_QUIT_DELAY,
+network_game_player_slot_held), is not reusable until a little after) */
+boolean bots_make_room(
+	void);
+/* (network_server_manager.c) the person bots_make_room() opened a room for
+got in, or the server gave up waiting for its slot and refused them: let the
+per-frame top-up count that room as wanted again, now that nothing is
+waiting on it */
+void bots_make_room_resolved(
 	void);
 /* (damage.c, the host's) an object hurt by the damage, killed or not: a
 bot's grenade's hit on an enemy, its grenade's kill (an enemy, itself, a

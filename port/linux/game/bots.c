@@ -97,6 +97,13 @@ static struct
 	short setting;
 	short difficulty_setting;
 	unsigned long settings_read;
+	/* port: rooms bots_make_room() made (a bot removed) for a person whose
+	join is still pending (network_game_server_add_player_to_game's retry,
+	network_server_manager.c): not counted as wanted, so the per-frame
+	top-up below does not send another bot after the one who just left
+	before the person's join is resolved either way
+	(bots_make_room_resolved) */
+	short rooms_reserved;
 } bots_globals;
 
 /* how often (ticks) the bots tell the log what they have done */
@@ -683,7 +690,7 @@ static short bots_people(
 	return count;
 }
 
-void bots_make_room(
+boolean bots_make_room(
 	void)
 {
 	struct network_game_server *server = global_network_game_server_get();
@@ -693,7 +700,7 @@ void bots_make_room(
 	short index;
 
 	if (!game)
-		return;
+		return FALSE;
 	for (index = 0; index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
 	{
 		struct network_player const *player = &game->players[index];
@@ -724,10 +731,25 @@ void bots_make_room(
 		if (network_game_server_port_remove_bot(bot->machine_index, bot->controller_index))
 		{
 			bot->used = FALSE;
+			bots_globals.rooms_reserved++;
 			platform_log("bots: the bot of machine %ld, controller %ld left to make room for a person", bot->machine_index,
 				bot->controller_index);
+			return TRUE;
 		}
 	}
+	return FALSE;
+}
+
+/* port: a bots_make_room() the host had NOT YET resolved is: the person got
+in (network_game_add_player() finally succeeded, bots_people() now counts
+them instead), or gave up waiting (refused, or the machine dropped) - either
+way, the top-up below goes back to counting server.bots as it reads it, not
+one short for a reservation nothing is waiting on any more */
+void bots_make_room_resolved(
+	void)
+{
+	if (bots_globals.rooms_reserved > 0)
+		bots_globals.rooms_reserved--;
 }
 
 /* the roster kept to the host's game: bots no longer in it forgotten (the
@@ -810,7 +832,12 @@ void bots_update(
 	wanted = bots_globals.wanted;
 	/* (server.bots_fill: as many as make the players server.bots) */
 	if (config_boolean("server.bots_fill"))
-		wanted = (short)MAX(0, wanted - bots_people(game));
+	{
+		/* (less a room bots_make_room() opened up but no one has taken yet:
+		otherwise this fills it again the moment the departed bot's slot is
+		free, before the person it was freed for gets a turn at it) */
+		wanted = (short)MAX(0, wanted - bots_people(game) - bots_globals.rooms_reserved);
+	}
 	/* (one a frame) */
 	if (count < wanted)
 	{

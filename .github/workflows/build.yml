@@ -621,7 +621,9 @@ jobs:
     # (test_bots_game_types), four throwing grenades in Team
     # Slayer (test_bots_grenades), a bot leaving a full server for a
     # person (test_bots_leave_for_a_person), the same with server.bots_fill
-    # keeping the lobby topped up (test_bots_fill_a_full_lobby), a client loading the map while
+    # keeping the lobby topped up (test_bots_fill_a_full_lobby), the same
+    # again at the port's actual maximum, 128 (test_bots_fill_a_full_lobby_at_the_maximum),
+    # a client loading the map while
     # the host builds the bots' graphs aside (test_bots_a_client_loading_while_the_graphs_build),
     # a bot put in a vehicle
     # getting out again (test_bots_out_of_a_vehicle), and bots driving Blood
@@ -727,11 +729,11 @@ jobs:
           wait $sixth || true
           cat "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log"
-          if ! grep -q '9 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
+          if ! grep -q '10 passed' "$RUNNER_TEMP/bots-a.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-b.log" ||
             ! grep -q '2 passed' "$RUNNER_TEMP/bots-c.log" || ! grep -q '3 passed' "$RUNNER_TEMP/bots-d.log" || ! grep -q '5 passed' "$RUNNER_TEMP/bots-e.log" || ! grep -q '4 passed' "$RUNNER_TEMP/bots-f.log" ||
             grep -qi 'skipped' "$RUNNER_TEMP/bots-a.log" "$RUNNER_TEMP/bots-b.log" "$RUNNER_TEMP/bots-c.log" "$RUNNER_TEMP/bots-d.log" \
             "$RUNNER_TEMP/bots-e.log" "$RUNNER_TEMP/bots-f.log"; then
-            echo "::error::the twenty-seven tests of tools/test_bots.py did not all run and pass (9 + 4 + 2 + 3 + 5 + 4)"
+            echo "::error::the twenty-eight tests of tools/test_bots.py did not all run and pass (10 + 4 + 2 + 3 + 5 + 4)"
             exit 1
           fi
 
