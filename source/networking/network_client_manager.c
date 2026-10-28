@@ -2336,11 +2336,26 @@ void network_game_client_rejected_by_game(
 	/* port: the join went to the pregame screen at once (and a machine
 	refused a game in progress, network_game_server_refuse_late_joiner, is in
 	it): with no game behind it, it is left for the main menu, which says
-	why, rather than sitting in a lobby that will never start */
-	display_error_when_main_menu_loaded(
-		rejection_code == _rejection_code_game_is_full || rejection_code == _rejection_code_game_is_closed ?
-			_error_network_join_game_closed :
-			_error_network_failed_to_join_game);
+	why, rather than sitting in a lobby that will never start.
+
+	_error_network_join_game_closed's canned text names "System Link" (true
+	of none of this port's joins, LAN or internet) and reads the same for a
+	full game as for one truly closed to joins - a bot-filled lobby someone
+	tried to join between two bots leaving and a new one landing looks "full"
+	for an instant, and should say so, not "closed". Own text instead, which
+	says neither wrong thing. */
+	if (rejection_code == _rejection_code_game_is_full)
+	{
+		display_error_text_when_main_menu_loaded(L"This game is full.");
+	}
+	else if (rejection_code == _rejection_code_game_is_closed)
+	{
+		display_error_text_when_main_menu_loaded(L"This game is closed to new players.");
+	}
+	else
+	{
+		display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
+	}
 	network_game_abort();
 	network_game_client_reset(client, TRUE);
 

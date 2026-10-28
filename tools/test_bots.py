@@ -1257,6 +1257,66 @@ def test_bots_leave_for_a_person(tmp_path):
             cache.unlink()
 
 
+def test_bots_fill_a_full_lobby_at_the_maximum(tmp_path):
+    """A dedicated server at the port's actual maximum (server.bots and
+    server.max_players both 128, server.bots_fill) and a person who joins the
+    game already in progress: a bot leaves at once to make room, and the
+    person gets in. #106's test_bots_fill_a_full_lobby covers the same gate
+    at 6 players, which always passed; only at 128 - the 128-slot network
+    player array (HALO_PORT_MAXIMUM_NETWORK_PLAYERS) completely full, with no
+    slack slot left over - did three bugs surface, now fixed:
+
+    1) network_game_add_player() (network_game_manager.c) can still fail
+    right after bots_make_room() freed a network slot for the person: the
+    removed bot's engine player datum does not become reusable
+    (network_game_player_slot_held) until its quit plays out
+    (NETWORK_GAME_PLAYER_QUIT_DELAY ticks later, then its unit's kill and
+    player_died() clearing unit_index) - about a second. Below 128 some
+    other, already-free slot was always picked up first instead, so this
+    never showed. network_game_server_add_player_to_game now retries the
+    same join for a few seconds rather than refusing it outright
+    (network_game_server_last_add_player_should_retry).
+
+    2) The bot that just left for the person was, the very next frame,
+    replaced by server.bots_fill's own one-a-frame top-up (bots_update):
+    it did not know a person was about to take that exact slot, so it
+    refilled it first and the person's retry above never got a turn.
+    bots_make_room() now reserves the room until the join is resolved either
+    way (bots_globals.rooms_reserved, bots_make_room_resolved()).
+
+    3) dedicated_server_log_players() only ever looked at the first 64
+    players (DEDICATED_SERVER_MAXIMUM_PLAYERS, stale since before
+    server.bots_fill let a lobby reach 128, #106): past that, a join or
+    leave got no "server: NAME joined/left" console line. Now 128.
+
+    About two minutes (128 bots join one a frame, bots.c)."""
+    maps, paths = _needs("HALO_TEST_GAME", "HALO_TEST_SERVER")
+    server, game = paths["HALO_TEST_SERVER"], paths["HALO_TEST_GAME"]
+    games = {"server": _start(tmp_path, "server", server, maps, {
+        "HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "3", "HALO_SERVER_BOTS": "128",
+        "HALO_SERVER_MAX_PLAYERS": "128", "HALO_SERVER_BOTS_FILL": "1", "HALO_BOT_SEED": "7",
+        "HALO_NET_ADDRESS": _test_address(251), "HALO_NET_BROADCAST": _test_address(252)})}
+    executables = {"server": server, "client": game}
+    try:
+        _wait(lambda: len(BOT_JOINED.findall(_log(tmp_path, "server"))) >= 128 and
+              "server: the game starts" in _log(tmp_path, "server"), 180, games, tmp_path,
+              "a full lobby of 128 bots did not join")
+        games["client"] = _start(tmp_path, "client", game, maps, {
+            "HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TEST_INPUT": "bot:7",
+            "HALO_NET_ADDRESS": _test_address(252), "HALO_NET_BROADCAST": _test_address(251)})
+        position = re.compile(r"network test: tick \d+ .* local (\d+) camera")
+        _wait(lambda: "left to make room for a person" in _log(tmp_path, "server") and
+              len([m for m in position.findall(_log(tmp_path, "client")) if m != "-1"]) >= 5, 60, games, tmp_path,
+              "the person did not get into the full game")
+        server_log = _log(tmp_path, "server")
+        assert re.search(r"server: (?!\[BOT\])\S.* joined", server_log), server_log[-6000:]
+        assert "refusing machine" not in server_log, server_log[-3000:]
+    finally:
+        _stop(games, tmp_path, executables)
+        for cache in tmp_path.rglob("cache*.map"):
+            cache.unlink()
+
+
 def test_bots_fill_a_full_lobby(tmp_path):
     """A dedicated server with server.bots_fill and a full lobby (server.bots
     and server.max_players both 6, so it is full at a scale the test can join
