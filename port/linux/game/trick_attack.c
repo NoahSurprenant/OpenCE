@@ -52,6 +52,12 @@ format: the network version is unchanged. */
 #include "text/unicode.h"
 #include "units/units.h"
 #include "interface/hud_messaging.h"
+#include "game/game_globals.h"
+#include "game/game_engine_king.h"
+#include "physics/collisions.h"
+#include "rasterizer/rasterizer_model_types.h"
+#include "scenario/scenario.h"
+#include "tag_files/tag_groups.h"
 
 #include "trick_attack.h"
 #include "infection.h"
@@ -555,19 +561,228 @@ static void trick_attack_bank(long player_index, struct trick_attack_player *sta
 	trick_attack_combo_worth(state);
 }
 
+/* ---------- the hot spot's boundary
+
+Drawn round the hot spot on every machine as King of the Hill draws its hill
+(game_engine_king.c's king_engine_post_rasterize: a band of the
+multiplayer globals' hill shader, 0.8 world units tall, along each edge of
+the hill's outline), in the same shader. The outline is a regular polygon
+of TRICK_ATTACK_HOT_SPOT_SIDES corners TRICK_ATTACK_HOT_SPOT_RADIUS from the
+hot spot's centre, and what counts as in the hot spot is that polygon seen
+from above, the very edges drawn (and, as before, within
+TRICK_ATTACK_HOT_SPOT_HEIGHT above or below the centre): the corners follow
+from the centre alone, so every machine has the host's outline from the
+centre the host sends. Each corner is drawn on the floor under it. */
+
+static struct
+{
+	boolean valid;
+	real x, y, z;
+	/* the corners, counterclockwise from above; drawn on the floor */
+	real_point3d corners[TRICK_ATTACK_HOT_SPOT_SIDES];
+	/* (debug.trick_hud_log) the last hot spot whose boundary was logged */
+	byte logged_number;
+	boolean logged;
+	real logged_x, logged_y;
+} trick_attack_boundary;
+
+/* the boundary of the hot spot where it is now */
+static boolean trick_attack_boundary_update(void)
+{
+	short corner;
+
+	if (!trick_attack.hot_valid)
+	{
+		trick_attack_boundary.valid = FALSE;
+		return FALSE;
+	}
+	if (trick_attack_boundary.valid && trick_attack_boundary.x == trick_attack.hot_x &&
+		trick_attack_boundary.y == trick_attack.hot_y && trick_attack_boundary.z == trick_attack.hot_z)
+	{
+		return TRUE;
+	}
+	for (corner = 0; corner < TRICK_ATTACK_HOT_SPOT_SIDES; corner++)
+	{
+		real angle = (real)corner * (2.f * _pi / TRICK_ATTACK_HOT_SPOT_SIDES);
+		real_point3d *point = &trick_attack_boundary.corners[corner];
+		real_point3d start;
+		real_vector3d down;
+		struct collision_result collision;
+
+		point->x = trick_attack.hot_x + TRICK_ATTACK_HOT_SPOT_RADIUS * (real)cos(angle);
+		point->y = trick_attack.hot_y + TRICK_ATTACK_HOT_SPOT_RADIUS * (real)sin(angle);
+		point->z = trick_attack.hot_z;
+		/* (on the floor under it, from a little above the centre's height:
+		the band stands on the ground a slope or a step puts it on) */
+		start.x = point->x;
+		start.y = point->y;
+		start.z = trick_attack.hot_z + 1.f;
+		down.i = 0.f;
+		down.j = 0.f;
+		down.k = -2.f * TRICK_ATTACK_HOT_SPOT_HEIGHT;
+		if (collision_test_vector(FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_structure_bit),
+			&start, &down, NONE, &collision))
+		{
+			point->z = collision.point.z;
+		}
+	}
+	trick_attack_boundary.x = trick_attack.hot_x;
+	trick_attack_boundary.y = trick_attack.hot_y;
+	trick_attack_boundary.z = trick_attack.hot_z;
+	trick_attack_boundary.valid = TRUE;
+	return TRUE;
+}
+
+/* whether a point is in the hot spot: inside its outline from above (on an
+edge counts) and within TRICK_ATTACK_HOT_SPOT_HEIGHT of its centre */
+static boolean trick_attack_in_hot_spot_at(real_point3d const *point)
+{
+	short corner;
+
+	if (!trick_attack_boundary_update() || !(fabs(point->z - trick_attack.hot_z) <= TRICK_ATTACK_HOT_SPOT_HEIGHT))
+		return FALSE;
+	for (corner = 0; corner < TRICK_ATTACK_HOT_SPOT_SIDES; corner++)
+	{
+		real_point3d const *a = &trick_attack_boundary.corners[corner];
+		real_point3d const *b = &trick_attack_boundary.corners[(corner + 1) % TRICK_ATTACK_HOT_SPOT_SIDES];
+
+		/* (left of each edge, counterclockwise) */
+		if ((b->x - a->x) * (point->y - a->y) - (b->y - a->y) * (point->x - a->x) < 0.f)
+			return FALSE;
+	}
+	return TRUE;
+}
+
 /* whether the player's unit is in the hot spot */
 static boolean trick_attack_in_hot_spot(long unit_index)
 {
 	real_point3d origin;
-	real dx, dy, dz;
 
 	if (!trick_attack.hot_valid || unit_index == NONE || !object_try_and_get(unit_index))
 		return FALSE;
 	object_get_origin(unit_index, &origin);
-	dx = origin.x - trick_attack.hot_x;
-	dy = origin.y - trick_attack.hot_y;
-	dz = origin.z - trick_attack.hot_z;
-	return dx * dx + dy * dy <= TRICK_ATTACK_HOT_SPOT_RADIUS * TRICK_ATTACK_HOT_SPOT_RADIUS && fabs(dz) <= 3.0f;
+	return trick_attack_in_hot_spot_at(&origin);
+}
+
+/* (debug.trick_hud_log) the boundary drawn, once a hot spot: its corners'
+reach from the centre, and points either side of each edge's middle and
+each corner tried as the scoring tries a skater (trick_attack_in_hot_spot_at),
+so that a test sees the area drawn is the area scored */
+static void trick_attack_boundary_log(void)
+{
+	short corner;
+	long inside = 0, outside = 0;
+	real nearest = 1.0e9f, farthest = 0.f;
+
+	if (!config_boolean("debug.trick_hud_log") ||
+		(trick_attack_boundary.logged && trick_attack_boundary.logged_number == trick_attack.hot_number &&
+			trick_attack_boundary.logged_x == trick_attack.hot_x && trick_attack_boundary.logged_y == trick_attack.hot_y))
+	{
+		return;
+	}
+	trick_attack_boundary.logged = TRUE;
+	trick_attack_boundary.logged_number = trick_attack.hot_number;
+	trick_attack_boundary.logged_x = trick_attack.hot_x;
+	trick_attack_boundary.logged_y = trick_attack.hot_y;
+	for (corner = 0; corner < TRICK_ATTACK_HOT_SPOT_SIDES; corner++)
+	{
+		real_point3d const *a = &trick_attack_boundary.corners[corner];
+		real_point3d const *b = &trick_attack_boundary.corners[(corner + 1) % TRICK_ATTACK_HOT_SPOT_SIDES];
+		real dx = a->x - trick_attack.hot_x, dy = a->y - trick_attack.hot_y;
+		real reach = (real)sqrt(dx * dx + dy * dy);
+		real_point3d middle, probe;
+		short side;
+
+		nearest = MIN(nearest, reach);
+		farthest = MAX(farthest, reach);
+		middle.x = (a->x + b->x) * 0.5f;
+		middle.y = (a->y + b->y) * 0.5f;
+		for (side = 0; side < 4; side++)
+		{
+			/* the edge's middle and the corner, 1% in and 1% out */
+			real_point3d const *at = side < 2 ? &middle : a;
+			real scale = side % 2 ? 1.01f : 0.99f;
+
+			probe.x = trick_attack.hot_x + (at->x - trick_attack.hot_x) * scale;
+			probe.y = trick_attack.hot_y + (at->y - trick_attack.hot_y) * scale;
+			probe.z = trick_attack.hot_z;
+			if (trick_attack_in_hot_spot_at(&probe) == !(side % 2))
+			{
+				if (side % 2)
+					outside++;
+				else
+					inside++;
+			}
+		}
+	}
+	platform_log("trick attack: the hot spot %d's boundary drawn at (%.2f %.2f %.2f): %d sides %.3f to %.3f from its "
+		"centre, %ld of %d points just inside it scored in, %ld of %d just outside scored out",
+		trick_attack.hot_number, trick_attack.hot_x, trick_attack.hot_y, trick_attack.hot_z, TRICK_ATTACK_HOT_SPOT_SIDES,
+		nearest, farthest, inside, 2 * TRICK_ATTACK_HOT_SPOT_SIDES, outside, 2 * TRICK_ATTACK_HOT_SPOT_SIDES);
+}
+
+/* slayer_engine_post_rasterize (game_engine_slayer.c), every machine: the
+hot spot's boundary drawn as King of the Hill's hill is */
+void trick_attack_post_rasterize(void)
+{
+	struct game_globals *game_globals;
+	struct game_globals_multiplayer_information *multiplayer_information;
+	real perimeter = 0.f, inverse_segment_count, texels_per_unit, previous_u = 0.f, accumulated_distance = 0.f;
+	short corner;
+
+	if (!trick_attack_active() || !trick_attack_boundary_update())
+		return;
+	game_globals = scenario_get_game_globals();
+	if (!game_globals || game_globals->multiplayer_information.count < 1)
+		return;
+	multiplayer_information = TAG_BLOCK_GET_ELEMENT(&game_globals->multiplayer_information, 0,
+		struct game_globals_multiplayer_information);
+	if (multiplayer_information->hill_shader.index == NONE)
+		return;
+	trick_attack_boundary_log();
+	/* (as king_engine_post_rasterize: the shader's texture repeated once a
+	world unit or so round the outline) */
+	for (corner = 0; corner < TRICK_ATTACK_HOT_SPOT_SIDES; corner++)
+		perimeter += distance3d(&trick_attack_boundary.corners[corner],
+			&trick_attack_boundary.corners[(corner + 1) % TRICK_ATTACK_HOT_SPOT_SIDES]);
+	inverse_segment_count = (real)(1.0 / MAX(floor(perimeter + 0.5f), 1.0));
+	texels_per_unit = 1.0f / (inverse_segment_count * perimeter);
+	render_dynamic_quad_initialize();
+	for (corner = 0; corner < TRICK_ATTACK_HOT_SPOT_SIDES; corner++)
+	{
+		struct model_vertex_uncompressed vertices[NUMBER_OF_VERTICES_PER_QUADRILATERAL];
+		real_point3d const *a = &trick_attack_boundary.corners[corner];
+		real_point3d const *b = &trick_attack_boundary.corners[(corner + 1) % TRICK_ATTACK_HOT_SPOT_SIDES];
+		real_vector3d sides[2];
+		real_vector3d normal;
+		real edge_length = distance3d(a, b);
+		real edge_end_u = (edge_length + accumulated_distance) * texels_per_unit;
+
+		accumulated_distance += edge_length;
+		csmemset(vertices, 0, sizeof(vertices));
+		vertices[0].position = *a;
+		vertices[1].position = *a;
+		vertices[1].position.z += TRICK_ATTACK_HOT_SPOT_BAND;
+		vertices[2].position = *b;
+		vertices[2].position.z += TRICK_ATTACK_HOT_SPOT_BAND;
+		vertices[3].position = *b;
+		vector_from_points3d(&vertices[0].position, &vertices[1].position, &sides[0]);
+		vector_from_points3d(&vertices[1].position, &vertices[2].position, &sides[1]);
+		cross_product3d(&sides[0], &sides[1], &normal);
+		normalize3d(&normal);
+		vertices[0].normal = vertices[1].normal = vertices[2].normal = vertices[3].normal = normal;
+		vertices[0].texcoord.x = previous_u * inverse_segment_count;
+		vertices[0].texcoord.y = 1.0f;
+		vertices[1].texcoord.x = previous_u * inverse_segment_count;
+		vertices[1].texcoord.y = 0.2f;
+		vertices[2].texcoord.x = edge_end_u * inverse_segment_count;
+		vertices[2].texcoord.y = 0.2f;
+		vertices[3].texcoord.x = edge_end_u * inverse_segment_count;
+		vertices[3].texcoord.y = 1.0f;
+		previous_u = edge_end_u;
+		render_dynamic_quad(vertices, multiplayer_information->hill_shader.index, NULL, NULL,
+			1.0f / inverse_segment_count, 1.0f);
+	}
 }
 
 /* whether the player's skater rides (on the board, not bailing), as the

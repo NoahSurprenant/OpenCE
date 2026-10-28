@@ -115,6 +115,27 @@ void observer_set_camera(
 	short local_player_index,
 	struct observer_command *command);
 
+/* port: how far the camera is from where its command puts it once settled
+(skate.c's debug.skate_camera_log) */
+struct observer_settle
+{
+	/* where the command puts the camera, obstructions aside */
+	real_point3d wanted;
+	/* the command's distance behind the focus, and the distance shown after
+	obstructions pulled the camera in */
+	real distance_wanted;
+	real distance_shown;
+	/* the longest a parameter still takes to reach the command, seconds */
+	real timer_left;
+	/* the angle between the camera's forward and the command's, radians */
+	real turn_left;
+	/* the camera's distance from wanted, obstructions aside, world units */
+	real off_by;
+};
+void observer_port_settle(
+	short local_player_index,
+	struct observer_settle *settle);
+
 /* ---------- globals */
 
 /* ---------- public code */

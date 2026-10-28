@@ -30,8 +30,16 @@ bot that hunts goes for them), and a banked combo is called out to everyone
 (debug.trick_mark_points: the tests' own) */
 #define TRICK_ATTACK_MARK_POINTS 5000
 long trick_attack_mark_points(void);
-/* the hot spot's reach (world units) */
+/* the hot spot's reach (world units): its outline a regular polygon of
+this many corners this far from its centre, drawn as King of the Hill's
+hill is (bands this tall), and counting within this height of its centre */
 #define TRICK_ATTACK_HOT_SPOT_RADIUS 5.0f
+#define TRICK_ATTACK_HOT_SPOT_SIDES 16
+#define TRICK_ATTACK_HOT_SPOT_BAND 0.8f
+#define TRICK_ATTACK_HOT_SPOT_HEIGHT 3.0f
+/* game_engine_slayer.c's post-rasterize hook (every machine): the hot spot's
+boundary drawn in the world */
+void trick_attack_post_rasterize(void);
 
 /* the entries' kind (their first byte) in the skate report and verdict
 messages (skate_authority.c), which builds without Trick Attack skip as of

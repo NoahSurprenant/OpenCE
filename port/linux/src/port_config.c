@@ -806,6 +806,13 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"The weapon network_test_pickup stands the player on: the first whose tag\n"
 		"name has this in it (\"sniper\", say); empty any." },
+	{ "debug.skate_camera_log", _config_boolean, "false", "HALO_SKATE_CAMERA_LOG", _environment_value, _platform_all,
+		"Skate 3 mode's tests: log where the local skater's following camera is\n"
+		"against where it should settle, every few ticks for three seconds after\n"
+		"each get-on, then every second." },
+	{ "debug.skate_get_on_crouch", _config_real, "0.0", "HALO_SKATE_GET_ON_CROUCH", _environment_value, _platform_all,
+		"Skate 3 mode's camera test: the local player is crouched this far (0 to\n"
+		"1) as it gets on a board, as a crouch pressed just before is; 0 never." },
 	{ "debug.network_test_skate", _config_real, "0.0", "HALO_NETWORK_TEST_SKATE", _environment_value, _platform_all,
 		"This many seconds into an automated test game this machine's player gets\n"
 		"on a Skate 3 board and rides a scripted pad (pushes, carves, ollies), off\n"
