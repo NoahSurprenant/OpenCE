@@ -462,7 +462,10 @@ jobs:
     # their tricks within the rules (always on a board, unarmed), the hot
     # spot moving where a board reaches; hunting bots ramming combos and
     # taking half; a listen host with a client whose skater's tricks the host
-    # scores, both playing an edited gametype and the client's HUD showing it.
+    # scores, both playing an edited gametype and the client's HUD showing it,
+    # and every machine drawing the hot spot's boundary where it scores; and
+    # the skate camera settling behind a skater got on crouched (at rest,
+    # riding off, a round's start).
     #
 
     # The game is the Linux build CI makes as debug (tools/ci_build.py:
@@ -595,8 +598,8 @@ jobs:
 
             exit 1
           fi
-          if ! grep -q '3 passed' "$RUNNER_TEMP/trick-attack.log" || grep -qi 'skipped' "$RUNNER_TEMP/trick-attack.log"; then
-            echo "::error::the three tests of tools/test_trick_attack.py did not all run and pass"
+          if ! grep -q '4 passed' "$RUNNER_TEMP/trick-attack.log" || grep -qi 'skipped' "$RUNNER_TEMP/trick-attack.log"; then
+            echo "::error::the four tests of tools/test_trick_attack.py did not all run and pass"
             exit 1
           fi
 

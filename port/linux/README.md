@@ -450,6 +450,8 @@ the setting for one start of the game. It has priority over the file.
 | `debug.trick_hot_spot` | `""` | `HALO_TRICK_HOT_SPOT` | Trick Attack's tests: the first hot spot, `<x>,<y>,<z>` (world units), instead of a random spot a board reaches. |
 | `debug.trick_mark_points` | `0` | `HALO_TRICK_MARK_POINTS` | Trick Attack's tests: the unbanked combo from which a skater is marked on everyone's HUD, hunted by hard bots and, banked, called out; `0`: the game type's own (5000). |
 | `debug.trick_hud_log` | `false` | `HALO_TRICK_HUD_LOG` | Trick Attack's tests: every machine logs what its HUD shows its player every five seconds. |
+| `debug.skate_camera_log` | `false` | `HALO_SKATE_CAMERA_LOG` | Skate 3 mode's tests: log where the local skater's following camera is against where it should settle, every frame for three seconds after each get-on, then every second. |
+| `debug.skate_get_on_crouch` | `0.0` | `HALO_SKATE_GET_ON_CROUCH` | Skate 3 mode's camera test: the local player is crouched this far (0 to 1) as it gets on a board, as a crouch pressed just before is; `0` never. |
 | `debug.skate_test_under_floor` | `0.0` | `HALO_SKATE_TEST_UNDER_FLOOR` | Skate 3 mode's test: that many seconds into a game, the host's first bot skater riding on a floor gets off, is left a little in the floor and gets on again; where its board is, logged. |
 | `debug.skate_test_spot` | `""` | `HALO_SKATE_TEST_SPOT` | Skate 3 mode's test: `"<map> <seconds> <x> <y> <z> <yaw> [session]"`: that many seconds into the first game on that map, the host's first bot skater riding (that skate session's, when given) gets off, is put at the spot facing yaw (degrees) and gets on there; where it goes for five seconds, logged. |
 | `debug.infection_test_press` | `false` | `HALO_INFECTION_TEST_PRESS` | Infection's tests: the infected press fire, melee, grenade, action, swap and reload every tick, and bots ask off their boards; none of it may happen, and the host logs what it refused. |
@@ -1259,7 +1261,10 @@ server `trick_attack` in `server.game_types` or `server.maps`
   reaches and rides away (the bots' walking graph, as Infection's out of
   reach: "The walking graph"), counts double for whatever is landed within
   five world units of it, for a minute; then it moves at least 20 world
-  units away. Chosen with the game's random numbers (fixed by
+  units away. Every machine draws its boundary on the ground as King of
+  the Hill draws its hill (the hill's band, in the same shader): a
+  sixteen-sided outline five world units round it, and what is landed
+  inside that outline (on its edge too), seen from above, is what counts. Chosen with the game's random numbers (fixed by
   `debug.game_seed`).
 - **The end:** the round's five minutes (or the game's time limit, if
   shorter); the highest score wins, as in Slayer. There is no score limit.

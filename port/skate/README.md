@@ -60,6 +60,9 @@ and J still ends it. Off the board the camera follows the skater, not the
 board, wherever the board lies or flies: it turns to the way you walk, and,
 stood still for a second, comes slowly round behind the way you face.
 Getting off and back on, it turns from where it was, never snapping round.
+However you got on - crouched, landing, at a round's start on a board - it
+settles behind you, looking from where you stand (a skating biped's own
+update is skipped, so skate.c stands up from a crouch you got on with).
 The board is drawn where the engine has it (its physical body), under you
 or not.
 

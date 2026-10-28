@@ -32,6 +32,9 @@ OVER = re.compile(r"trick attack: the game is over at tick (\d+): player (-?\d+)
                   r"(\d+) rules broken")
 TALLY = re.compile(r"trick attack: at tick (\d+): (\d+) of (\d+) players on boards, (\d+) rules broken, (\d+) reports "
                    r"refused, presses refused (\d+) times")
+BOUNDARY = re.compile(r"trick attack: the hot spot (\d+)'s boundary drawn at \((\S+) (\S+) (\S+)\): (\d+) sides (\S+) to "
+                      r"(\S+) from its centre, (\d+) of (\d+) points just inside it scored in, (\d+) of (\d+) just outside "
+                      r"scored out")
 HEADS = re.compile(r"bots: player (\d+) heads for the hot spot at")
 HUNTS = re.compile(r"bots: player (\d+) hunts player (\d+)'s combo of (\d+)")
 BANKING = re.compile(r"bots: player (\d+) rides on to bank a combo of (\d+)")
@@ -211,8 +214,10 @@ def test_trick_attack_a_client_scores_and_sees(tmp_path):
     the host's scores, the hot spot, its own combo while one goes, the marks
     over combos of 300 or more (debug.trick_mark_points) and a callout for
     one banked; a spectator's director (spectate_director.c) cuts to a
-    combo going for its reason. The round ends after two minutes. About
-    three minutes."""
+    combo going for its reason. Every machine draws each hot spot's
+    boundary where the host has the hot spot, as King of the Hill draws its
+    hill, and scores exactly the area drawn. The round ends after two
+    minutes. About three minutes."""
     game, maps, assets = _needs_skate()
     host_address, join_address = _test_address(205), _test_address(206)
     common = {"HALO_SKATE_ASSETS": assets, "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_TRICK_HUD_LOG": "1",
@@ -270,3 +275,80 @@ def test_trick_attack_a_client_scores_and_sees(tmp_path):
     assert any(re.fullmatch(r"COMBO [\d,]+  x\d+", h[2]) for h in huds), [h[2] for h in huds]
     assert any(h[7] for h in huds), "no mark over a big combo"
     assert any(re.fullmatch(r".+ landed a [\d,]+ combo", h[6]) for h in huds), [h[6] for h in huds]
+    # the hot spot's boundary drawn on every machine (as King of the Hill's
+    # hill: trick_attack_post_rasterize) round each hot spot the host placed,
+    # its corners the hot spot's reach from the centre, and the area drawn
+    # the area scored: points just inside each edge and corner count, just
+    # outside do not
+    for name, text in (("host", host), ("client", join), ("spectator", watch)):
+        drawn = {b[0]: b for b in BOUNDARY.findall(text)}
+        print(f"the {name}'s boundaries: {sorted(drawn.values())}")
+        assert len(drawn) >= 2, f"the {name} drew the boundary of {len(drawn)} hot spots: {drawn}"
+        for number, b in drawn.items():
+            assert spots.get(number) == b[1:4], f"the {name} drew hot spot {number} at {b[1:4]}, not {spots.get(number)}"
+            assert b[4:] == ("16", "5.000", "5.000", "32", "32", "32", "32"), f"the {name}'s boundary {b}"
+
+
+CAMERA = re.compile(r"skate camera: tick (\d+), on for ([\d.]+) s \(frame ([\d.]+) s\), ([\d.]+) m/s \| heading (\S+) board "
+                    r"(\S+) travel (\S+) degrees \| camera off by ([\d.]+), turn left ([\d.]+) degrees, blend left ([\d.]+) s, "
+                    r"distance ([\d.]+) of ([\d.]+) \| sight (-?[\d.]+) of ([\d.]+)")
+
+
+def test_skate_camera_settles_behind_the_skater(tmp_path):
+    """The following camera reaches its place behind a skater within its
+    one-second blend, however the skating began (debug.skate_camera_log:
+    skate.c logs, each frame for three seconds after a get-on and each
+    second after, where the camera is against where its command puts it -
+    observer_port_settle - and the height above the skater's feet it looks
+    from against standing's). The skater gets on crouched all the way
+    (debug.skate_get_on_crouch), as a crouch pressed just before J or both
+    sticks leaves it: a skating biped's own update is skipped, so its crouch
+    stayed for the whole ride and the camera blended toward the crouched
+    sight and stopped there, short of its place. Three listen hosts side by
+    side, alone or with bots on Blood Gulch: getting on at rest
+    (debug.network_test_skate_duel), getting on and riding off at once (the
+    scripted pad's pushes and carves: debug.network_test_skate) and a Trick
+    Attack round starting on a board. From 1.5 seconds after getting on to
+    the end the camera is where its command puts it, turned as it, no blend
+    left, and looks from the standing sight. About 40 seconds."""
+    game, maps, assets = _needs_skate()
+    common = {"HALO_SKATE_ASSETS": assets, "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1", "HALO_SKATE_CAMERA_LOG": "1",
+              "HALO_SKATE_GET_ON_CROUCH": "1", "HALO_GAME_SEED": "5", "HALO_NETWORK_TEST_START": "3",
+              "HALO_NET_BROADCAST": _test_address(165)}
+    cases = {
+        "rest": {"HALO_NETWORK_TEST": "host:bloodgulch:slayer", "HALO_NETWORK_TEST_SKATE_DUEL": "3"},
+        "riding": {"HALO_NETWORK_TEST": "host:bloodgulch:slayer", "HALO_NETWORK_TEST_SKATE": "3"},
+        "round": {"HALO_NETWORK_TEST": "host:bloodgulch:trick_attack", "HALO_SERVER_BOTS": "2", "HALO_BOT_SEED": "74",
+                  "HALO_GAME_SEED": "74"},
+    }
+    games = {name: _start(tmp_path, name, game, maps, {**common, **settings, "HALO_NET_ADDRESS": _test_address(162 + index)})
+             for index, (name, settings) in enumerate(cases.items())}
+
+    def settled():
+        return all(any(float(c[1]) >= 6.0 for c in CAMERA.findall(_log(tmp_path, name))) for name in cases)
+
+    try:
+        _wait(settled, 240, games, tmp_path, "a skater did not ride six seconds")
+    finally:
+        _stop(games, tmp_path, {name: game for name in cases})
+        for cache in tmp_path.rglob("cache*.map"):
+            cache.unlink()
+    for name in cases:
+        lines = CAMERA.findall(_log(tmp_path, name))
+        print(f"{name}: " + "\n  ".join(str(c) for c in lines if float(c[1]) < 0.2 or float(c[1]) >= 1.0)[:3000])
+        # (the first get-on: the time on the board only grows until a get-off)
+        first = []
+        for c in lines:
+            if first and float(c[1]) < float(first[-1][1]):
+                break
+            first.append(c)
+        standing = float(first[0][13])
+        assert float(first[0][12]) < standing - 0.1, f"{name}: the skater did not get on crouched: {first[0]}"
+        late = [c for c in first if float(c[1]) >= 1.5]
+        assert late and float(late[-1][1]) >= 6.0, f"{name}: the skater rode less than six seconds: {first[-1:]}"
+        for c in late:
+            assert float(c[7]) <= 0.02 and float(c[8]) <= 1.0 and float(c[9]) == 0.0, \
+                f"{name}: the camera is not where its command puts it {c[1]} s after getting on: {c}"
+            assert abs(float(c[12]) - standing) <= 0.002, \
+                f"{name}: the camera looks from {c[12]} above the skater's feet {c[1]} s after getting on, " \
+                f"not standing's {standing}: {c}"

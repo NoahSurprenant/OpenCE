@@ -300,6 +300,8 @@ void skate_hitbox_test(short when);
 uses (they are 1 to 3), so that getting on and off the board changes it and
 the director switches between the first-person and following cameras */
 #define SKATE_DIRECTOR_SEAT_STATE 4
+/* director.c: debug.skate_camera_log, each frame */
+void skate_camera_log(real seconds);
 /* the nearest the following camera comes behind a skater, world units */
 #define SKATE_CAMERA_MINIMUM_DISTANCE 0.5f
 

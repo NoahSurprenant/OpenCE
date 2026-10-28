@@ -987,6 +987,8 @@ void director_update(
 	short local_player_index;
 
 	director_globals.dtime = time_delta_sec;
+	/* port: (the last frame's skating camera logged: skate.c) */
+	skate_camera_log(time_delta_sec);
 	for (local_player_index = 0;
 		local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
 		local_player_index++)

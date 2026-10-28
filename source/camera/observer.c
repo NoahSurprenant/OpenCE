@@ -437,6 +437,53 @@ boolean observer_command_has_finished(
 	return TRUE;
 }
 
+/* port: the distance behind the focus each local player's camera was shown
+at, after obstructions (observer_port_settle) */
+static real observer_port_shown_distance[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
+
+/* port: where the last command puts the camera, obstructions aside (as
+observer_postcheck places it), and how far the camera still is from it */
+void observer_port_settle(
+	short local_player_index,
+	struct observer_settle *settle)
+{
+	struct observer *observer = observer_get(local_player_index);
+	struct observer_command const *command = &observer->last_command;
+	real_point3d focus = command->focus_position;
+	real_vector2d heading;
+	real cosine_value;
+	short parameter_index;
+
+	heading.i = command->forward.i;
+	heading.j = command->forward.j;
+	normalize2d(&heading);
+	focus.x += command->focus_offset.i*heading.i + command->focus_offset.j*heading.j;
+	focus.y += command->focus_offset.i*heading.j - command->focus_offset.j*heading.i;
+	focus.z += command->focus_offset.k;
+	settle->wanted.x = focus.x - command->forward.i*command->focus_distance;
+	settle->wanted.y = focus.y - command->forward.j*command->focus_distance;
+	settle->wanted.z = focus.z - command->forward.k*command->focus_distance;
+	settle->distance_wanted = command->focus_distance;
+	settle->distance_shown = observer_port_shown_distance[local_player_index];
+	settle->timer_left = command->timer;
+	for (parameter_index = 0; parameter_index < NUMBER_OF_OBSERVER_COMMAND_PARAMETERS; parameter_index++)
+		settle->timer_left = MAX(settle->timer_left, command->parameter_timers[parameter_index]);
+	cosine_value = dot_product3d(&observer->forward, &command->forward);
+	settle->turn_left = (real)acos(PIN(cosine_value, -1.f, 1.f));
+	/* (the camera where it stands, obstructions aside as well: they pull it
+	in toward the focus, the command or not) */
+	heading.i = observer->forward.i;
+	heading.j = observer->forward.j;
+	normalize2d(&heading);
+	focus = observer->focus_position;
+	focus.x += observer->focus_offset.i*heading.i + observer->focus_offset.j*heading.j - observer->forward.i*observer->focus_distance;
+	focus.y += observer->focus_offset.i*heading.j - observer->focus_offset.j*heading.i - observer->forward.j*observer->focus_distance;
+	focus.z += observer->focus_offset.k - observer->forward.k*observer->focus_distance;
+	settle->off_by = (real)sqrt(distance_squared3d(&focus, &settle->wanted));
+
+	return;
+}
+
 void observer_reconnect_to_structure_bsp(
 	void)
 {
@@ -1197,6 +1244,7 @@ static void observer_postcheck(
 			0.02f);
 	}
 
+	observer_port_shown_distance[local_player_index] = focus_distance;
 	observer->result.position.x = focus_position.x - observer->forward.i*focus_distance;
 	observer->result.position.y = focus_position.y - observer->forward.j*focus_distance;
 	observer->result.position.z = focus_position.z - observer->forward.k*focus_distance;

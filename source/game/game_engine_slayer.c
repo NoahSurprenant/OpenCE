@@ -181,6 +181,9 @@ static void slayer_engine_game_ending(
 static void slayer_engine_post_rasterize(
 	void)
 {
+	/* port: Trick Attack's hot spot drawn as King of the Hill's hill
+	(port/linux/game/trick_attack.c) */
+	trick_attack_post_rasterize();
 	return;
 }
 

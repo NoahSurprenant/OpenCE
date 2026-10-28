@@ -30,6 +30,7 @@ objects (render.c). */
 #include "physics/collision_models.h"
 #include "physics/collisions.h"
 #include "render/render.h"
+#include "camera/observer.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "structures/structure_bsp_definitions.h"
@@ -1016,6 +1017,23 @@ static void skate_apply_frame(struct skate_skater *skater, long unit_index, bool
 		halo_skate_follow(&skater->camera, &skater->frame, skate_settings.camera_speed,
 			SKATE_CAMERA_TURN, 1.f / TICKS_PER_SECOND);
 	}
+	/* the biped stands up as it would on foot: biped_update, which brings
+	its crouch to the crouch control's, is skipped while it skates
+	(bipeds.c), and the crouch got on with - the crouch a stick's click began
+	just before both sticks' or J, a landing's - stayed for the whole ride.
+	The following camera looks from the biped's sight, which the crouch
+	lowers (biped_get_sight_position): it blended toward that lower point and
+	stayed there, short of its place behind the skater */
+	{
+		struct biped_datum *biped = biped_get(unit_index);
+
+		if (biped->biped.crouch != 0.f)
+		{
+			real rise = biped_definition_get(biped->definition_index)->biped.runtime_crouch_transition_velocity;
+
+			biped->biped.crouch = rise > 0.f && biped->biped.crouch > rise ? biped->biped.crouch - rise : 0.f;
+		}
+	}
 	/* (the player's desired yaw must be within 0 to 2 pi: player_control.c) */
 	if (!(skater->camera.heading >= 0.f && skater->camera.heading < 2.f * _pi))
 		skater->camera.heading = (real)fmod(skater->camera.heading, 2.f * _pi);
@@ -1653,6 +1671,11 @@ static void skate_start(struct skate_skater *skater, long unit_index)
 	struct object_datum *object = object_get(unit_index);
 	real_point3d ground = skate_ground_under(unit_index, &object->object.position);
 	int session = skate_session(skater);
+
+	/* (debug.skate_get_on_crouch: the local player crouched that far as it
+	gets on, as a crouch pressed just before J leaves it: the camera's test) */
+	if (skater == skate_local && config_real("debug.skate_get_on_crouch") > 0.0)
+		biped_get(unit_index)->biped.crouch = PIN((real)config_real("debug.skate_get_on_crouch"), 0.f, 1.f);
 
 	/* (a biped in the floor - its origin under the ground the probe found,
 	from above - stands on it: none is placed under its feet) */
@@ -4071,6 +4094,47 @@ static void skate_bipeds_floor_check(void)
 	}
 }
 
+/* debug.skate_camera_log: the local skater's following camera against where
+its command puts it (observer_port_settle) and the skater's headings, every
+frame for three seconds after each get-on, then every second (director.c,
+each frame, the last frame's camera) */
+void skate_camera_log(real seconds)
+{
+	static real skating_seconds = 0.f;
+	static real logged_at = 0.f;
+	struct skate_skater *skater = skate_local;
+	struct observer_settle settle;
+	real_point3d sight, origin;
+	real speed, board_yaw, travel_yaw;
+	float const *velocity;
+
+	if (!skater->skating || skater->unit_index == NONE || !object_try_and_get(skater->unit_index))
+	{
+		skating_seconds = 0.f;
+		logged_at = 0.f;
+		return;
+	}
+	skating_seconds += seconds;
+	if (!config_boolean("debug.skate_camera_log") || (skating_seconds > 3.f && skating_seconds - logged_at < 1.f))
+		return;
+	logged_at = skating_seconds;
+	observer_port_settle(0, &settle);
+	/* (the sight the camera looks from, above the biped's feet, against
+	standing's) */
+	unit_get_camera_position(skater->unit_index, &sight);
+	object_get_origin(skater->unit_index, &origin);
+	velocity = skater->frame.off_board ? skater->frame.skater_velocity : skater->frame.velocity;
+	speed = (real)sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1]);
+	board_yaw = (real)atan2(skater->frame.forward[1], skater->frame.forward[0]);
+	travel_yaw = (real)atan2(velocity[1], velocity[0]);
+	platform_log("skate camera: tick %ld, on for %.3f s (frame %.3f s), %.2f m/s | heading %.1f board %.1f travel %.1f degrees | "
+		"camera off by %.2f, turn left %.1f degrees, blend left %.2f s, distance %.2f of %.2f | sight %.3f of %.3f",
+		game_time_get(), skating_seconds, seconds, speed * 3.048f, skater->camera.heading * 180.f / _pi,
+		board_yaw * 180.f / _pi, travel_yaw * 180.f / _pi, settle.off_by, settle.turn_left * 180.f / _pi,
+		settle.timer_left, settle.distance_shown, settle.distance_wanted, sight.z - origin.z,
+		biped_definition_get(biped_get(skater->unit_index)->definition_index)->biped.standing_camera_height);
+}
+
 void skate_update_after_objects(void)
 {
 	struct skate_skater *skater = skate_local;
@@ -4404,6 +4468,10 @@ boolean skate_unit_is_skating(long unit_index)
 boolean skate_local_player_skating(short local_player_index, real *yaw)
 {
 	return FALSE;
+}
+
+void skate_camera_log(real seconds)
+{
 }
 
 /* (nobody skates here; it hosts skaters, though, and decides their hits:
