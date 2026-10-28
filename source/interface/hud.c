@@ -114,6 +114,7 @@ symbols in this file:
 #include "units/unit_definitions.h"
 #include "units/units.h"
 #include "infection.h" /* port: port/linux/game/infection.c */
+#include "trick_attack.h" /* port: port/linux/game/trick_attack.c */
 
 /* ---------- constants */
 
@@ -1413,6 +1414,9 @@ void hud_draw_screen(
 		/* port: Infection: the player's side and the survivors left */
 		if (!cinematic_in_progress())
 			infection_draw(render.local_player_index);
+		/* port: Trick Attack: the combo, the leaders, the hot spot, callouts */
+		if (!cinematic_in_progress())
+			trick_attack_draw(render.local_player_index);
 		/* port: who a dead network co-op player is watching */
 
 		if (player->unit_index == NONE && coop_spectating() && !cinematic_in_progress())

@@ -39,6 +39,7 @@ has to step off and fight (a skater's weapon is holstered). */
 
 #include "bots_internal.h"
 #include "skate.h"
+#include "trick_attack.h"
 #include "../../skate/include/halo_skate.h"
 
 #include <math.h>
@@ -463,9 +464,85 @@ static boolean bot_trick_danger(
 
 	if (bot->brain.skate.ramming)
 		return TRUE;
+	/* (Trick Attack: nobody can shoot - only a skater riding at it is) */
+	if (trick_attack_active())
+		return FALSE;
 	if (combat->target_player != NONE && (combat->target_visible || now - combat->last_seen_tick < BOT_TRICK_DANGER_TICKS))
 		return TRUE;
 	return combat->heard_tick != 0 && now >= combat->heard_tick && now - combat->heard_tick < BOT_TRICK_DANGER_TICKS;
+}
+
+/* Trick Attack (trick_attack.c): the unbanked combo past which a bot stops
+starting tricks and rides on clean, for it to bank, by its trick
+difficulty (an easy one banks what little it has; a legendary one chains
+on), and a hunter this near (world units) makes it bank now */
+static long const bot_trick_bank_points[NUMBER_OF_BOT_DIFFICULTIES] = { 1500, 1500, 4000, 8000, 12000 };
+#define BOT_TRICK_HUNTER_NEAR 12.0f
+
+/* Trick Attack: whether the bot, the player, holds off new tricks for its
+combo to bank (told once each time, for the tests) */
+static boolean bot_trick_banking(
+	struct bot *bot,
+	long player_index,
+	long unit_index)
+{
+	short level = bot_tricks_level(bot);
+	long unbanked;
+	boolean banking = FALSE;
+
+	if (!trick_attack_active() || level == NONE)
+		return FALSE;
+	unbanked = trick_attack_unbanked(player_index);
+	if (unbanked >= bot_trick_bank_points[PIN(level, 0, NUMBER_OF_BOT_DIFFICULTIES - 1)])
+		banking = TRUE;
+	/* (hard and better: another skater close, it banks what it has) */
+	else if (unbanked > 0 && level >= _bot_difficulty_hard)
+	{
+		struct data_iterator iterator;
+		struct player_datum *player;
+		real_point3d position;
+
+		object_get_origin(unit_index, &position);
+		data_iterator_new(&iterator, player_data);
+		while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		{
+			real_point3d other;
+
+			if (iterator.datum_index == player_index || player->unit_index == NONE ||
+				!object_try_and_get(player->unit_index))
+			{
+				continue;
+			}
+			object_get_origin(player->unit_index, &other);
+			if ((other.x - position.x) * (other.x - position.x) + (other.y - position.y) * (other.y - position.y) <
+				BOT_TRICK_HUNTER_NEAR * BOT_TRICK_HUNTER_NEAR && fabs(other.z - position.z) < 2.0f)
+			{
+				banking = TRUE;
+				break;
+			}
+		}
+	}
+	if (banking && !bot->brain.skate.tricks.banking)
+	{
+		platform_log("bots: player %ld rides on to bank a combo of %ld at tick %ld",
+			DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), unbanked, game_time_get());
+	}
+	bot->brain.skate.tricks.banking = banking;
+	return banking;
+}
+
+/* the ticks after a trick before it begins another: its skill's; in Trick
+Attack, chaining a combo, soon enough for the next landing to come within
+the bank delay (normal and better) */
+static long bot_trick_cooldown(
+	struct bot const *bot,
+	struct bot_trick_skill const *skill)
+{
+	short level = bot_tricks_level(bot);
+
+	if (trick_attack_active() && level >= _bot_difficulty_normal)
+		return MIN(skill->cooldown_ticks, trick_attack_bank_ticks() / 3);
+	return skill->cooldown_ticks;
 }
 
 /* (bots_skate.c) how far across the bot looks for a rail beside its way
@@ -582,6 +659,9 @@ void bot_tricks_think(
 	boolean rolling;
 
 	bot_trick_tally(bot, player_index);
+	/* (Trick Attack: a combo big enough, or a hunter near, rides on to bank) */
+	if (bot_trick_banking(bot, player_index, unit_index))
+		allowed = FALSE;
 	position.x = view->position[0];
 	position.y = view->position[1];
 	position.z = view->position[2];
@@ -748,7 +828,7 @@ void bot_tricks_think(
 			if (bot_trick_flick(tricks, bot_trick_choose_flip(bot), _bot_gesture_pop, BOT_TRICK_POP_WIND_TICKS))
 			{
 				statistics->skate_pops++;
-				tricks->next_tick = now + skill->cooldown_ticks;
+				tricks->next_tick = now + bot_trick_cooldown(bot, skill);
 			}
 		}
 		return;
@@ -809,7 +889,7 @@ void bot_tricks_think(
 		if (bot_trick_flick(tricks, bot_trick_choose_flip(bot), _bot_gesture_flip, BOT_TRICK_WIND_TICKS))
 		{
 			statistics->skate_flips++;
-			tricks->next_tick = now + skill->cooldown_ticks;
+			tricks->next_tick = now + bot_trick_cooldown(bot, skill);
 			bot_trick_gesture_step(tricks, view, pad);
 		}
 	}

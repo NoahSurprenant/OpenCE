@@ -440,6 +440,16 @@ the setting for one start of the game. It has priority over the file.
 | `debug.infection_test_place` | `""` | `HALO_INFECTION_TEST_PLACE` | Infection's tests: players the host puts somewhere once their first unit is in the game, `<player>:<x>,<y>,<z>` (world units; `client` for the person on another machine) with semicolons between. |
 
 | `debug.infection_first` | `""` | `HALO_INFECTION_FIRST` | Infection's tests: the players (absolute indices, with commas between) who start infected, instead of a random choice; `client`: the people on other machines than the host; `bots`: every bot. |
+| `server.trick_minutes` | `0` | `HALO_SERVER_TRICK_MINUTES` | Trick Attack: the round's minutes (a shorter `server.time_limit` wins); `0`: the game type's own (5). Refer to "Trick Attack". |
+| `server.trick_bank_delay` | `0` | `HALO_SERVER_TRICK_BANK_DELAY` | Trick Attack: tenths of a second a combo must ride on clean after its last landing before it banks; `0`: the game type's own (20). |
+| `server.trick_steal` | `0` | `HALO_SERVER_TRICK_STEAL` | Trick Attack: the percent of a rammed skater's unbanked combo their rammer takes; `0`: the game type's own (50). |
+| `server.trick_hot_spot_multiplier` | `0` | `HALO_SERVER_TRICK_HOT_SPOT_MULTIPLIER` | Trick Attack: the hot spot's multiplier, in tenths (10 to 100); `0`: the game type's own (20, x2). |
+| `server.trick_hot_spot_seconds` | `0` | `HALO_SERVER_TRICK_HOT_SPOT_SECONDS` | Trick Attack: the seconds the hot spot stays before it moves; `0`: the game type's own (60). |
+| `server.trick_ramming` | `-1` | `HALO_SERVER_TRICK_RAMMING` | Trick Attack: ramming a skater mid-combo knocks them off and takes a share of it: `1` on, `0` off, `-1` the game type's own (on). |
+| `debug.trick_test_place` | `""` | `HALO_TRICK_TEST_PLACE` | Trick Attack's tests: players the host puts somewhere once their first unit is in the game, as `debug.infection_test_place`. |
+| `debug.trick_hot_spot` | `""` | `HALO_TRICK_HOT_SPOT` | Trick Attack's tests: the first hot spot, `<x>,<y>,<z>` (world units), instead of a random spot a board reaches. |
+| `debug.trick_mark_points` | `0` | `HALO_TRICK_MARK_POINTS` | Trick Attack's tests: the unbanked combo from which a skater is marked on everyone's HUD, hunted by hard bots and, banked, called out; `0`: the game type's own (5000). |
+| `debug.trick_hud_log` | `false` | `HALO_TRICK_HUD_LOG` | Trick Attack's tests: every machine logs what its HUD shows its player every five seconds. |
 | `debug.skate_test_under_floor` | `0.0` | `HALO_SKATE_TEST_UNDER_FLOOR` | Skate 3 mode's test: that many seconds into a game, the host's first bot skater riding on a floor gets off, is left a little in the floor and gets on again; where its board is, logged. |
 | `debug.skate_test_spot` | `""` | `HALO_SKATE_TEST_SPOT` | Skate 3 mode's test: `"<map> <seconds> <x> <y> <z> <yaw> [session]"`: that many seconds into the first game on that map, the host's first bot skater riding (that skate session's, when given) gets off, is put at the spot facing yaw (degrees) and gets on there; where it goes for five seconds, logged. |
 | `debug.infection_test_press` | `false` | `HALO_INFECTION_TEST_PRESS` | Infection's tests: the infected press fire, melee, grenade, action, swap and reload every tick, and bots ask off their boards; none of it may happen, and the host logs what it refused. |
@@ -1216,6 +1226,86 @@ players; the game type's settings travel in bytes of Team Slayer's
 variant that the Xbox's game left unused. So the network format is
 unchanged. A build without Skate 3 mode (or without its data) leaves the
 infected on foot, unarmed.
+
+## Trick Attack
+
+A game type of the port's: Slayer, every skater for themselves, on Skate 3
+mode's boards (port/skate/README.md), scored by the tricks each one lands.
+Choose **TRICK ATTACK** among the standard game types, or give a dedicated
+server `trick_attack` in `server.game_types` or `server.maps`
+(`bloodgulch:trick_attack`).
+
+- **Everyone skates, nobody shoots:** every player is always on a board,
+  with Infection's rules for the infected - no getting off, firing, melee,
+  grenades, picking up or vehicles, no weapons. A run-over hurts nobody;
+  falling off the level still kills, and a player comes back three seconds
+  later, on a board.
+- **Tricks:** what Skate 3's own scoring (the skate engine's) makes of a
+  skater's riding - flips, grabs, grinds, manuals - one sequence at a time,
+  from leaving the ground (or starting a grind, a manual) to rolling away
+  clean, with the sequence's own multiplier.
+- **Combos:** each sequence landed joins the skater's combo, which is worth
+  its sequences' points times one for each trick in it (x2, x3 ..., to
+  x10). It banks - into the player's score - once they have ridden on clean
+  for the bank delay (two seconds) after their last landing, with nothing
+  under way; landing another sequence before then chains it on. A bail (or
+  anything else that takes them off the board, a death too) loses the
+  combo.
+- **Ramming:** a skater who knocks into one with a combo going makes them
+  bail (the host's verdict on the hit, port/skate/README.md's
+  "Multiplayer") and takes half of the combo (the steal share) into their
+  own score at once; whoever came at the other faster is the rammer.
+- **The hot spot:** one spot of the map's main ground, where a board
+  reaches and rides away (the bots' walking graph, as Infection's out of
+  reach: "The walking graph"), counts double for whatever is landed within
+  five world units of it, for a minute; then it moves at least 20 world
+  units away. Chosen with the game's random numbers (fixed by
+  `debug.game_seed`).
+- **The end:** the round's five minutes (or the game's time limit, if
+  shorter); the highest score wins, as in Slayer. There is no score limit.
+- **The HUD:** the player's combo and multiplier bottom centre, with the
+  sequence under way and its last trick under it; the five best scores top
+  right (and the player's own place past them); the hot spot's multiplier,
+  time left and distance at the top, and a marker over it; every skater
+  with 5000 or more unbanked has it shown over their head; a combo of 5000
+  or more banked is called out to everyone ("Ash landed a 12,400 combo").
+  A spectator's director ("Spectators") prefers the
+  biggest combo going.
+- **Editing it:** Edit Gametypes (or Server Setup's game type) on a Slayer
+  gametype: TRICK ATTACK OPTIONS... opens Trick Attack's screen - TRICK
+  ATTACK (on or off: any Slayer gametype can be Trick Attack), ROUND TIME
+  (1 to 30 minutes), BANK DELAY (0.5 to 5 seconds), STEAL SHARE (10% to
+  100%), HOT SPOT MULTIPLIER (x1.5 to x5), HOT SPOT DURATION (15 to 180
+  seconds) and RAMMING (on or off), the built-in's values at first. They
+  are kept in the gametype and travel with the game; a dedicated server's
+  `server.trick_minutes`, `server.trick_bank_delay` (tenths of a second),
+  `server.trick_steal`, `server.trick_hot_spot_multiplier` (tenths),
+  `server.trick_hot_spot_seconds` and `server.trick_ramming` (1 on, 0 off)
+  override its own (the chart's `server.trickAttack`).
+- **Bots** ride, flick and grind as they always do on a board
+  ("Bots on boards"), without the caution a fight would ask for, and chain
+  their tricks into combos (a normal or better bot tricks again soon enough
+  to land within the bank delay); past a combo of their own size (1500 for
+  an easy bot, 4000 normal, 8000 hard, 12000 legendary) - or, hard and
+  better, with another skater close - they start nothing new and ride on
+  to bank it. They head for the hot spot and ride about it; hard and
+  legendary bots hunt any combo of 5000 or more within 40 world units and
+  ride into its skater. Peaceful bots never ride at anyone.
+
+The host keeps the scores. Its own skaters' tricks (its player's, its
+bots') come from its skate engine; a client's skater's from the client, in
+the skate report message (`_distributed_message_skate_report`): an entry of
+a kind of its own, the running totals of its engine's scoring a few times a
+second, so that a lost datagram loses nothing, taken only for that
+machine's player and capped. The banked scores reach every machine as
+Slayer's always have (the game type's state); the combos going and the hot
+spot, a few times a second, in entries of their own in the skate verdict
+message. Builds without Trick Attack skip those entries as of another
+format, and the game type's settings travel in bytes of Slayer's variant
+that the Xbox's game left unused, so the network version is unchanged; an
+older client plays Slayer on foot (or on a board, with Skate 3 mode) and
+scores nothing. Without Skate 3 mode (or its data) nobody skates and
+nobody scores.
 
 ## Bots
 

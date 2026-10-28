@@ -101,6 +101,10 @@ has been out of reach, 0 for none (bots_skate.c: a survivor bot comes
 down) */
 long infection_out_of_reach_ticks(long player_index);
 
+/* the ticks a restricted player's presses were refused (players.c's filter:
+the infected's, Trick Attack's skaters'), for the tests */
+long infection_refused_presses(void);
+
 /* game_engine.c: a team's change colour (the infected green) */
 real_rgb_color const *infection_change_color(long team_index);
 

@@ -108,6 +108,11 @@ int skate_bot_gesture(char const *name, float *points, int capacity);
 such a skater at all (alive, on foot or riding) */
 boolean skate_host_skater_riding(long unit_index);
 boolean skate_host_skater(long unit_index);
+/* trick_attack.c: what the skate engine's scoring made of the riding of the
+unit, a skater this machine's engine runs (its own player's, a host's bot's),
+since its session was made (halo_skate.h's halo_skate_tricks), and that
+session's number; FALSE for none such */
+boolean skate_unit_tricks(long unit_index, struct halo_skate_tricks *tricks, int *session);
 
 /* hs_compile_and_evaluate: a console command tuning Skate 3 mode, one of
 SKATE_CONSOLE_SETTINGS, with what follows its word: sets the value for the

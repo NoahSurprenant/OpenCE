@@ -18,6 +18,13 @@ server:
   botsFill: false
   botDifficulty: hard
   botSkaters: 2
+  trickAttack:
+    roundMinutes: 8
+    bankDelayTenths: 30
+    stealPercent: 75
+    hotSpotMultiplierTenths: 30
+    hotSpotSeconds: 45
+    ramming: 0
 network:
   tunnelPort: 27016
   publicAddress: halo.example.com:27016

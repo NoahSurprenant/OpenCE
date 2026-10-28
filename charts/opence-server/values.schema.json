@@ -135,7 +135,24 @@
         "bots": { "type": "integer", "minimum": 0, "maximum": 128 },
         "botsFill": { "type": "boolean" },
         "botDifficulty": { "type": "string", "enum": ["peaceful", "easy", "normal", "hard", "legendary"] },
-        "botSkaters": { "type": "integer", "minimum": -1, "maximum": 128 }
+        "botSkaters": { "type": "integer", "minimum": -1, "maximum": 128 },
+        "trickAttack": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "roundMinutes": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "bankDelayTenths": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "stealPercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "hotSpotMultiplierTenths": {
+              "oneOf": [
+                { "const": 0 },
+                { "type": "integer", "minimum": 10, "maximum": 100 }
+              ]
+            },
+            "hotSpotSeconds": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "ramming": { "type": "integer", "enum": [-1, 0, 1] }
+          }
+        }
       },
       "allOf": [
         {

@@ -84,6 +84,7 @@ their handlers open opens.
 #include "network_voice.h"
 #include "spectate.h"
 #include "infection.h"
+#include "trick_attack.h"
 #include "text/draw_string.h"
 /* (internet play's server browser: the platform layer's) */
 #include "../src/p2p.h"
@@ -2281,16 +2282,19 @@ void ui_widget_port_post_button(short controller_index, short button_index);
 static wchar_t const *const engine_names[] = { L"", L"CTF", L"SLAYER", L"ODDBALL", L"KING OF THE HILL", L"RACE" };
 
 /* a variant's type as the menus name it: its engine's, or the port's
-Infection (port/linux/game/infection.c), Slayer by its engine */
+Infection (port/linux/game/infection.c) or Trick Attack
+(port/linux/game/trick_attack.c), Slayer by its engine */
 static wchar_t const *variant_type_name(struct game_variant const *variant)
 {
 	if (variant->game_engine_index == game_engine_slayer && variant->game_engine_variant.slayer.infection)
 		return L"INFECTION";
+	if (variant->game_engine_index == game_engine_slayer && variant->game_engine_variant.slayer.trick_attack)
+		return L"TRICK ATTACK";
 	return engine_names[PIN(variant->game_engine_index, 0, 5)];
 }
 
 /* the gametype list's detail panel: the type, then teams or free for all
-and the score to win (Infection: what it is, and its round) */
+and the score to win (Infection, Trick Attack: what each is, and its round) */
 static void gametype_data_text(struct game_variant const *variant, wchar_t *text, long count)
 {
 	if (variant->game_engine_index == game_engine_slayer && variant->game_engine_variant.slayer.infection)
@@ -2298,6 +2302,12 @@ static void gametype_data_text(struct game_variant const *variant, wchar_t *text
 		usnprintf(text, count - 1, L"INFECTION\r\nRide the survivors down on a board\r\nRound: %d minutes",
 			variant->game_engine_variant.slayer.infection_minutes > 0 ?
 				(int)variant->game_engine_variant.slayer.infection_minutes : 5);
+	}
+	else if (variant->game_engine_index == game_engine_slayer && variant->game_engine_variant.slayer.trick_attack)
+	{
+		usnprintf(text, count - 1, L"TRICK ATTACK\r\nLand tricks, bank combos riding clean\r\nRound: %d minutes",
+			variant->game_engine_variant.slayer.trick_minutes > 0 ?
+				(int)variant->game_engine_variant.slayer.trick_minutes : TRICK_ATTACK_DEFAULT_MINUTES);
 	}
 	else
 	{
@@ -4674,7 +4684,10 @@ enum
 	_option_radar,		/* the options' radar players, and the variant's flag */
 	_option_setting,	/* the host's own (config.toml): Server Setup's copy only */
 	_option_number_byte,	/* a byte of the variant, a number (Infection's) */
-	_option_number_short	/* a short of the variant, a number (Infection's) */
+	_option_number_short,	/* a short of the variant, a number (Infection's) */
+	_option_byte_not	/* a byte of the variant, inverted (Trick Attack's ramming:
+				trick_no_ramming is 0 for ramming on, so "On" (value 1) stores
+				0 and "Off" (value 0) stores 1) */
 };
 
 /* the most choices a spinner of Edit Gametypes' or Server Setup's has (its
@@ -4838,6 +4851,27 @@ static struct gametype_option const gametype_options[] =
 		{ 4, 6, 8, 10, 12, 16 } },
 	{ "infection_minutes_spinner", _option_number_byte, VARIANT_FIELD(game_engine_variant.slayer.infection_minutes), 0,
 		8, { 1, 2, 3, 4, 5, 6, 8, 10 } },
+	/* Trick Attack's (port/linux/game/trick_attack.c; tools/port_settings.py's
+	TRICK_ATTACK_ROWS: their words): on Slayer's screen, and its own screen */
+	{ "trick_attack_spinner", _option_byte, VARIANT_FIELD(game_engine_variant.slayer.trick_attack), 0, 2, { 0, 1 } },
+	{ "trick_minutes_spinner", _option_number_byte, VARIANT_FIELD(game_engine_variant.slayer.trick_minutes), 0, 30,
+		{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+		30 } },
+	/* tenths of a second */
+	{ "trick_bank_delay_spinner", _option_number_byte, VARIANT_FIELD(game_engine_variant.slayer.trick_bank_delay), 0,
+		10, { 5, 10, 15, 20, 25, 30, 35, 40, 45, 50 } },
+	{ "trick_steal_spinner", _option_number_byte, VARIANT_FIELD(game_engine_variant.slayer.trick_steal), 0, 10,
+		{ 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 } },
+	/* tenths (x1.5 to x5.0) */
+	{ "trick_hot_spot_multiplier_spinner", _option_number_byte,
+		VARIANT_FIELD(game_engine_variant.slayer.trick_hot_spot_multiplier), 0, 8, { 15, 20, 25, 30, 35, 40, 45, 50 } },
+	{ "trick_hot_spot_seconds_spinner", _option_number_byte,
+		VARIANT_FIELD(game_engine_variant.slayer.trick_hot_spot_seconds), 0, 12,
+		{ 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180 } },
+	/* trick_no_ramming is 0 for ramming on, so this stores its complement:
+	"On" (1) sets it 0, "Off" (0) sets it 1 (_option_byte_not) */
+	{ "trick_ramming_spinner", _option_byte_not, VARIANT_FIELD(game_engine_variant.slayer.trick_no_ramming), 0, 2,
+		{ 1, 0 } },
 	/* vehicle options (the side's set and counts: vehicles_update) */
 
 	{ "vehicles_respawn_spinner", _option_short, OPTIONS_FIELD(vehicle_respawn_time), 0, 7,
@@ -4895,6 +4929,7 @@ static long gametype_option_value(struct gametype_option const *option, struct g
 	case _option_radar: return options->radar_players;
 	case _option_number_byte: return v[option->offset];
 	case _option_number_short: return *(short *)(v + option->offset);
+	case _option_byte_not: return v[option->offset] == 0;
 	}
 	return 0;
 }
@@ -4920,6 +4955,7 @@ static void gametype_option_value_set(struct gametype_option const *option, long
 	case _option_option_byte: o[option->offset] = (byte)value; break;
 	case _option_number_byte: v[option->offset] = (byte)value; break;
 	case _option_number_short: *(short *)(v + option->offset) = (short)value; break;
+	case _option_byte_not: v[option->offset] = value ? 0 : 1; break;
 	case _option_radar:
 		/* (and the Xbox's flag: other players on the tracker or not) */
 		options->radar_players = (byte)value;
@@ -5162,6 +5198,9 @@ static boolean gametype_options_init(struct widget_instance *list)
 	/* (Infection's screen: its settings the game type's own where unset) */
 	if (named(list, "op_infection", 0))
 		infection_variant_defaults(edit_variant());
+	/* (Trick Attack's screen: likewise) */
+	if (named(list, "op_trick_attack", 0))
+		trick_attack_variant_defaults(edit_variant());
 	gametype_options_each(list, FALSE);
 
 	if (named(list, "op_team", 0))

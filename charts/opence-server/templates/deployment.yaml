@@ -20,6 +20,12 @@
 {{- $env = append $env (dict "name" "HALO_SERVER_BOTS_FILL" "value" (toString .Values.server.botsFill)) }}
 {{- $env = append $env (dict "name" "HALO_SERVER_BOT_DIFFICULTY" "value" .Values.server.botDifficulty) }}
 {{- $env = append $env (dict "name" "HALO_SERVER_BOT_SKATERS" "value" (toString (int .Values.server.botSkaters))) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_TRICK_MINUTES" "value" (toString (int .Values.server.trickAttack.roundMinutes))) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_TRICK_BANK_DELAY" "value" (toString (int .Values.server.trickAttack.bankDelayTenths))) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_TRICK_STEAL" "value" (toString (int .Values.server.trickAttack.stealPercent))) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_TRICK_HOT_SPOT_MULTIPLIER" "value" (toString (int .Values.server.trickAttack.hotSpotMultiplierTenths))) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_TRICK_HOT_SPOT_SECONDS" "value" (toString (int .Values.server.trickAttack.hotSpotSeconds))) }}
+{{- $env = append $env (dict "name" "HALO_SERVER_TRICK_RAMMING" "value" (toString (int .Values.server.trickAttack.ramming))) }}
 {{- if include "opence-server.hasSkateData" . }}
 {{- $env = append $env (dict "name" "HALO_SKATE_ASSETS" "value" "/skate-data/assets") }}
 {{- end }}

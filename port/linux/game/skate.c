@@ -4212,6 +4212,18 @@ boolean skate_host_skater(long unit_index)
 	return skate_skater_of_unit(unit_index) != NULL;
 }
 
+boolean skate_unit_tricks(long unit_index, struct halo_skate_tricks *tricks, int *session)
+{
+	struct skate_skater *skater = skate_skater_of_unit(unit_index);
+
+	memset(tricks, 0, sizeof(*tricks));
+	*session = -1;
+	if (!skater)
+		return FALSE;
+	*session = skate_session(skater);
+	return halo_skate_tricks_in(*session, tricks) == 0;
+}
+
 boolean skate_force_bail(long unit_index, real closing)
 {
 	struct skate_skater *skater = skate_skater_of_unit(unit_index);
@@ -4465,6 +4477,12 @@ boolean skate_host_skater_riding(long unit_index)
 
 boolean skate_host_skater(long unit_index)
 {
+	return FALSE;
+}
+
+boolean skate_unit_tricks(long unit_index, struct halo_skate_tricks *tricks, int *session)
+{
+	*session = -1;
 	return FALSE;
 }
 

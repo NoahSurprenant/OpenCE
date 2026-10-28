@@ -34,6 +34,7 @@ skate_bot_drive runs the skate engine for it):
 
 #include "bots_internal.h"
 #include "infection.h"
+#include "trick_attack.h"
 #include "skate.h"
 #include "../../skate/include/halo_skate.h"
 
@@ -394,6 +395,142 @@ static long bots_board_nearest(
 	real y,
 	real z);
 
+/* (below) the graph's board reach worked out; and whether a board reaches
+the node, from the main ground (after it is worked out) */
+static boolean bot_board_reach_make(
+	struct bots_nav const *nav);
+static boolean bot_board_node_reached(
+	long node);
+
+/* Trick Attack (trick_attack.c): a hunting bot goes after a combo this far
+away at most (world units); in the hot spot it rides among the nodes this
+near its middle */
+#define BOT_SKATE_HUNT_DISTANCE 40.0f
+#define BOT_SKATE_HOT_SPOT_ROAM 10.0f
+
+/* Trick Attack: every second, the bot's way - after the biggest combo going
+(hard and better, not banking its own), else to the hot spot and about it.
+The unit to ride at, once near the combo's skater, else NONE */
+static long bot_skate_trick_attack(
+	struct bot *bot,
+	long player_index,
+	struct bots_nav *nav,
+	real_point3d const *position,
+	boolean skating)
+{
+	long now = game_time_get();
+	boolean look = (now + bot->slot) % TICKS_PER_SECOND == 0;
+	long leader = NONE;
+	struct object_datum *target = NULL;
+	real x, y, z, multiplier;
+	long seconds_left;
+	long node = NONE;
+
+	if (!nav)
+		return NONE;
+	if (bot->difficulty >= _bot_difficulty_hard && !bot->brain.skate.tricks.banking)
+	{
+		leader = trick_attack_combo_leader(trick_attack_mark_points(), player_index);
+		if (leader != NONE)
+		{
+			long unit_index = player_get(leader)->unit_index;
+
+			target = unit_index != NONE ? object_try_and_get(unit_index) : NULL;
+			if (!target || (target->object.position.x - position->x) * (target->object.position.x - position->x) +
+				(target->object.position.y - position->y) * (target->object.position.y - position->y) >
+				BOT_SKATE_HUNT_DISTANCE * BOT_SKATE_HUNT_DISTANCE)
+			{
+				target = NULL;
+			}
+		}
+	}
+	if (target)
+	{
+		real dx = target->object.position.x - position->x, dy = target->object.position.y - position->y;
+
+		if (look)
+		{
+			node = bots_nav_locate(nav, target->object.position.x, target->object.position.y, target->object.position.z);
+			if (node != NONE && node != bot->brain.goal_node)
+			{
+				bot->brain.goal_node = node;
+				bot->brain.path_next = NONE;
+			}
+			if (bot->brain.skate.hunted != leader)
+			{
+				platform_log("bots: player %ld hunts player %ld's combo of %ld at tick %ld",
+					DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), DATUM_INDEX_TO_ABSOLUTE_INDEX(leader),
+					trick_attack_unbanked(leader), now);
+				bot->brain.skate.hunted = leader;
+			}
+		}
+		if (skating && dx * dx + dy * dy <= BOT_SKATE_INFECTED_RAM_DISTANCE * BOT_SKATE_INFECTED_RAM_DISTANCE &&
+			fabs(target->object.position.z - position->z) <= BOT_SKATE_RAM_HEIGHT)
+		{
+			return player_get(leader)->unit_index;
+		}
+		return NONE;
+	}
+	bot->brain.skate.hunted = NONE;
+	if (!look || !trick_attack_hot_spot(&x, &y, &z, &seconds_left, &multiplier))
+		return NONE;
+	if ((x - position->x) * (x - position->x) + (y - position->y) * (y - position->y) >
+		TRICK_ATTACK_HOT_SPOT_RADIUS * TRICK_ATTACK_HOT_SPOT_RADIUS * 2.25f)
+	{
+		/* (on its way: the node a board reaches nearest it) */
+		node = bot->brain.skate.hot_spot_node != NONE && bot->brain.skate.hot_spot_number == (long)(x * 7.0f + y * 13.0f) ?
+			bot->brain.skate.hot_spot_node : bots_board_nearest(nav, x, y, z);
+		if (node != NONE && bot->brain.skate.hot_spot_node != node)
+		{
+			bot->brain.skate.hot_spot_node = node;
+			bot->brain.skate.hot_spot_number = (long)(x * 7.0f + y * 13.0f);
+			platform_log("bots: player %ld heads for the hot spot at (%.2f %.2f %.2f) at tick %ld",
+				DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), x, y, z, now);
+		}
+	}
+	else if (bot->brain.goal_node < 0 || bot->brain.goal_node >= nav->node_count || bot->brain.path_next == NONE ||
+		(nav->nodes[bot->brain.goal_node].point.x - x) * (nav->nodes[bot->brain.goal_node].point.x - x) +
+		(nav->nodes[bot->brain.goal_node].point.y - y) * (nav->nodes[bot->brain.goal_node].point.y - y) >
+		BOT_SKATE_HOT_SPOT_ROAM * BOT_SKATE_HOT_SPOT_ROAM)
+	{
+		/* (there: about it, a node near its middle at random) */
+		long index, count = 0, chosen;
+
+		if (!bot_board_reach_make(nav))
+			return NONE;
+		for (index = 0; index < nav->node_count; index++)
+		{
+			struct bots_nav_point const *point = &nav->nodes[index].point;
+
+			if (bot_board_node_reached(index) && (point->x - x) * (point->x - x) + (point->y - y) * (point->y - y) <=
+				BOT_SKATE_HOT_SPOT_ROAM * BOT_SKATE_HOT_SPOT_ROAM && fabs(point->z - z) < 2.0f)
+			{
+				count++;
+			}
+		}
+		if (count <= 0)
+			return NONE;
+		chosen = (long)(bot_random_real(&bot->brain) * (real)count);
+		for (index = 0; index < nav->node_count; index++)
+		{
+			struct bots_nav_point const *point = &nav->nodes[index].point;
+
+			if (bot_board_node_reached(index) && (point->x - x) * (point->x - x) + (point->y - y) * (point->y - y) <=
+				BOT_SKATE_HOT_SPOT_ROAM * BOT_SKATE_HOT_SPOT_ROAM && fabs(point->z - z) < 2.0f && chosen-- <= 0)
+			{
+				node = index;
+				break;
+			}
+		}
+	}
+	if (node != NONE && node != bot->brain.goal_node)
+	{
+		bot->brain.goal_node = node;
+		bot->brain.path_next = NONE;
+	}
+	return NONE;
+}
+
 /* (Infection) a survivor bot out of reach (infection.c) a while heads, every
 second, for the nearest node a board reaches */
 static void bot_skate_come_down(
@@ -674,10 +811,14 @@ void bot_skate_think(
 	{
 		fighting = FALSE;
 		board_distance = BOT_SKATE_RAM_BOARD_DISTANCE;
-		if (!brain->combat.target_visible || infected)
+		if ((!brain->combat.target_visible || infected) && !trick_attack_active())
 			bot_skate_ram_seek(bot, player_index, nav, &position);
 
 	}
+	/* (Trick Attack: to the hot spot and about it, or after the biggest
+	combo going) */
+	if (trick_attack_active())
+		ram_unit = bot_skate_trick_attack(bot, player_index, nav, &position, view.skating);
 	/* (a life, a game: afresh) */
 	if (skate->unit_index != unit_index || now < skate->changed_tick)
 	{
@@ -805,8 +946,8 @@ void bot_skate_think(
 			if (!skate->ramming)
 			{
 				brain->statistics.skate_rams++;
-				platform_log("bots: player %ld rides at a person on foot at tick %ld", DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index),
-					now);
+				platform_log(trick_attack_active() ? "bots: player %ld rides at a combo at tick %ld" :
+					"bots: player %ld rides at a person on foot at tick %ld", DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), now);
 			}
 			skate->ramming = TRUE;
 		}
@@ -1159,6 +1300,12 @@ done:
 	return made;
 }
 
+static boolean bot_board_node_reached(
+	long node)
+{
+	return bot_board_reach.reached && node >= 0 && node < bot_board_reach.node_count && bot_board_reach.reached[node] == 1;
+}
+
 long bots_board_reaches(
 	real x,
 	real y,
@@ -1210,4 +1357,65 @@ static long bots_board_nearest(
 		}
 	}
 	return best;
+}
+
+long bots_board_spot(
+	unsigned long pick,
+	real away_x,
+	real away_y,
+	real away_distance,
+	real *x,
+	real *y,
+	real *z)
+{
+	struct bots_nav *nav = bots_nav_current();
+	long candidates = 0;
+	long chosen;
+	long index;
+	int pass;
+
+	if (!nav || !bot_board_reach_make(nav))
+		return NONE;
+	/* (two passes: count the spots, then take the pick'th of them; with
+	none far enough away, any) */
+	for (pass = 0; pass < 2; pass++)
+	{
+		real least = pass == 0 ? away_distance : 0.0f;
+
+		candidates = 0;
+		for (index = 0; index < nav->node_count; index++)
+		{
+			struct bots_nav_point const *point = &nav->nodes[index].point;
+			real dx = point->x - away_x, dy = point->y - away_y;
+
+			if (bot_board_reach.reached[index] == 1 &&
+				nav->nodes[index].reach == (_bots_nav_reached_bit | _bots_nav_reaches_bit) &&
+				dx * dx + dy * dy >= least * least)
+			{
+				candidates++;
+			}
+		}
+		if (candidates > 0)
+			break;
+	}
+	if (candidates <= 0)
+		return 0;
+	chosen = (long)(pick % (unsigned long)candidates);
+	for (index = 0; index < nav->node_count; index++)
+	{
+		struct bots_nav_point const *point = &nav->nodes[index].point;
+		real dx = point->x - away_x, dy = point->y - away_y;
+		real least = pass == 0 ? away_distance : 0.0f;
+
+		if (bot_board_reach.reached[index] == 1 &&
+			nav->nodes[index].reach == (_bots_nav_reached_bit | _bots_nav_reaches_bit) &&
+			dx * dx + dy * dy >= least * least && chosen-- == 0)
+		{
+			*x = point->x;
+			*y = point->y;
+			*z = point->z;
+			break;
+		}
+	}
+	return candidates;
 }

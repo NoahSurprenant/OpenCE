@@ -77,6 +77,7 @@ machine (their datum identifiers need not be).
 #include "network_distributed.h"
 #include "network_voice.h"
 #include "skate.h"
+#include "trick_attack.h"
 #include "map_share.h"
 #include "profile_sections.h"
 
@@ -1917,9 +1918,12 @@ its verdicts on skaters' hits to every client (skate_authority.c) */
 static void distributed_client_send_skate_reports(
 	void)
 {
-	byte entries[4 * SKATE_REPORT_SIZE];
+	byte entries[5 * SKATE_REPORT_SIZE];
 	short count = skate_authority_reports(entries, 4);
 	short index;
+
+	/* (and Trick Attack's: its skater's tricks, trick_attack.c) */
+	count = (short)(count + trick_attack_reports(entries + count * SKATE_REPORT_SIZE, (short)(5 - count)));
 
 	distributed_packer_begin(&distributed_packer, HOST_SENDER, _distributed_message_skate_report, NULL, 0);
 	for (index = 0; index < count; index++)
@@ -1932,10 +1936,13 @@ static void distributed_host_send_skate_verdicts(
 {
 	long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
 	short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
-	byte entries[16 * SKATE_VERDICT_SIZE];
+	byte entries[32 * SKATE_VERDICT_SIZE];
 	short count = skate_authority_verdicts(entries, 16);
 	short machine_number;
 	short index;
+
+	/* (and Trick Attack's: the combos going and the hot spot, trick_attack.c) */
+	count = (short)(count + trick_attack_entries(entries + count * SKATE_VERDICT_SIZE, (short)(32 - count)));
 
 	for (machine_number = 0; count && machine_number < machine_count; machine_number++)
 	{
