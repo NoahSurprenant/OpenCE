@@ -1342,6 +1342,91 @@ def test_dedicated_server_after_a_player_leaves(tmp_path):
             process.wait()
 
 
+def test_dedicated_server_next_game_without_a_stopped_client(tmp_path):
+    """A dedicated server starts its next game without a client whose game
+    stopped as the last one ended, its connection still up: the client
+    joins and plays a one-minute game, and is stopped (SIGSTOP) as the game
+    ends - as a browser's tab put in the background, or frozen, whose WebRTC
+    connection the browser keeps alive. The server drops it a minute after
+    its lobby's countdown ends (it never said it has the map) and starts the
+    next game. Before, the start waited for it for as long as its connection
+    lasted: the server's main loop idled in the lobby, logging nothing, and
+    the server image's game with 127 bots stood still for six minutes, till
+    the browser's connection went. Needs HALO_TEST_GAME (or HALO_TEST_SERVER
+    for the server) and the Halo maps (HALO_SKATE_TEST_HALO_MAPS); about three
+    minutes."""
+    import signal
+    game = os.environ.get("HALO_TEST_GAME")
+    server = os.environ.get("HALO_TEST_SERVER") or game
+    maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
+    if not (game and maps and Path(game).is_file() and Path(server).is_file() and
+            Path(maps, "bloodgulch.map").is_file()):
+        pytest.skip("needs HALO_TEST_GAME and HALO_SKATE_TEST_HALO_MAPS")
+    addresses = {"host": _test_address(150), "join": _test_address(151)}
+    games = {}
+
+    def start(name, settings):
+        folder = tmp_path / name
+        (folder / "data").mkdir(parents=True)
+        (folder / "saves").mkdir()
+        (folder / "data" / "maps").symlink_to(maps)
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
+        env.update(settings, HALO_NET_ONLINE="false", HALO_UPDATE_ANSWER="never", HALO_NET_ADDRESS=addresses[name],
+                   HALO_NET_BROADCAST=addresses["join" if name == "host" else "host"],
+                   HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
+        with open(folder / "run.log", "w") as log:
+            games[name] = subprocess.Popen([server if name == "host" else game], cwd=folder, env=_game_env(env),
+                                           stdout=log, stderr=subprocess.STDOUT)
+
+    def log(name):
+        return (tmp_path / name / "run.log").read_text(errors="replace")
+
+    def wait_for(condition, seconds, what):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            assert games["host"].poll() is None, f"the server stopped:\n{log('host')[-4000:]}"
+            if condition():
+                return
+            time.sleep(0.5)
+        raise AssertionError(f"{what}:\n{log('host')[-6000:]}")
+
+    position = re.compile(r"network test: tick \d+ player \d+: \(")
+    starts = re.compile(r"server: the game starts: ")
+    stopped = False
+    try:
+        # (one-minute games of one map, as the server image's list goes on
+        # with the same map's next game type)
+        start("host", {"HALO_DEDICATED": "1", "HALO_NETWORK_TEST_START": "5",
+                       "HALO_SERVER_MAPS": "bloodgulch:slayer", "HALO_SERVER_GAME_TYPES": "slayer",
+                       "HALO_SERVER_TIME_LIMIT": "1", "HALO_SERVER_SCORE_LIMIT": "0"})
+        start("join", {"HALO_NETWORK_TEST": "join", "HALO_NULL_RENDERER": "1", "HALO_NO_AUDIO": "1",
+                       "HALO_TEST_INPUT": "bot:7"})
+        wait_for(lambda: len(position.findall(log("join"))) >= 5 and "server: Player joined" in log("host"), 90,
+                 "the client never played")
+        # its game stopped as the game ends, its connection still up
+        wait_for(lambda: "server: the game is over" in log("host"), 120, "the first game never ended")
+        os.kill(games["join"].pid, signal.SIGSTOP)
+        stopped = True
+        began = time.monotonic()
+        wait_for(lambda: len(starts.findall(log("host"))) >= 2, 150,
+                 "the next game never started without the stopped client")
+        host = log("host")
+        print(f"the next game started {time.monotonic() - began:.0f} s after the client stopped")
+        assert "has not precached the map" in host, host[-4000:]
+        assert "server: the game's start waits: Waiting for Player to load the map" in host, host[-4000:]
+    finally:
+        failing = sys.exc_info()[0] is not None
+        for name, process in games.items():
+            if process.poll() is None:
+                if failing and name == "host":
+                    _stall_backtraces(name, process, server, tmp_path / name / "run.log")
+                if name == "join" and stopped:
+                    os.kill(process.pid, signal.SIGCONT)
+                process.kill()
+            process.wait()
+
+
 def test_dedicated_server_skaters(tmp_path):
     """Skate 3 mode on a dedicated server without Skate 3 data: the server
     (HALO_TEST_SERVER: a release build, as the server image's, which has the

@@ -502,6 +502,12 @@ enum
 	finished, allowing for many machines of mixed speed */
 	NETWORK_GAME_SERVER_MAXIMUM_WAIT_TIME_FOR_LEVEL_LOADING =
 		60 * MILLISECONDS_PER_SECOND,
+	/* port: the time a machine with players has to say it has precached the
+	map once the lobby's countdown has ended: one that never does (its game
+	stopped, its connection still up) held every other machine in the lobby
+	for as long as its connection lasted (network_game_server_drop_unprecached_machines) */
+	NETWORK_GAME_SERVER_MAXIMUM_WAIT_TIME_FOR_PRECACHE =
+		60 * MILLISECONDS_PER_SECOND,
 	MAXIMUM_PLAYERS_PER_MACHINE = MAXIMUM_LOCAL_PLAYERS,
 	PLAYER_UPDATE_SIZE = 0x20,
 	MAXIMUM_GOOD_COLOR_ATTEMPTS = 10,
@@ -755,6 +761,8 @@ static boolean network_game_server_handle_client_machines(
 static boolean network_game_server_idle_postgame_tasks(
 	struct network_game_server *server);
 static boolean network_game_server_have_all_machines_have_precached(
+	struct network_game_server *server);
+static void network_game_server_drop_unprecached_machines(
 	struct network_game_server *server);
 static boolean network_game_server_idle_pregame_tasks(
 	struct network_game_server *server);
@@ -5364,6 +5372,92 @@ static boolean network_game_server_have_all_machines_have_precached(
 	return all_machines_have_precached;
 }
 
+/* port: when the lobby's countdown ended with a machine still to say it has
+precached the map (system_milliseconds; 0 while nothing is waited for) */
+static unsigned long network_game_server_precache_wait_time;
+
+/* port: whether a client machine holds the game's start, still to say it has
+precached the map (network_game_server_have_all_machines_have_precached's
+machines, but for the host's own and its bots') */
+static boolean network_game_server_machine_holds_precache(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine)
+{
+	return network_game_server_client_machine_is_joined_to_game(server, machine) &&
+		!network_game_server_client_machine_is_local(server, machine) &&
+		!network_game_server_port_machine_is_bot(machine->machine_index) &&
+		network_game_server_machine_has_players(server, machine->machine_index) &&
+		!map_share_machine_needs_map(machine->machine_index) &&
+		!TEST_FLAG(machine->flags, _network_client_machine_precached_bit);
+}
+
+/* port: a machine that never says it has precached the map once the lobby's
+countdown has ended is dropped after NETWORK_GAME_SERVER_MAXIMUM_WAIT_TIME_FOR_PRECACHE,
+as one that never finishes loading is after the others have
+(NETWORK_GAME_SERVER_MAXIMUM_WAIT_TIME_FOR_LEVEL_LOADING). A machine in the
+lobby is never timed out for its silence (network_game_server_client_machine_timed_out),
+and a client says it has the map once a second only while its game runs
+(network_game_client_update_precache_status): one whose game stopped but
+whose connection stayed up - a browser's tab in the background or frozen,
+whose WebRTC connection the browser itself keeps alive - held the start, and
+every other machine and the host's bots with it, until that connection went
+(six minutes, once: the host's main loop idling in the lobby, logging
+nothing). The machine may join again, in progress. */
+static void network_game_server_drop_unprecached_machines(
+	struct network_game_server *server)
+{
+	unsigned long now = system_milliseconds();
+	boolean waiting = FALSE;
+	long index;
+
+	if (server->countdown_state.paused ||
+		countdown_timer_get_time_remaining(&server->countdown_state.timer) != 0)
+	{
+		network_game_server_precache_wait_time = 0;
+		return;
+	}
+	for (index = 0; index < MAXIMUM_NETWORK_MACHINE_COUNT && !waiting; index++)
+		waiting = network_game_server_machine_holds_precache(server, &server->client_machines[index]);
+	if (!waiting)
+	{
+		network_game_server_precache_wait_time = 0;
+		return;
+	}
+	/* (what it waits on, in the log: "Waiting for <name> to load the map") */
+	{
+		wchar_t waits[96];
+
+		network_game_server_port_start_waits(waits, (int)NUMBEROF(waits));
+	}
+	if (!network_game_server_precache_wait_time)
+	{
+		network_game_server_precache_wait_time = now ? now : 1;
+		return;
+	}
+	if (now - network_game_server_precache_wait_time < NETWORK_GAME_SERVER_MAXIMUM_WAIT_TIME_FOR_PRECACHE)
+		return;
+	for (index = 0; index < MAXIMUM_NETWORK_MACHINE_COUNT; index++)
+	{
+		struct network_game_server_client_machine *machine = &server->client_machines[index];
+		char ascii_name[MAXIMUM_MACHINE_NAME_LENGTH];
+		short machine_index;
+
+		if (!network_game_server_machine_holds_precache(server, machine))
+			continue;
+		machine_index = machine->machine_index;
+		network_event("forcibly removing client system '%s' (machine #%d): it has not precached the map "
+			"%ld seconds after the countdown ended",
+			wide_to_ascii(server->game.machines[machine_index].name, ascii_name, sizeof(ascii_name))
+				? ascii_name
+				: "<unknown name>",
+			machine_index,
+			(long)(NETWORK_GAME_SERVER_MAXIMUM_WAIT_TIME_FOR_PRECACHE / MILLISECONDS_PER_SECOND));
+		if (!network_game_server_drop_client_machine(server, machine))
+			network_event("failed to remove client machine %x from game", machine_index);
+	}
+	network_game_server_precache_wait_time = 0;
+}
+
 static boolean network_game_server_idle_pregame_tasks(
 	struct network_game_server *server)
 {
@@ -5379,6 +5473,9 @@ static boolean network_game_server_idle_pregame_tasks(
 	they are done */
 	if (server->sent_start_game_message)
 		network_game_server_check_loading_complete(server);
+	/* port: the wait for the machines' precache is this countdown's alone */
+	if (server->sent_start_game_message || !server->countdown_state.active)
+		network_game_server_precache_wait_time = 0;
 
 	if (server->sent_start_game_message == FALSE)
 	{
@@ -5449,7 +5546,12 @@ static boolean network_game_server_idle_pregame_tasks(
 		if (server->countdown_state.active == TRUE)
 		{
 			boolean send_countdown_update = FALSE;
-			boolean ok_to_countdown = server_ok_to_countdown(server);
+			boolean ok_to_countdown;
+
+			/* port: (before the start is decided: a machine dropped here no
+			longer holds it) */
+			network_game_server_drop_unprecached_machines(server);
+			ok_to_countdown = server_ok_to_countdown(server);
 
 			if (!ok_to_countdown)
 			{

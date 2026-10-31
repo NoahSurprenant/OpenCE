@@ -603,6 +603,10 @@ These are the differences from the Xbox:
 
 - The host waits up to 60 seconds (15 seconds on the Xbox) for the other
   machines to load the map.
+- When the lobby's countdown ends, the host waits up to 60 seconds for each
+  machine with players to precache the map. Then it removes a machine that
+  did not, and starts the game. On the Xbox, the host waits until the
+  connection of that machine closes.
 - If a machine does not read the messages of the host for two seconds, the
   host removes it from the game.
 - The saved games contain all the game state. Thus a saved game is 16 MB.

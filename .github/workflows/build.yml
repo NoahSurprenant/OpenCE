@@ -440,7 +440,10 @@ jobs:
     # job at a time, so the two take turns. test_dedicated_server_without_maps
     # (the server's refusal to start without its maps) runs here too, and in
     # the linux job; and test_dedicated_server_after_a_player_leaves (a player
-    # leaves the server's game and another joins it, a minute and a half).
+    # leaves the server's game and another joins it, a minute and a half), and
+    # test_dedicated_server_next_game_without_a_stopped_client (a client stopped
+    # as a game ends, its connection up, does not hold the next game: three
+    # minutes).
     # test_skate_hitbox (a skater hit where their body is drawn, a minute and
     # a half: port/skate/README.md, "Where a skater is hit") too.
     # tools/test_skating_bots.py (bots on boards: port/skate/README.md, "Bots
@@ -585,8 +588,8 @@ jobs:
           cat "$RUNNER_TEMP/skate-bots.log"
           cat "$RUNNER_TEMP/infection.log"
           cat "$RUNNER_TEMP/trick-attack.log"
-          if ! grep -q '10 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
-            echo "::error::test_skate_multiplayer, test_skate_hitbox, the five test_dedicated_server tests, test_infection_out_of_reach and the two fall tests did not all run and pass"
+          if ! grep -q '11 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
+            echo "::error::test_skate_multiplayer, test_skate_hitbox, the six test_dedicated_server tests, test_infection_out_of_reach and the two fall tests did not all run and pass"
             exit 1
           fi
           if ! grep -q '8 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then
