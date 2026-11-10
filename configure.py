@@ -85,7 +85,8 @@ parser.add_argument(
     type=str,
     help="with --skate on Linux: the processor the skate engine is compiled for (Rust's -C target-cpu; by default "
     "the 32-bit target's baseline, SSE2), e.g. x86-64-v3 (AVX2 and FMA: a skater's step several times quicker), "
-    "as the server image builds it for the machines it runs on. Its results are the same bit for bit either way",
+    "as the server image builds it for the machines it runs on; optimised whole (link-time optimisation, one codegen "
+    "unit), a slower build. Its results are the same bit for bit either way",
 )
 parser.add_argument(
     "--android-ndk",
