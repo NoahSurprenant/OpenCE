@@ -7,12 +7,19 @@
 use crate::fused::FusedMulAdd as _;
 use crate::math::Vector3;
 
-pub(in crate::physics::solver) fn read_column(words: &[u32], byte_offset: usize) -> [f32; 4] {
+#[inline(always)]
+pub(in crate::physics::solver) fn read_column(words: &[u32; 96], byte_offset: usize) -> [f32; 4] {
+    column(words, byte_offset)
+}
+
+#[inline(always)]
+fn column<const N: usize>(words: &[u32; N], byte_offset: usize) -> [f32; 4] {
     core::array::from_fn(|component| f32::from_bits(words[byte_offset / 4 + component]))
 }
 
-pub(in crate::physics::solver) fn write_column(
-    words: &mut [u32],
+#[inline(always)]
+pub(in crate::physics::solver) fn write_column<const N: usize>(
+    words: &mut [u32; N],
     byte_offset: usize,
     values: [f32; 4],
 ) {
@@ -24,6 +31,7 @@ pub(in crate::physics::solver) fn write_column(
     }
 }
 
+#[inline(always)]
 pub(in crate::physics::solver) fn xyz(values: [f32; 4]) -> Vector3 {
     Vector3::new(values[0], values[1], values[2])
 }
@@ -43,8 +51,8 @@ pub(in crate::physics::solver) struct ConstraintGeometry {
 }
 
 impl ConstraintGeometry {
-    pub fn decode(words: &[u32]) -> Self {
-        assert_eq!(words.len(), 96);
+    #[inline(always)]
+    pub fn decode(words: &[u32; 96]) -> Self {
         Self {
             arm_a: xyz(read_column(words, 0)),
             arm_b: xyz(read_column(words, 16)),
@@ -59,6 +67,7 @@ impl ConstraintGeometry {
 
     /// Both candidates must read this incoming snapshot before either impulse
     /// is applied: 82AE2C00..2CC4 (joint), 82AE2E90..2F80 (drive).
+    #[inline(always)]
     pub fn relative_corrections(&self, a: &ReactionState, b: &ReactionState) -> (Vector3, Vector3) {
         let point_a = point_correction(a, self.arm_a);
         let point_b = point_correction(b, self.arm_b);
@@ -78,6 +87,7 @@ impl ConstraintGeometry {
 
     /// 82AE2D24..2E40 / 82AE2FE0..30D4. One linear and one angular impulse
     /// change affect both bodies through their own arm and inverse inertia.
+    #[inline(always)]
     pub fn apply_impulse_changes(
         &self,
         a: &mut ReactionState,
@@ -119,20 +129,21 @@ pub(in crate::physics::solver) struct ReactionState {
 }
 
 impl ReactionState {
-    pub fn decode(words: &[u32]) -> Self {
-        assert_eq!(words.len(), 16);
+    #[inline(always)]
+    pub fn decode(words: &[u32; 16]) -> Self {
         Self {
-            linear: read_column(words, 0),
-            angular: read_column(words, 32),
+            linear: column(words, 0),
+            angular: column(words, 32),
         }
     }
 }
 
+#[inline(always)]
 pub(in crate::physics::solver) fn publish_reactions(
     a: &ReactionState,
     b: &ReactionState,
-    words_a: &mut [u32],
-    words_b: &mut [u32],
+    words_a: &mut [u32; 16],
+    words_b: &mut [u32; 16],
 ) {
     write_column(words_a, 0, a.linear);
     write_column(words_b, 0, b.linear);
@@ -142,6 +153,7 @@ pub(in crate::physics::solver) fn publish_reactions(
 
 /// Matrix projection with the native X, Y, Z fused accumulation order. The
 /// incoming accumulated impulse is the initial value for candidate projection.
+#[inline(always)]
 pub(in crate::physics::solver) fn project_correction(
     columns: &[[f32; 4]; 3],
     correction: Vector3,
@@ -154,6 +166,7 @@ pub(in crate::physics::solver) fn project_correction(
     })
 }
 
+#[inline(always)]
 fn point_correction(reaction: &ReactionState, arm: Vector3) -> Vector3 {
     let [x, y, z, _] = reaction.angular;
     Vector3::new(
@@ -163,6 +176,7 @@ fn point_correction(reaction: &ReactionState, arm: Vector3) -> Vector3 {
     )
 }
 
+#[inline(always)]
 fn torque_at_offset(arm: Vector3, impulse: Vector3, angular_impulse: Vector3) -> Vector3 {
     Vector3::new(
         (-arm.z).fused_mul_add(impulse.y, arm.y.fused_mul_add(impulse.z, angular_impulse.x)),

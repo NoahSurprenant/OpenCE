@@ -18,7 +18,11 @@ pub(crate) fn compile_contact(record: &mut [u32; 64], time_step: f32) {
 }
 
 pub(crate) fn solve_joint_record(record: &mut [u32], a: &mut [u32], b: &mut [u32]) {
-    joint::solve(record, a, b);
+    joint::solve(
+        record.try_into().expect("a joint record is 96 words"),
+        a.try_into().expect("a reaction is 16 words"),
+        b.try_into().expect("a reaction is 16 words"),
+    );
 }
 
 /// Host indices replace the two guest reaction pointers stored in a Jacobian.
