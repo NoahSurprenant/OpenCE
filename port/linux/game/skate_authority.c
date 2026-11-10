@@ -809,6 +809,28 @@ static void skate_authority_run_over(struct skate_verdict const *verdict, boolea
 	}
 }
 
+/* (the host) whether a player is one of its bots */
+static boolean skate_authority_bot(byte player_index)
+{
+	struct player_datum *player = player_index == SKATE_AUTHORITY_NO_PLAYER ? NULL : distributed_player(player_index);
+
+	return game_connection() == _game_connection_network_server && player && bots_player_is_bot(player);
+}
+
+/* (the host) a verdict on two of its bots' skaters that changes nothing - both
+ride on, nobody pushed nor run over: a crowd of skating bots brush past each
+other thousands of times a minute, and these were most of a dedicated
+server's log. Their reports, verdicts and the rest are as ever; only their
+lines are left out. Any verdict with a person in it, or that bails, pushes
+or runs over, is logged */
+static boolean skate_authority_quiet(struct skate_verdict const *verdict)
+{
+	return TEST_FLAG(verdict->flags, _skate_verdict_second_skater_bit) &&
+		!(verdict->flags & (FLAG(_skate_verdict_first_bails_bit) | FLAG(_skate_verdict_second_bails_bit) |
+			FLAG(_skate_verdict_second_pushed_bit) | FLAG(_skate_verdict_second_run_over_bit))) &&
+		skate_authority_bot(verdict->player_indices[0]) && skate_authority_bot(verdict->player_indices[1]);
+}
+
 /* a verdict decided (the host) or heard (a client), applied on this
 machine: its own skater settled (skate_authority_settle), a person on foot
 pushed (by the host on its copy, by their own machine on theirs) and, run
@@ -817,8 +839,11 @@ static void skate_authority_apply(struct skate_verdict const *verdict, boolean d
 {
 	char text[192];
 
-	skate_verdict_text(verdict, text, sizeof(text));
-	platform_log("skate verdict %u %s: %s", verdict->number, decided ? "decided" : "heard", text);
+	if (!(decided && skate_authority_quiet(verdict)))
+	{
+		skate_verdict_text(verdict, text, sizeof(text));
+		platform_log("skate verdict %u %s: %s", verdict->number, decided ? "decided" : "heard", text);
+	}
 	skate_authority_settle(verdict);
 	if (TEST_FLAG(verdict->flags, _skate_verdict_second_pushed_bit))
 	{
@@ -1047,11 +1072,12 @@ static void skate_authority_decide(long machine_index, struct skate_report const
 	collision->last_time = now;
 	collision->send_until = now + SKATE_AUTHORITY_REPEAT_TICKS;
 	collision->verdict = verdict;
-	platform_log("skate verdict %u: player %d's hit told at %.1f m/s (%s, its engine %s%s), the host's bound %.1f m/s, "
-		"%.2f world units apart", verdict.number, report->player_index, report->closing * 3.048f,
-		machine_index == NONE ? "the host's own skater" : "another machine's skater",
-		input.parties[0].wants_bail ? "held a bail" : "held no bail",
-		input.run_over_told ? ", went through them" : "", input.bound * 3.048f, input.distance);
+	if (!skate_authority_quiet(&verdict))
+		platform_log("skate verdict %u: player %d's hit told at %.1f m/s (%s, its engine %s%s), the host's bound %.1f m/s, "
+			"%.2f world units apart", verdict.number, report->player_index, report->closing * 3.048f,
+			machine_index == NONE ? "the host's own skater" : "another machine's skater",
+			input.parties[0].wants_bail ? "held a bail" : "held no bail",
+			input.run_over_told ? ", went through them" : "", input.bound * 3.048f, input.distance);
 	skate_authority_apply(&verdict, TRUE);
 }
 
@@ -1095,12 +1121,18 @@ void skate_authority_engine_hit(long skater_index, long target_index, real closi
 	{
 		hit = skate_authority_new_local_hit(skater_index, target_index);
 		hit->send_until = now + SKATE_AUTHORITY_REPEAT_TICKS;
-		platform_log("skate hit %d: this machine's skater (player %d) hit %s at %.1f m/s%s, for the host to decide",
-			hit->number, skate_authority_player_of(skater_index) == SKATE_AUTHORITY_NO_PLAYER ? -1 :
-			skate_authority_player_of(skater_index),
-			skate_unit_is_skating(target_index) ? "a skater" : object_try_and_get(target_index) &&
-			object_get(target_index)->object.type == _object_type_vehicle ? "a vehicle" : "a person on foot",
-			closing * 3.048f, run_over ? " and went through them, running them over" : "");
+		/* (a host's bot's skater on another bot's: its verdict tells, when it
+		does anything - skate_authority_quiet) */
+		if (!(skate_authority_bot(skate_authority_player_of(skater_index)) && skate_unit_is_skating(target_index) &&
+			skate_authority_bot(skate_authority_player_of(target_index))))
+		{
+			platform_log("skate hit %d: this machine's skater (player %d) hit %s at %.1f m/s%s, for the host to decide",
+				hit->number, skate_authority_player_of(skater_index) == SKATE_AUTHORITY_NO_PLAYER ? -1 :
+				skate_authority_player_of(skater_index),
+				skate_unit_is_skating(target_index) ? "a skater" : object_try_and_get(target_index) &&
+				object_get(target_index)->object.type == _object_type_vehicle ? "a vehicle" : "a person on foot",
+				closing * 3.048f, run_over ? " and went through them, running them over" : "");
+		}
 	}
 	if (touched)
 	{
