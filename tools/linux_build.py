@@ -520,10 +520,20 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
         skate_define = "-DHALO_SKATE"
         # (configure.py --skate-cpu: compiled for that processor, in a target
         # folder of its own, so that a build for the baseline beside it is
-        # not made again each time)
+        # not made again each time; and, as the server image is, as one unit
+        # optimised whole (link-time optimisation, one codegen unit): its
+        # bots' steps take about a tenth fewer instructions, the same
+        # arithmetic in the same order, so the same results bit for bit -
+        # halo-skate/tests/real_assets_fingerprint.rs - at the cost of a
+        # slower build, which the other builds do not pay)
         skate_cpu = getattr(sln, "skate_cpu", None)
         skate_target_dir = SKATE_DIR / (f"target-{skate_cpu}" if skate_cpu else "target")
-        skate_env = f"env RUSTFLAGS='-C target-cpu={skate_cpu}' " if skate_cpu else ""
+        skate_env = (
+            f"env RUSTFLAGS='-C target-cpu={skate_cpu}' CARGO_PROFILE_RELEASE_LTO=fat "
+            "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 "
+            if skate_cpu
+            else ""
+        )
         skate_library = skate_target_dir / SKATE_TARGET / "release" / "libhalo_skate.a"
         n.rule(
             name="linux_cargo",

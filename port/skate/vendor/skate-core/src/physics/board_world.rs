@@ -340,8 +340,21 @@ impl BoardWorld {
         let mut publish = |records: &[ContactRecord]| {
             output.extend(records.iter().map(collision_from_record));
         };
+        // halo-skate: every volume's bounds within one box, so that a
+        // triangle clear of it is passed over at once - each volume's own
+        // test below would pass it over too, one volume at a time. Only
+        // when each volume has bounds, none NaN (an overlap with a NaN
+        // passes, and a box's min and max would leave it out).
+        let reach = if self.query_metadata.is_some() {
+            union_bounds(&volume_bounds)
+        } else {
+            None
+        };
         for &index in &candidates {
             let entry = &triangles[index];
+            if reach.is_some_and(|reach| !triangle_bounds[index].overlaps(reach)) {
+                continue;
+            }
             for (volume, volume_bounds) in volumes.iter().zip(&volume_bounds) {
                 if self.query_metadata.is_some()
                     && volume_bounds.is_some_and(|b| !self.triangle_bounds[index].overlaps(b))
@@ -403,6 +416,27 @@ impl BoardWorld {
     pub fn dropped_contacts(&self) -> u32 {
         self.buffer.dropped
     }
+}
+
+/// halo-skate: the box around all of `bounds` (`query_primitives`), when
+/// every one is there and none has a NaN; else None.
+fn union_bounds(bounds: &[Option<Bounds>]) -> Option<Bounds> {
+    let mut all: Option<Bounds> = None;
+    for b in bounds {
+        let b = (*b)?;
+        let corners = [b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z];
+        if corners.iter().any(|v| v.is_nan()) {
+            return None;
+        }
+        all = Some(match all {
+            None => b,
+            Some(a) => Bounds {
+                min: Vector3::new(a.min.x.min(b.min.x), a.min.y.min(b.min.y), a.min.z.min(b.min.z)),
+                max: Vector3::new(a.max.x.max(b.max.x), a.max.y.max(b.max.y), a.max.z.max(b.max.z)),
+            },
+        });
+    }
+    all
 }
 
 fn imported_internal_floor_edge(

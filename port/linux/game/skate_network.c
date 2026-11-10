@@ -1051,7 +1051,10 @@ void skate_network_note_local(long player_index, long unit_index, boolean off_bo
 	player->size = skate_state_write((byte)absolute_index, &state, player->entry);
 	player->time = game_time_get();
 	player->local = TRUE;
-	if (skate_network_globals.log && game_time_get() % TICKS_PER_SECOND == 0)
+	/* (this machine's player's skater, once a second: not a host's bots',
+	session 1 on - a hundred of them were most of a dedicated server's log,
+	and rebuilding each one's state to measure it cost the game's thread) */
+	if (skate_network_globals.log && session == 0 && game_time_get() % TICKS_PER_SECOND == 0)
 	{
 		real distance, degrees;
 		real_vector3d const *velocity = &object->object.translational_velocity;

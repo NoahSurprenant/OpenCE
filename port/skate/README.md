@@ -1015,6 +1015,28 @@ coming near takes the voice of the furthest), and this machine's own always.
 `tools/test_skating_bots.py`'s test_skating_bots_crowd puts 16 bots on boards
 with a client (HALO_TEST_SKATE_CROWD for more: 64, 127).
 
+Cheaper steps must ride the same: `halo-skate/tests/real_assets_fingerprint.rs`
+drives a crowd of bots' skaters on Blood Gulch as `skate.c` does (each
+other's bodies and boards as held obstacles, steps on the pool, posed nodes,
+held hits and the host's bails, blasts, Infection's turning) and hashes every
+bit the engine gives back. Run it before and after a change (with the
+server's `--target i686-unknown-linux-gnu` and `RUSTFLAGS='-C
+target-cpu=x86-64-v3'` to measure the server's build) and compare its
+"fingerprint" line, or set `HALO_SKATE_TEST_FINGERPRINT` to the hash to have
+it check. The game as a whole does not go the same way twice (bots join and
+spawn as the machine's timing has them), so the engine's fingerprint is the
+check. What made the server's steps cheaper again since, the fingerprint the
+same throughout: the board's world contacts pass over a triangle clear of all
+of the board's volumes at once (most of a query's time was one test per
+volume per triangle); the off-board lines and nearby queries gather triangles
+only for a pool that has meshes (a level has only the ground pool's, and the
+island pool's turn gathered them for nothing); and the server's engine is
+optimised whole (`--skate-cpu` builds use link-time optimisation and one
+codegen unit). A dedicated server also no longer logs its bots' skaters line
+by line (the once-a-second network line, and hits between two bots' skaters
+that changed nothing): a hundred skating bots made about 24,000 lines a
+minute.
+
 ### Tricks
 
 The engine carries Skate 3's own trick system: flick-it gestures on the right

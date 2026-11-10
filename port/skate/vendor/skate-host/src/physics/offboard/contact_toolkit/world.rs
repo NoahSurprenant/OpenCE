@@ -168,19 +168,31 @@ impl<'a> StaticScene<'a> {
         let bounds = self
             .world
             .line_candidate_bounds(start, vec3(probe.end), probe.radius);
-        let candidates: Vec<_> = self
+        // halo-skate: the meshes this pool, group and mask take first, and
+        // the triangles only when one is (a level's are all the ground
+        // pool's: the island pool's turn found every mesh left out, after
+        // gathering their triangles all the same)
+        let meshes: Vec<usize> = self
             .world
-            .line_candidates(start, vec3(probe.end), probe.radius)
-            .map(|(index, _)| index)
+            .candidate_mesh_indices(bounds)?
+            .into_iter()
+            .filter(|&mesh_index| {
+                let mesh = &self.metadata.meshes[mesh_index];
+                mesh.pool == pool
+                    && matches(group, mesh.matching_group)
+                    && mesh.rejection_flags & reject == 0
+            })
             .collect();
-        for mesh_index in self.world.candidate_mesh_indices(bounds)? {
+        let candidates: Vec<_> = if meshes.is_empty() {
+            Vec::new()
+        } else {
+            self.world
+                .line_candidates(start, vec3(probe.end), probe.radius)
+                .map(|(index, _)| index)
+                .collect()
+        };
+        for mesh_index in meshes {
             let mesh = &self.metadata.meshes[mesh_index];
-            if mesh.pool != pool
-                || !matches(group, mesh.matching_group)
-                || mesh.rejection_flags & reject != 0
-            {
-                continue;
-            }
             let first = candidates.partition_point(|&i| i < mesh.triangle_range.start);
             let last = candidates.partition_point(|&i| i < mesh.triangle_range.end);
             for &index in &candidates[first..last] {
@@ -252,16 +264,27 @@ impl<'a> StaticScene<'a> {
         let bounds = self
             .world
             .line_candidate_bounds(vec3(center), vec3(center), radius);
-        let candidates: Vec<_> = self
+        // halo-skate: the meshes first, the triangles only when one is
+        // taken (as `line`)
+        let meshes: Vec<usize> = self
             .world
-            .line_candidates(vec3(center), vec3(center), radius)
-            .map(|(index, _)| index)
+            .candidate_mesh_indices(bounds)?
+            .into_iter()
+            .filter(|&mesh_index| {
+                let mesh = &self.metadata.meshes[mesh_index];
+                mesh.pool == pool && matches(group, mesh.matching_group)
+            })
             .collect();
-        for mesh_index in self.world.candidate_mesh_indices(bounds)? {
+        let candidates: Vec<_> = if meshes.is_empty() {
+            Vec::new()
+        } else {
+            self.world
+                .line_candidates(vec3(center), vec3(center), radius)
+                .map(|(index, _)| index)
+                .collect()
+        };
+        for mesh_index in meshes {
             let mesh = &self.metadata.meshes[mesh_index];
-            if mesh.pool != pool || !matches(group, mesh.matching_group) {
-                continue;
-            }
             let first = candidates.partition_point(|&i| i < mesh.triangle_range.start);
             let last = candidates.partition_point(|&i| i < mesh.triangle_range.end);
             for &index in &candidates[first..last] {
