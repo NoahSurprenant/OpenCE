@@ -8,7 +8,7 @@ use super::joint::data::{
     write_column, xyz,
 };
 
-pub(super) fn solve(record: &mut [u32], a: &mut [u32], b: &mut [u32]) {
+pub(super) fn solve(record: &mut [u32; 96], a: &mut [u32; 16], b: &mut [u32; 16]) {
     let geometry = ConstraintGeometry::decode(record);
     let mut body_a = ReactionState::decode(a);
     let mut body_b = ReactionState::decode(b);

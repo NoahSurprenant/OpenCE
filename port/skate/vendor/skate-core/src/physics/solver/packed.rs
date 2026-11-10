@@ -43,7 +43,7 @@ fn validate<const N: usize>(constraints: &[Constraint<N>], count: usize) {
 fn pass<const N: usize>(
     constraints: &mut [Constraint<N>],
     reactions: &mut [Reaction],
-    kernel: fn(&mut [u32], &mut [u32], &mut [u32]),
+    kernel: fn(&mut [u32; N], &mut Reaction, &mut Reaction),
 ) {
     for c in constraints {
         let (a, b) = if c.reaction_a < c.reaction_b {

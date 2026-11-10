@@ -17,8 +17,8 @@ pub(super) struct ContactRows {
     angular_b: [Components; 3],
 }
 impl ContactRows {
-    pub fn read(words: &[u32]) -> Self {
-        assert_eq!(words.len(), 64);
+    #[inline(always)]
+    pub fn read(words: &[u32; 64]) -> Self {
         Self {
             arm_a: read(words, 0),
             arm_b: read(words, 1),
@@ -32,7 +32,8 @@ impl ContactRows {
             angular_b: core::array::from_fn(|i| read(words, 9 + 3 * i)),
         }
     }
-    pub fn publish_impulses(&self, words: &mut [u32], impulse: Components) {
+    #[inline(always)]
+    pub fn publish_impulses(&self, words: &mut [u32; 64], impulse: Components) {
         write(words, 5, impulse);
     }
 }
@@ -44,8 +45,8 @@ pub(super) struct Reaction {
     orientation: Components,
 }
 impl Reaction {
-    pub fn read(words: &[u32]) -> Self {
-        assert_eq!(words.len(), 16);
+    #[inline(always)]
+    pub fn read(words: &[u32; 16]) -> Self {
         Self {
             linear: read(words, 0),
             position: read(words, 1),
@@ -53,12 +54,15 @@ impl Reaction {
             orientation: read(words, 3),
         }
     }
+    #[inline(always)]
     pub fn point_position(&self, arm: Components) -> Components {
         point_correction(arm, self.position, self.orientation)
     }
+    #[inline(always)]
     pub fn point_velocity(&self, arm: Components) -> Components {
         point_correction(arm, self.linear, self.angular)
     }
+    #[inline(always)]
     pub fn apply_contact(&mut self, rows: &ContactRows, change: Components, body_a: bool) {
         let response = if body_a {
             &rows.angular_a
@@ -92,7 +96,8 @@ impl Reaction {
             }
         }
     }
-    pub fn write(&self, words: &mut [u32]) {
+    #[inline(always)]
+    pub fn write(&self, words: &mut [u32; 16]) {
         for (row, value) in [self.linear, self.position, self.angular, self.orientation]
             .into_iter()
             .enumerate()
@@ -104,6 +109,7 @@ impl Reaction {
 
 // 82AE297C..2A18: linear + angular cross arm. Fuse the first product into
 // linear before subtracting the second; a separate cross product rounds early.
+#[inline(always)]
 fn point_correction(arm: Components, linear: Components, angular: Components) -> Components {
     core::array::from_fn(|lane| {
         let next = if lane == 3 { 3 } else { (lane + 1) % 3 };
@@ -112,10 +118,12 @@ fn point_correction(arm: Components, linear: Components, angular: Components) ->
         (-angular[previous]).fused_mul_add(arm[next], first)
     })
 }
-fn read(words: &[u32], row: usize) -> Components {
+#[inline(always)]
+fn read<const N: usize>(words: &[u32; N], row: usize) -> Components {
     core::array::from_fn(|lane| f32::from_bits(words[4 * row + lane]))
 }
-fn write(words: &mut [u32], row: usize, value: Components) {
+#[inline(always)]
+fn write<const N: usize>(words: &mut [u32; N], row: usize, value: Components) {
     for (lane, value) in value.into_iter().enumerate() {
         words[4 * row + lane] = value.to_bits();
     }

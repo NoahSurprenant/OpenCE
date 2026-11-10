@@ -8,7 +8,7 @@ use crate::fused::FusedMulAdd as _;
 mod data;
 use data::{ContactRows, Reaction};
 
-pub(super) fn solve(record: &mut [u32], a: &mut [u32], b: &mut [u32]) {
+pub(super) fn solve(record: &mut [u32; 64], a: &mut [u32; 16], b: &mut [u32; 16]) {
     let rows = ContactRows::read(record);
     let mut reaction_a = Reaction::read(a);
     let mut reaction_b = Reaction::read(b);
