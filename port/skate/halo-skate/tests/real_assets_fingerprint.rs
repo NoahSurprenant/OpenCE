@@ -36,6 +36,18 @@ fn setting(name: &str, default: usize) -> usize {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
+/// The processor time this process has had (all its threads), seconds, from
+/// /proc (Linux; 0 elsewhere): what the steps cost, whatever else the
+/// machine was doing meanwhile.
+fn cpu_seconds() -> f64 {
+    let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else { return 0.0 };
+    let Some(rest) = stat.rfind(')').map(|i| &stat[i + 2..]) else { return 0.0 };
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    let ticks = |i: usize| fields.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+    // (utime and stime, in the kernel's 100ths of a second)
+    (ticks(11) + ticks(12)) / 100.0
+}
+
 /// FNV-1a over bytes, as debug.skate_fingerprint hashes the game's.
 struct Fingerprint(u64);
 
@@ -213,6 +225,7 @@ fn a_crowds_rides_fingerprint() {
     let mut near = Vec::new();
     let (mut on_pool, mut one_at_a_time) = (Duration::ZERO, Duration::ZERO);
     let (mut held_hits, mut recovered, mut bails) = (0, 0, 0);
+    let cpu_started = cpu_seconds();
     for tick in 0..ticks {
         // each rider's obstacles: the others within 4 world units, as the
         // game's skate_send_obstacles finds them
@@ -265,6 +278,7 @@ fn a_crowds_rides_fingerprint() {
             }
         }
     }
+    let cpu = cpu_seconds() - cpu_started;
     // the same steps' cost on one thread: one rider a while longer alone
     let (session, rider) = (sessions[0], 0u32);
     for tick in ticks..ticks + 120 {
@@ -274,7 +288,8 @@ fn a_crowds_rides_fingerprint() {
         assert!(code == 0 || code == 2, "session {session}'s step: {code}");
         one_at_a_time += begun.elapsed();
     }
-    let threads = unsafe { halo_skate_pool_load(std::ptr::null_mut(), std::ptr::null_mut()) };
+    let (mut steps, mut micros) = (0u64, 0u64);
+    let threads = unsafe { halo_skate_pool_load(&mut steps, &mut micros) };
     let ridden: f32 = frames.iter().map(|f| length([0, 1, 2].map(|k| f.position[k] - middle[k]))).sum();
     eprintln!(
         "fingerprint {:016x}: {riders} riders, {ticks} ticks, {held_hits} held hits told, {bails} bails given, \
@@ -282,9 +297,12 @@ fn a_crowds_rides_fingerprint() {
         fingerprint.0
     );
     eprintln!(
-        "a tick of {riders} steps on the pool's {threads} threads {:.3} ms; a step alone {:.3} ms",
+        "a tick of {riders} steps on the pool's {threads} threads {:.3} ms; a step alone {:.3} ms; {steps} steps on \
+         the pool, {:.3} ms each; {:.3} ms of processor time a step",
         on_pool.as_secs_f64() * 1000.0 / f64::from(ticks),
-        one_at_a_time.as_secs_f64() * 1000.0 / 120.0
+        one_at_a_time.as_secs_f64() * 1000.0 / 120.0,
+        micros as f64 / 1000.0 / steps.max(1) as f64,
+        cpu * 1000.0 / f64::from(ticks * riders as u32)
     );
     // (they rode, and met: a fingerprint of riders standing apart proves little)
     assert!(ridden > riders as f32 * 3.0, "the crowd hardly rode: {ridden} world units from the middle in all");
