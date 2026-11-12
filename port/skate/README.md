@@ -1037,6 +1037,36 @@ by line (the once-a-second network line, and hits between two bots' skaters
 that changed nothing): a hundred skating bots made about 24,000 lines a
 minute.
 
+Measuring this in a dev container (not CI): `tools/skate_perf_bench.py`
+builds and runs the fingerprint test under `perf stat`/`perf record`
+(`fingerprint`), measures a change's stepping cost over several alternating
+rounds against a baseline ref (`step`), and builds the server binary,
+optionally with frame pointers for profiling (`build-server`); each needs
+the engine's source synced into the container first (`sync`). For the whole
+game rather than the fingerprint test's synthetic crowd,
+`tools/skate_bench.py` runs a built dedicated server for a warm-up and a
+measured window and reports CPU per tick per thread group, with an optional
+`--profile-seconds` to attach `perf record` once it is running. The hash and
+`perf stat` parsing, the stepping-cost arithmetic and the A/B run order are
+plain functions (`tools/test_skate_perf_bench.py`,
+`tools/test_skate_bench.py`); only running cargo, ninja, perf and the game
+itself touches the outside world, and all of it fails loudly on a non-zero
+exit rather than grepping past one.
+
+Three things measured this way, each either shipped or ruled out:
+
+- **The constraint solver's kernels** (#113): bit-identical, −7% stepping
+  instructions on the server build. The off-board line queries
+  (`BoardWorld::line_candidates`) are the next exact target; fewer solver
+  iterations would save more but changes how stiff chains settle.
+- **A 64-bit (x86_64) engine**: only −10% to −15% CPU, for about +50% memory
+  and 8-12 days to add a second engine path with its own failure mode (one
+  worker crash loses every session instead of one). Not pursued.
+- **Lazily skipping a bot's render-only pose work**: the only skippable part
+  (0.5% of cycles) saves nothing measurable; the sizeable cost (4.4% of
+  stepping instructions) is read by hitboxes and bot aim every tick, so it
+  is gameplay, not presentation, and cutting it is a gameplay call.
+
 ### Tricks
 
 The engine carries Skate 3's own trick system: flick-it gestures on the right
