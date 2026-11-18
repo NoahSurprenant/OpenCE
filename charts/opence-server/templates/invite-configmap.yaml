@@ -1,0 +1,42 @@
+{{- if .Values.invite.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opence-server.inviteName" . }}
+  labels:
+    {{- include "opence-server.labels" . | nindent 4 }}
+data:
+  # The link the server writes (network.invite_file, /invite/invite.txt) at /server-invite.txt,
+  # never kept by a browser or a proxy; nothing else. A 404 while the server is not hosting.
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    error_log stderr warn;
+    events {
+      worker_connections 64;
+    }
+    http {
+      access_log off;
+      server_tokens off;
+      client_body_temp_path /tmp/client_body;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      server {
+        listen 8080;
+        location = /healthz {
+          default_type text/plain;
+          return 200 "ok\n";
+        }
+        location = /server-invite.txt {
+          default_type text/plain;
+          add_header Cache-Control "no-store" always;
+          alias /invite/invite.txt;
+        }
+        location / {
+          return 404;
+        }
+      }
+    }
+{{- end }}

@@ -336,6 +336,7 @@ function setImporting(importing) {
   $('skate-input').disabled = importing;
   $('skate-delete').disabled = importing;
   $('play').disabled = importing || !canPlay();
+  $('play-server').disabled = $('play').disabled;
 }
 
 // ---------- Skate 3 mode's data (xiso-worker.js too), in a build with it
@@ -649,6 +650,7 @@ function canPlay() {
 
 function updatePlay() {
   $('play').disabled = !canPlay();
+  $('play-server').disabled = !canPlay();
   $('play-note').textContent = !checksPassed ? 'This browser cannot run the game (above).' :
     !dataReady ? 'The game data is needed first.' : '';
 }
@@ -888,6 +890,31 @@ function watchFrames() {
 
 $('play').addEventListener('click', play);
 
+// a dedicated server's invite beside the page (server-invite.txt, the link
+// the server writes to network.invite_file, served by the site's own server):
+// Join the server plays with it as ?join=. None (a 404, as on the public
+// site) or not a link leaves the button hidden. Asked again on the click: a
+// server that restarted has a new invite.
+async function serverInvite() {
+  try {
+    const response = await fetch('server-invite.txt', SAME_ORIGIN);
+    const link = response.ok ? /^halo:\/\/join\/([0-9a-f]{64})\s*$/i.exec(await response.text()) : null;
+    $('play-server').hidden = !link;
+    return link ? link[1].toLowerCase() : null;
+  } catch {
+    $('play-server').hidden = true;
+    return null;
+  }
+}
+
+$('play-server').addEventListener('click', async () => {
+  const code = await serverInvite();
+  if (!code) return;
+  params.set('join', code);
+  history.replaceState(null, '', `?${params}`);
+  play();
+});
+
 $('fullscreen').addEventListener('click', async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
@@ -963,6 +990,7 @@ document.addEventListener('visibilitychange', async () => {
   } else {
     updatePlay();
   }
+  serverInvite();
   checkForUpdate();
   if (/^[0-9a-f]{32}$/.test(params.get('room') || '')) await joinRoom(params.get('room'));
   if (params.has('play')) play();

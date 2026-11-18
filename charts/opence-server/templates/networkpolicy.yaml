@@ -36,6 +36,14 @@ spec:
         - protocol: TCP
           port: 5150
     {{- end }}
+    {{- if and .Values.invite.enabled .Values.invite.networkPolicy.from }}
+    # the invite sidecar's HTTP (invite.enabled), from invite.networkPolicy.from alone
+    - from:
+        {{- toYaml .Values.invite.networkPolicy.from | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- end }}
     {{- with $np.extraIngress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

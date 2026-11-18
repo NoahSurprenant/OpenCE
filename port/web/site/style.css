@@ -129,6 +129,7 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad)
 
 .play-row { margin: 24px 0; }
 .play-row .primary { min-width: 200px; min-height: 52px; font-size: 18px; }
+.play-row #play-server { min-height: 52px; margin-left: 8px; font-size: 18px; }
 
 .progress { margin-top: 12px; }
 .progress-bar { height: 8px; border-radius: 4px; background: #1d2a3e; overflow: hidden; }

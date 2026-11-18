@@ -128,6 +128,15 @@ game, and which a native build takes too (pasted, or on its command line);
 the native builds' own `halo://join/` links work pasted into the address
 after `?join=`. Network Setup's INTERNET PLAY turns it off.
 
+**A site's own server**: where a `server-invite.txt` is beside the page
+(a dedicated server's invite link, which the server writes to
+`network.invite_file`, served by the site's own server; the
+`charts/opence-server` chart's `invite` sidecar serves it), **Join the
+server** appears beside Play and plays with that link as `?join=`. The page
+asks for the file again on the click, so a server that restarted (a new
+invite) is still joined. Without the file (a 404, as on the public site) the
+button stays hidden.
+
 The browser reaches each other machine of the game directly, over WebRTC
 (its router permitting, as for the native builds: "Internet play" in
 [port/linux/README.md](../linux/README.md)); a native build takes the

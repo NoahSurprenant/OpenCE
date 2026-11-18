@@ -57,6 +57,12 @@ The server is invite-only by default (`network.hostPublic: false`): players join
 that the log shows. It changes at each start unless the state is persistent (`persistence.enabled`).
 Set `network.hostPublic: true` and `network.serverName` to list it in the in-game server browser.
 
+To offer the link on a web page instead, set `invite.enabled: true`: the server writes it to a file
+(`network.invite_file`) that an nginx beside it serves at `/server-invite.txt` on the
+`<fullname>-invite` Service. Route the site's `/server-invite.txt` there (opence-web's page then
+shows **Join the server**, port/web/README.md), behind whatever guards the site, and let the
+ingress controller in with `invite.networkPolicy.from`.
+
 Every value is described in [values.yaml](values.yaml); [values.schema.json](values.schema.json)
 checks them, so a misspelled or unknown key, or a value of the wrong type, fails the install instead
 of being ignored.

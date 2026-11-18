@@ -13,9 +13,11 @@
 // refused (the imports stay); that with a good one the page downloads the
 // files on its own, without its import buttons, into where the importers
 // put them (each file read back and compared); that a second visit
-// downloads nothing and a changed file alone is downloaded again; that the
-// game starts with them (as the smoke test, it looks for the menus' map,
-// which the stand-in set has none of); and that without server-data.json
+// downloads nothing and a changed file alone is downloaded again; that Join
+// the server shows only for a server-invite.txt holding a link; that the
+// game starts with them, from that button and with its invite as ?join=
+// (as the smoke test, it looks for the menus' map, which the stand-in set
+// has none of); and that without server-data.json
 // the import buttons are back. About a minute.
 //
 // The second form tests a server that is already up with the real data
@@ -220,10 +222,29 @@ async function testStandIn(site) {
       fail('the changed file in the browser\'s storage is not the new one');
     }
 
+    // a server's invite beside the page: Join the server, only for a link
+    if (!(await page.isHidden('#play-server'))) fail('Join the server is shown without a server-invite.txt');
+    writeFileSync(path.join(set.served, 'server-invite.txt'), 'not an invite\n');
+    await page.reload();
+    await waitForLauncher(page);
+    await waitForData(page, 60);
+    await sleep(1000);
+    if (!(await page.isHidden('#play-server'))) fail('Join the server is shown for a server-invite.txt that is no link');
+    const code = 'ab'.repeat(32);
+    writeFileSync(path.join(set.served, 'server-invite.txt'), `halo://join/${code}\n`);
+    await page.reload();
+    await waitForLauncher(page);
+    await waitForData(page, 60);
+    await page.waitForSelector('#play-server', { state: 'visible', timeout: 10000 });
+    console.log('Join the server shown for a server-invite.txt');
+
     // the game starts with it (and looks for the menus' map, which is not
-    // among the placeholders)
-    await page.waitForFunction(() => !document.querySelector('#play').disabled, null, { timeout: 30000 });
-    await page.click('#play');
+    // among the placeholders), through Join the server: with its invite
+    await page.waitForFunction(() => !document.querySelector('#play-server').disabled, null, { timeout: 30000 });
+    await page.click('#play-server');
+    await until(async () => new URL(page.url()).searchParams.get('join') === code, 10);
+    if (new URL(page.url()).searchParams.get('join') !== code) fail('Join the server did not play with the invite');
+    rmSync(path.join(set.served, 'server-invite.txt'));
     started = Date.now();
     await until(() => has(/couldn't find map 'ui'/), 120);
     if (!has(/data root: \/data/)) fail('the game did not mount the storage at /data');

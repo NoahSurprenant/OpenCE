@@ -298,6 +298,33 @@ networkPolicy:
   extraIngress: []
   extraEgress: []
 
+# The invite link over HTTP, for a web page to offer it (opence-web's "Join the server", which shows
+# when a server-invite.txt is beside the page: port/web/README.md). The server writes its link to
+# network.invite_file on an emptyDir it shares with an nginx beside it, which serves it at
+# /server-invite.txt (never cached; a 404 while the server is not hosting) on a ClusterIP Service of
+# its own, <fullname>-invite. Route the site's /server-invite.txt to that Service, behind whatever
+# guards the site: anyone who can read it can join. Off: the link is in the log alone.
+invite:
+  enabled: false
+  image:
+    repository: docker.io/nginxinc/nginx-unprivileged
+    tag: 1.29-alpine
+    digest: sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+    pullPolicy: IfNotPresent
+  service:
+    port: 80
+    annotations: {}
+  resources:
+    requests:
+      cpu: 5m
+      memory: 16Mi
+    limits:
+      memory: 64Mi
+  # Who may reach it (a NetworkPolicy's from: the site's ingress controller, say), with
+  # networkPolicy.enabled. Empty: nothing.
+  networkPolicy:
+    from: []
+
 # The stream (port/linux/README.md, "Streaming"): a second Deployment that watches this server's game
 # as a spectator with the auto-director and serves it as HLS video (H.264 and AAC) with a small watch
 # page, for people to watch in a browser. Off by default. Its image is the server's build in stream

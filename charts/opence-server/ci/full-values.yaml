@@ -138,3 +138,14 @@ extraObjects:
       name: '{{ .Release.Name }}-extra'
     data:
       hello: world
+invite:
+  enabled: true
+  service:
+    port: 8080
+    annotations:
+      example.com/team: games
+  networkPolicy:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress

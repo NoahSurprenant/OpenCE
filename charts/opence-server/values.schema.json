@@ -275,6 +275,39 @@
         "extraEgress": { "type": "array", "items": { "type": "object" } }
       }
     },
+    "invite": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string" },
+            "digest": { "type": "string" },
+            "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "port": { "$ref": "#/definitions/port" },
+            "annotations": { "$ref": "#/definitions/stringMap" }
+          }
+        },
+        "resources": { "$ref": "#/definitions/k8sObject" },
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "from": { "$ref": "#/definitions/k8sList" }
+          }
+        }
+      }
+    },
     "stream": {
       "type": "object",
       "additionalProperties": false,
