@@ -443,7 +443,8 @@ jobs:
     # leaves the server's game and another joins it, a minute and a half), and
     # test_dedicated_server_next_game_without_a_stopped_client (a client stopped
     # as a game ends, its connection up, does not hold the next game: three
-    # minutes).
+    # minutes), and test_dedicated_server_invite_file (the invite link
+    # written to network.invite_file and removed at the end, ten seconds).
     # test_skate_hitbox (a skater hit where their body is drawn, a minute and
     # a half: port/skate/README.md, "Where a skater is hit") too.
     # tools/test_skating_bots.py (bots on boards: port/skate/README.md, "Bots
@@ -588,8 +589,8 @@ jobs:
           cat "$RUNNER_TEMP/skate-bots.log"
           cat "$RUNNER_TEMP/infection.log"
           cat "$RUNNER_TEMP/trick-attack.log"
-          if ! grep -q '11 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
-            echo "::error::test_skate_multiplayer, test_skate_hitbox, the six test_dedicated_server tests, test_infection_out_of_reach and the two fall tests did not all run and pass"
+          if ! grep -q '12 passed' "$RUNNER_TEMP/skate-mp.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-mp.log"; then
+            echo "::error::test_skate_multiplayer, test_skate_hitbox, the seven test_dedicated_server tests, test_infection_out_of_reach and the two fall tests did not all run and pass"
             exit 1
           fi
           if ! grep -q '8 passed' "$RUNNER_TEMP/skate-bots.log" || grep -qi 'skipped' "$RUNNER_TEMP/skate-bots.log"; then

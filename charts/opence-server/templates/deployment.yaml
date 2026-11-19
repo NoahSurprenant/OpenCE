@@ -42,6 +42,9 @@
 {{- with .Values.network.stunServers }}
 {{- $env = append $env (dict "name" "HALO_NET_STUN" "value" .) }}
 {{- end }}
+{{- if .Values.invite.enabled }}
+{{- $env = append $env (dict "name" "HALO_NET_INVITE_FILE" "value" "/invite/invite.txt") }}
+{{- end }}
 {{- if .Values.telnetConsole.enabled }}
 {{- $env = append $env (dict "name" "HALO_TELNET_CONSOLE" "value" "1") }}
 {{- $env = append $env (dict "name" "HALO_TELNET_CONSOLE_PORT" "value" (toString (int .Values.telnetConsole.port))) }}
@@ -160,6 +163,42 @@ spec:
             {{- end }}
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.invite.enabled }}
+            # the invite link (network.invite_file), for the invite sidecar
+            - name: invite
+              mountPath: /invite
+            {{- end }}
+        {{- if .Values.invite.enabled }}
+        # /server-invite.txt: the link above, over HTTP (invite-service.yaml)
+        - name: invite
+          image: {{ include "opence-server.inviteImage" . | quote }}
+          imagePullPolicy: {{ .Values.invite.image.pullPolicy }}
+          # (nginx itself, not the image's entrypoint scripts, which edit its config: the root is
+          # read-only)
+          command: ["nginx", "-g", "daemon off;"]
+          ports:
+            - name: invite-http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: invite-http
+          resources:
+            {{- toYaml .Values.invite.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: invite
+              mountPath: /invite
+              readOnly: true
+            - name: invite-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: invite-tmp
+              mountPath: /tmp
+        {{- end }}
       volumes:
         - name: game-data
           {{- if .Values.gameData.existingClaim }}
@@ -185,6 +224,17 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if .Values.invite.enabled }}
+        - name: invite
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: invite-config
+          configMap:
+            name: {{ include "opence-server.inviteName" . }}
+        - name: invite-tmp
+          emptyDir:
+            sizeLimit: 16Mi
+        {{- end }}
         {{- if include "opence-server.hasCustomMaps" . }}
         - name: custom-maps
           {{- if .Values.customMaps.existingClaim }}

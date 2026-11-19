@@ -1,0 +1,23 @@
+{{- if .Values.invite.enabled }}
+# The invite sidecar's HTTP (invite.enabled), apart from the tunnel's Service, which may be a
+# LoadBalancer: this one is only for the site's ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opence-server.inviteName" . }}
+  labels:
+    {{- include "opence-server.labels" . | nindent 4 }}
+  {{- with .Values.invite.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "opence-server.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.invite.service.port }}
+      targetPort: invite-http
+      protocol: TCP
+{{- end }}

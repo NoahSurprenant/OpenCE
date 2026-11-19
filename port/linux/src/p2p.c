@@ -2697,6 +2697,50 @@ static void make_invite(void)
 	snprintf(p2p.invite, sizeof(p2p.invite), "halo://join/%s", text);
 }
 
+/* network.invite_file, read once (empty: none) */
+static char invite_file_path[1024];
+
+static void invite_file_remove(void)
+{
+	if (invite_file_path[0])
+		remove(invite_file_path);
+}
+
+/* the hosted game's invite link in network.invite_file, for a server's page
+to show: written whole beside it, then renamed over it, so a reader never
+sees half a link */
+static void invite_file_write(void)
+{
+	static int registered;
+	char temporary[sizeof(invite_file_path) + 8];
+	FILE *file;
+
+	if (!invite_file_path[0])
+		return;
+	snprintf(temporary, sizeof(temporary), "%s.new", invite_file_path);
+	file = fopen(temporary, "w");
+	if (!file)
+	{
+		platform_log("Internet play: cannot write %s (network.invite_file)", temporary);
+		return;
+	}
+	fprintf(file, "%s\n", p2p.invite);
+	fclose(file);
+	/* (Windows renames over no file) */
+	if (rename(temporary, invite_file_path) != 0 &&
+		(remove(invite_file_path), rename(temporary, invite_file_path) != 0))
+	{
+		platform_log("Internet play: cannot write %s (network.invite_file)", invite_file_path);
+		remove(temporary);
+		return;
+	}
+	if (!registered)
+	{
+		registered = 1;
+		atexit(invite_file_remove);
+	}
+}
+
 void p2p_new_invite_if_listed(void)
 {
 	if (!p2p.has_token || !p2p.token_listed)
@@ -2709,6 +2753,7 @@ void p2p_new_invite_if_listed(void)
 		p2p_signal_host(p2p.token);
 		memcpy(p2p.clipboard, p2p.invite, sizeof(p2p.clipboard));
 		p2p.has_clipboard = 1;
+		invite_file_write();
 		/* (Discord is told the new one) */
 		p2p.reported_player_count = -1;
 	}
@@ -2738,6 +2783,7 @@ static void update_hosting(void)
 		p2p_signal_host(p2p.token);
 		platform_log("Internet play: hosting. Invite players with this link (it only works while this "
 			"copy of the game runs): %s", p2p.invite);
+		invite_file_write();
 		if (!p2p.invite_copied)
 		{
 			memcpy(p2p.clipboard, p2p.invite, sizeof(p2p.clipboard));
@@ -2750,6 +2796,7 @@ static void update_hosting(void)
 	{
 		p2p.hosting = 0;
 		p2p_signal_stop_hosting();
+		invite_file_remove();
 		p2p_discord_set_hosting(NULL, 0, 0);
 	}
 	if (p2p.hosting)
@@ -3485,6 +3532,7 @@ void p2p_initialize(unsigned long local_address)
 #endif
 	stun_setup();
 	public_address_setup();
+	snprintf(invite_file_path, sizeof(invite_file_path), "%s", config_string("network.invite_file"));
 	if (pthread_create(&thread, NULL, p2p_thread, NULL) != 0)
 	{
 		close_socket(&p2p.tunnel_socket);

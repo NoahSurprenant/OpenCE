@@ -1,0 +1,75 @@
+suite: invite
+templates:
+  - templates/deployment.yaml
+  - templates/invite-configmap.yaml
+  - templates/invite-service.yaml
+  - templates/networkpolicy.yaml
+release:
+  name: opence-server
+set:
+  gameData.existingClaim: halo-maps
+tests:
+  - it: is off by default, the link in the log alone
+    template: templates/deployment.yaml
+    asserts:
+      - lengthEqual: { path: 'spec.template.spec.containers', count: 1 }
+      - notContains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_INVITE_FILE, value: /invite/invite.txt } }
+  - it: renders no ConfigMap or Service when off
+    template: templates/invite-service.yaml
+    asserts:
+      - hasDocuments: { count: 0 }
+
+  - it: has the server write its link to the volume the sidecar reads
+    template: templates/deployment.yaml
+    set:
+      invite.enabled: true
+    asserts:
+      - contains: { path: 'spec.template.spec.containers[0].env', content: { name: HALO_NET_INVITE_FILE, value: /invite/invite.txt } }
+      - contains: { path: 'spec.template.spec.containers[0].volumeMounts', content: { name: invite, mountPath: /invite } }
+      - equal: { path: 'spec.template.spec.containers[1].name', value: invite }
+      - equal:
+          path: 'spec.template.spec.containers[1].image'
+          value: docker.io/nginxinc/nginx-unprivileged:1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+      - equal: { path: 'spec.template.spec.containers[1].command', value: [nginx, -g, daemon off;] }
+      - contains: { path: 'spec.template.spec.containers[1].volumeMounts', content: { name: invite, mountPath: /invite, readOnly: true } }
+      - equal: { path: 'spec.template.spec.containers[1].securityContext.readOnlyRootFilesystem', value: true }
+      - contains: { path: 'spec.template.spec.volumes', content: { name: invite, emptyDir: { sizeLimit: 1Mi } } }
+      - contains: { path: 'spec.template.spec.volumes', content: { name: invite-config, configMap: { name: opence-server-invite } } }
+
+  - it: serves the link at /server-invite.txt, never cached, and nothing else
+    template: templates/invite-configmap.yaml
+    set:
+      invite.enabled: true
+    asserts:
+      - equal: { path: 'metadata.name', value: opence-server-invite }
+      - matchRegex: { path: 'data["nginx.conf"]', pattern: 'location = /server-invite.txt \{[^}]*alias /invite/invite.txt;' }
+      - matchRegex: { path: 'data["nginx.conf"]', pattern: 'add_header Cache-Control "no-store" always;' }
+      - matchRegex: { path: 'data["nginx.conf"]', pattern: 'location / \{\s*return 404;' }
+
+  - it: gives the sidecar a ClusterIP Service of its own
+    template: templates/invite-service.yaml
+    set:
+      invite.enabled: true
+      service.type: LoadBalancer
+    asserts:
+      - equal: { path: 'metadata.name', value: opence-server-invite }
+      - equal: { path: 'spec.type', value: ClusterIP }
+      - equal: { path: 'spec.ports[0]', value: { name: http, port: 80, targetPort: invite-http, protocol: TCP } }
+
+  - it: lets in the sidecar's HTTP only from invite.networkPolicy.from
+    template: templates/networkpolicy.yaml
+    set:
+      invite.enabled: true
+      invite.networkPolicy.from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: traefik } } }]
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: traefik } } }]
+            ports: [{ protocol: TCP, port: 8080 }]
+  - it: lets nobody in to the sidecar when invite.networkPolicy.from is empty
+    template: templates/networkpolicy.yaml
+    set:
+      invite.enabled: true
+    asserts:
+      - equal: { path: 'spec.ingress', value: [{ ports: [{ protocol: UDP, port: 27015 }] }] }

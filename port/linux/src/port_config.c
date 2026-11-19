@@ -486,6 +486,10 @@ static const struct config_setting config_settings[] =
 		"invite find each other (its messages are encrypted), beside this file\n"
 		"unless a full path: one host:port on each line, up to 4. Updates\n"
 		"replace brokers.txt: keep a list of your own under another name." },
+	{ "network.invite_file", _config_string, "\"\"", "HALO_NET_INVITE_FILE", _environment_value, _platform_all,
+		"Hosting: a file the hosted game's invite link is written to (a line),\n"
+		"again when the invite changes, and removed when hosting stops and at\n"
+		"exit, for a server's web page or a script to offer. Empty: none." },
 	{ "network.server_name", _config_string, "\"\"", "HALO_NET_SERVER_NAME", _environment_value, _platform_all,
 		"The name a dedicated host's listing shows in everyone's server\n"
 		"browser (debug.network_test's host; a game the menus make takes\n"

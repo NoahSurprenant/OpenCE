@@ -113,3 +113,12 @@ app.kubernetes.io/component: stream
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
+
+{{/* The invite sidecar's image (invite.image), as opence-server.image. */}}
+{{- define "opence-server.inviteImage" -}}
+{{- include "opence-server.imageRef" (dict "image" .Values.invite.image "default" "") -}}
+{{- end }}
+
+{{- define "opence-server.inviteName" -}}
+{{- printf "%s-invite" (include "opence-server.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}

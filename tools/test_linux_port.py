@@ -1721,3 +1721,55 @@ def test_dedicated_server_without_maps(tmp_path):
         assert "Internet play" not in stderr, f"{name}: the network started:\n{stderr[-3000:]}"
         assert not (root / "debug.txt").exists(), f"{name}: the game started (it wrote debug.txt)"
         assert not (tmp_path / f"saves{index}" / "debug.txt").exists(), f"{name}: the game started (it wrote debug.txt)"
+
+
+def test_dedicated_server_invite_file(tmp_path):
+    """A dedicated server with internet play on and network.invite_file set
+    writes its invite link there (the line its log gives, whole: never a
+    half-written file) once it hosts, for a page to offer, and removes it when
+    SIGTERM stops it. No broker or STUN server is reached (an empty brokers'
+    file, no STUN): the link is made all the same. Needs HALO_TEST_GAME and
+    the Halo maps (HALO_SKATE_TEST_HALO_MAPS), as test_dedicated_server;
+    about ten seconds."""
+    game = os.environ.get("HALO_TEST_GAME")
+    maps = os.environ.get("HALO_SKATE_TEST_HALO_MAPS")
+    if not (game and maps and Path(game).is_file() and Path(maps, "bloodgulch.map").is_file()):
+        pytest.skip("needs HALO_TEST_GAME and HALO_SKATE_TEST_HALO_MAPS")
+    # (test_dedicated_server_without_maps's port and the next)
+    port = int(os.environ.get("HALO_TEST_TUNNEL_PORT", "27315")) + 1
+    folder = tmp_path / "host"
+    (folder / "data").mkdir(parents=True)
+    (folder / "saves").mkdir()
+    (folder / "data" / "maps").symlink_to(maps)
+    (folder / "brokers.txt").write_text("# none: nothing leaves the machine\n")
+    invite_file = tmp_path / "invite" / "invite.txt"
+    invite_file.parent.mkdir()
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("SDL_", "HALO_", "DISPLAY", "WAYLAND"))}
+    env.update(HALO_DEDICATED="1", HALO_NETWORK_TEST_START="5", HALO_NET_ONLINE="true",
+               HALO_NET_TUNNEL_PORT=str(port), HALO_NET_STUN="", HALO_NET_BROKERS_FILE=str(folder / "brokers.txt"),
+               HALO_NET_INVITE_FILE=str(invite_file), HALO_UPDATE_ANSWER="never",
+               HALO_NET_ADDRESS=_test_address(216), HALO_NET_BROADCAST=_test_address(217),
+               HALO_DATA_ROOT=str(folder / "data"), HALO_SAVE_ROOT=str(folder / "saves"))
+    log_path = folder / "run.log"
+    with open(log_path, "w") as log:
+        process = subprocess.Popen([game], cwd=folder, env=_game_env(env), stdout=log, stderr=subprocess.STDOUT)
+    link = re.compile(r"Invite players with this link \(it only works while this copy of the game runs\): "
+                      r"(halo://join/[0-9a-f]{64})\n")
+    try:
+        deadline = time.monotonic() + 60
+        found = None
+        while time.monotonic() < deadline and not found:
+            assert process.poll() is None, log_path.read_text(errors="replace")[-4000:]
+            found = link.search(log_path.read_text(errors="replace"))
+            time.sleep(0.5)
+        assert found, f"the server never logged its invite:\n{log_path.read_text(errors='replace')[-4000:]}"
+        assert invite_file.read_text() == found.group(1) + "\n"
+        assert sorted(path.name for path in invite_file.parent.iterdir()) == ["invite.txt"]
+        process.terminate()
+        assert process.wait(timeout=15) == 0, log_path.read_text(errors="replace")[-4000:]
+        assert not invite_file.exists(), "the invite file outlived the server"
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
